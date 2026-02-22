@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IDUNA Threshold</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="viewport">
+      <section class="panel" aria-labelledby="iduna-title">
+        <p id="iduna-title" class="brand">IDUNA</p>
+        <h1 class="headline">Enter the World</h1>
+        <p class="subline">Identity is required to continue</p>
+
+        <button class="cta" type="button">Continue</button>
+        <p class="microtext">Secure external authentication</p>
+      </section>
+
+      <section class="panel honor" aria-labelledby="honor-title">
+        <p id="honor-title" class="brand">THE_HONOR_CODE</p>
+        <p class="subline">Read and accept the covenant to proceed.</p>
+
+        <label class="consent-row" for="consent-check">
+          <input id="consent-check" type="checkbox" />
+          <span>I have read and agree</span>
+        </label>
+
+        <button id="consent-btn" class="consent-btn" type="button" disabled>We Agree</button>
+      </section>
+    </main>
+
+    <script>
+      const checkbox = document.getElementById('consent-check');
+      const consentBtn = document.getElementById('consent-btn');
+
+      checkbox.addEventListener('change', () => {
+        consentBtn.disabled = !checkbox.checked;
+      });
+    </script>
+  </body>
+</html>
