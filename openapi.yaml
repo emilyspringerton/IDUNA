@@ -1,972 +1,904 @@
-openapi: 3.0.3
+swagger: "2.0"
 info:
-  title: IDUNA Scoreboard Service
   version: "1.0.0"
-  description: >
-    Canonical, cycle-aware scoreboard/leaderboard read API for all game systems
-    (KIKORYU matches/world, VS2 tournaments, VS3 market seasons, governance).
-    Scoreboards are projections derived from the event archive; they are never the source of truth.
-servers:
-  - url: https://iduna.example.com
-    description: Production
-  - url: http://localhost:8080
-    description: Local
+  title: "IDUNA IAM + Registration API"
+  description: |
+    IDUNA VS0/VS1 API: Google OAuth + Email magic-link/OTP, THE_HONOR_CODE gating, unique gamertag,
+    session management, and minimal admin moderation controls (suspend, revoke sessions, rename/reserve handles).
+    All errors return a standard ApiError body. Honor-gated endpoints may return 403 HONOR_CODE_REQUIRED with honor_code payload.
+schemes:
+  - https
+  - http
+host: "api.example.com"
+basePath: "/"
+consumes:
+  - application/json
+produces:
+  - application/json
+
+securityDefinitions:
+  BearerAuth:
+    type: apiKey
+    name: Authorization
+    in: header
+    description: "Bearer <token>"
+  SessionCookie:
+    type: apiKey
+    name: iduna_session
+    in: cookie
+    description: "HttpOnly session cookie (optional alternative to Bearer token)"
 
 tags:
-  - name: Scoreboards
-    description: Discover contexts and read scoreboards/leaderboards.
-  - name: Snapshots
-    description: Immutable scoreboard snapshots (archival records).
-  - name: Leaderboards
-    description: Ranked lists (latest or historical).
+  - name: Auth
+  - name: HonorCode
+  - name: Me
+  - name: Gamertag
   - name: Admin
-    description: Internal governance endpoints (recompute/publish/override configs).
-
-security:
-  - bearerAuth: []
 
 paths:
-  /v1/scoreboards/contexts:
+  /health:
     get:
-      tags: [Scoreboards]
-      summary: List available scoreboard contexts
-      description: >
-        Returns contexts for which scoreboards exist or can be generated
-        (match, tournament, season, world, governance, etc). Use filters to narrow.
-      security: []  # public
-      parameters:
-        - $ref: "#/components/parameters/game"
-        - $ref: "#/components/parameters/context_type"
-        - $ref: "#/components/parameters/cycle_id"
-        - $ref: "#/components/parameters/status"
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/cursor"
+      tags: [Auth]
+      summary: "Health check"
       responses:
-        "200":
-          description: Context list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ContextListResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+        200:
+          description: "OK"
+          schema:
+            $ref: "#/definitions/HealthResponse"
 
-  /v1/scoreboards/contexts/{context_id}:
+  /auth/google/start:
     get:
-      tags: [Scoreboards]
-      summary: Get a specific scoreboard context
-      security: []  # public
+      tags: [Auth]
+      summary: "Begin Google OAuth (returns redirect URL)"
+      description: |
+        Returns a Google OAuth authorization URL. Frontend should redirect the user to this URL.
       parameters:
-        - $ref: "#/components/parameters/context_id"
+        - name: return_to
+          in: query
+          type: string
+          required: false
+          description: "Optional post-auth redirect hint (e.g. /town). Server may validate/whitelist."
       responses:
-        "200":
-          description: Context
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Context"
-        "404":
-          $ref: "#/components/responses/NotFound"
+        200:
+          description: "Google auth URL"
+          schema:
+            $ref: "#/definitions/AuthStartResponse"
+        429:
+          description: "Rate limited"
+          schema:
+            $ref: "#/definitions/ApiError"
 
-  /v1/scoreboards/{context_type}/{context_id}/latest:
-    get:
-      tags: [Scoreboards]
-      summary: Get the latest published scoreboard for a context
-      description: >
-        Returns the latest published scoreboard snapshot summary plus entries (optionally).
-        If include_entries=false, returns only metadata and top-level metrics.
-      security: []  # public
-      parameters:
-        - $ref: "#/components/parameters/context_type_path"
-        - $ref: "#/components/parameters/context_id_path"
-        - $ref: "#/components/parameters/cycle_id_optional"
-        - $ref: "#/components/parameters/include_entries"
-        - $ref: "#/components/parameters/limit_entries"
-        - $ref: "#/components/parameters/cursor_entries"
-      responses:
-        "200":
-          description: Latest scoreboard
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScoreboardResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/scoreboards/{context_type}/{context_id}/entries:
-    get:
-      tags: [Leaderboards]
-      summary: List scoreboard entries for a context (latest)
-      description: >
-        Returns ranked entries for the latest published scoreboard in the given context.
-        Use cursor pagination for long lists.
-      security: []  # public
-      parameters:
-        - $ref: "#/components/parameters/context_type_path"
-        - $ref: "#/components/parameters/context_id_path"
-        - $ref: "#/components/parameters/cycle_id_optional"
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/cursor"
-        - $ref: "#/components/parameters/entry_fields"
-        - $ref: "#/components/parameters/include_identity"
-      responses:
-        "200":
-          description: Entry list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EntryListResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/scoreboards/{context_type}/{context_id}/snapshots:
-    get:
-      tags: [Snapshots]
-      summary: List published snapshots for a context (archival)
-      security: []  # public
-      parameters:
-        - $ref: "#/components/parameters/context_type_path"
-        - $ref: "#/components/parameters/context_id_path"
-        - $ref: "#/components/parameters/cycle_id_optional"
-        - $ref: "#/components/parameters/from_time"
-        - $ref: "#/components/parameters/to_time"
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/cursor"
-      responses:
-        "200":
-          description: Snapshot list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SnapshotListResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/scoreboards/snapshots/{snapshot_id}:
-    get:
-      tags: [Snapshots]
-      summary: Get a snapshot by id
-      security: []  # public
-      parameters:
-        - $ref: "#/components/parameters/snapshot_id"
-        - $ref: "#/components/parameters/include_entries"
-        - $ref: "#/components/parameters/limit_entries"
-        - $ref: "#/components/parameters/cursor_entries"
-        - $ref: "#/components/parameters/include_identity"
-      responses:
-        "200":
-          description: Snapshot
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScoreboardSnapshotResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/leaderboards:
-    get:
-      tags: [Leaderboards]
-      summary: List leaderboards across games (directory)
-      description: >
-        Returns named leaderboards (e.g., "Market Season Returns", "Poker Placement",
-        "KIKORYU Match KDA", "Governance Actions") with their default metrics and scopes.
-      security: []  # public
-      parameters:
-        - $ref: "#/components/parameters/game"
-        - $ref: "#/components/parameters/metric_key"
-        - $ref: "#/components/parameters/context_type"
-        - $ref: "#/components/parameters/cycle_id"
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/cursor"
-      responses:
-        "200":
-          description: Leaderboard directory
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LeaderboardDirectoryResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-
-  /v1/leaderboards/{leaderboard_id}/latest:
-    get:
-      tags: [Leaderboards]
-      summary: Get latest entries for a leaderboard id
-      security: []  # public
-      parameters:
-        - $ref: "#/components/parameters/leaderboard_id"
-        - $ref: "#/components/parameters/cycle_id_optional"
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/cursor"
-        - $ref: "#/components/parameters/include_identity"
-      responses:
-        "200":
-          description: Latest leaderboard entries
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LeaderboardEntriesResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /v1/me/scoreboards:
-    get:
-      tags: [Scoreboards]
-      summary: Get the caller's standings across contexts
-      description: >
-        Returns the caller's rank/metrics across active contexts (current cycle by default).
-        Requires authentication.
-      parameters:
-        - $ref: "#/components/parameters/cycle_id_optional"
-        - $ref: "#/components/parameters/game"
-        - $ref: "#/components/parameters/context_type"
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/cursor"
-      responses:
-        "200":
-          description: My standings
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MyStandingsResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  # -------------------------
-  # Internal/Admin endpoints
-  # -------------------------
-  /v1/admin/scoreboards/recompute:
+  /auth/google/callback:
     post:
-      tags: [Admin]
-      summary: Request a recompute for a context or leaderboard
-      description: >
-        Internal endpoint. Enqueues a recompute job for projections. Does not guarantee immediate publish.
-        Requires ADMIN or GM_AGENT capability.
+      tags: [Auth]
+      summary: "Exchange Google OAuth code for session/token"
+      description: |
+        Exchanges OAuth authorization code for identity, creates or finds the user, and returns user + honor code gating state.
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/GoogleCallbackRequest"
+      responses:
+        200:
+          description: "Authenticated"
+          schema:
+            $ref: "#/definitions/AuthCompleteResponse"
+        400:
+          description: "Bad request / invalid code"
+          schema:
+            $ref: "#/definitions/ApiError"
+        429:
+          description: "Rate limited"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /auth/email/start:
+    post:
+      tags: [Auth]
+      summary: "Begin email login/registration (magic link or OTP)"
+      description: |
+        Sends a one-time login token to email (magic link and/or OTP). Use rate limiting by IP and email.
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/EmailStartRequest"
+      responses:
+        200:
+          description: "Email sent (always return 200 to avoid user enumeration)"
+          schema:
+            $ref: "#/definitions/EmailStartResponse"
+        429:
+          description: "Rate limited"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /auth/email/verify:
+    post:
+      tags: [Auth]
+      summary: "Verify email OTP/token and create session/token"
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/EmailVerifyRequest"
+      responses:
+        200:
+          description: "Authenticated"
+          schema:
+            $ref: "#/definitions/AuthCompleteResponse"
+        400:
+          description: "Invalid/expired token"
+          schema:
+            $ref: "#/definitions/ApiError"
+        429:
+          description: "Rate limited"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: "Logout current session"
       security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RecomputeRequest"
+        - BearerAuth: []
+        - SessionCookie: []
       responses:
-        "202":
-          description: Recompute enqueued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RecomputeResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
+        200:
+          description: "Logged out"
+          schema:
+            $ref: "#/definitions/OkResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
 
-  /v1/admin/scoreboards/publish:
+  /auth/logout_all:
     post:
-      tags: [Admin]
-      summary: Publish the latest computed snapshot for a context
-      description: >
-        Internal endpoint. Publishes a computed snapshot as the context's latest official scoreboard.
-        Requires ADMIN or appropriate agent capability.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PublishRequest"
+      tags: [Auth]
+      summary: "Logout all sessions for current user"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
       responses:
-        "200":
-          description: Published
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PublishResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
+        200:
+          description: "All sessions revoked"
+          schema:
+            $ref: "#/definitions/OkResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
 
-  /v1/admin/scoreboards/config:
+  /me:
+    get:
+      tags: [Me]
+      summary: "Get current user + honor gating state"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      responses:
+        200:
+          description: "Current user"
+          schema:
+            $ref: "#/definitions/MeResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /honor-code/current:
+    get:
+      tags: [HonorCode]
+      summary: "Get current THE_HONOR_CODE version"
+      responses:
+        200:
+          description: "Current honor code"
+          schema:
+            $ref: "#/definitions/HonorCodeResponse"
+
+  /honor-code/accept:
+    post:
+      tags: [HonorCode]
+      summary: "Accept current THE_HONOR_CODE"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/HonorCodeAcceptRequest"
+      responses:
+        200:
+          description: "Accepted"
+          schema:
+            $ref: "#/definitions/MeResponse"
+        400:
+          description: "Invalid sha256/version"
+          schema:
+            $ref: "#/definitions/ApiError"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /gamertag/check:
+    get:
+      tags: [Gamertag]
+      summary: "Check gamertag availability"
+      parameters:
+        - name: handle
+          in: query
+          required: true
+          type: string
+          description: "Proposed gamertag (3-16, A-Z a-z 0-9 _)"
+      responses:
+        200:
+          description: "Availability"
+          schema:
+            $ref: "#/definitions/GamertagCheckResponse"
+        400:
+          description: "Invalid handle format"
+          schema:
+            $ref: "#/definitions/ApiError"
+        429:
+          description: "Rate limited"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /me/handle:
+    post:
+      tags: [Me, Gamertag]
+      summary: "Set/lock-in gamertag (unique, permanent in VS1)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      description: |
+        Requires current honor code acceptance. Enforces case-insensitive uniqueness via handle_norm.
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/SetHandleRequest"
+      responses:
+        200:
+          description: "Handle set"
+          schema:
+            $ref: "#/definitions/MeResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Honor code required"
+          schema:
+            $ref: "#/definitions/ApiError"
+        409:
+          description: "Handle already taken"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /admin/users:
     get:
       tags: [Admin]
-      summary: List scoreboard configuration rules
-      description: Internal endpoint for viewing config (metrics, sorting, visibility).
+      summary: "Search users (admin/mod only)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: q
+          in: query
+          type: string
+          required: false
+          description: "Search by email, handle, or userId"
+        - name: limit
+          in: query
+          type: integer
+          required: false
+          default: 50
       responses:
-        "200":
-          description: Config list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScoreboardConfigListResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-    put:
+        200:
+          description: "User list"
+          schema:
+            $ref: "#/definitions/AdminUserListResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden (not admin/mod)"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /admin/users/{user_id}:
+    get:
       tags: [Admin]
-      summary: Replace scoreboard configuration rules
-      description: >
-        Internal endpoint. Replaces the config set (use cautiously). Prefer PATCH in future.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ScoreboardConfigListResponse"
+      summary: "Get user detail (admin/mod only)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          type: string
+          description: "UUID string"
       responses:
-        "200":
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScoreboardConfigListResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
+        200:
+          description: "User detail"
+          schema:
+            $ref: "#/definitions/AdminUserDetailResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ApiError"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ApiError"
 
-components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+  /admin/users/{user_id}/suspend:
+    post:
+      tags: [Admin]
+      summary: "Suspend user (admin/mod only)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          type: string
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/SuspendUserRequest"
+      responses:
+        200:
+          description: "Suspended"
+          schema:
+            $ref: "#/definitions/AdminUserDetailResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ApiError"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ApiError"
 
-  responses:
-    BadRequest:
-      description: Bad request
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-    Unauthorized:
-      description: Unauthorized
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-    Forbidden:
-      description: Forbidden
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-    NotFound:
-      description: Not found
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
+  /admin/users/{user_id}/unsuspend:
+    post:
+      tags: [Admin]
+      summary: "Unsuspend user (admin/mod only)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          type: string
+        - name: body
+          in: body
+          required: false
+          schema:
+            $ref: "#/definitions/UnsuspendUserRequest"
+      responses:
+        200:
+          description: "Unsuspended"
+          schema:
+            $ref: "#/definitions/AdminUserDetailResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ApiError"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ApiError"
 
-  parameters:
-    game:
-      name: game
-      in: query
-      description: Filter by game/system.
-      schema:
-        $ref: "#/components/schemas/Game"
-    context_type:
-      name: context_type
-      in: query
-      description: Filter by context type.
-      schema:
-        $ref: "#/components/schemas/ContextType"
-    context_type_path:
-      name: context_type
-      in: path
-      required: true
-      schema:
-        $ref: "#/components/schemas/ContextType"
-    context_id:
-      name: context_id
-      in: path
-      required: true
-      schema:
-        type: string
-        example: "ctx_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
-    context_id_path:
-      name: context_id
-      in: path
-      required: true
-      schema:
-        type: string
-        example: "tournament_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
-    snapshot_id:
-      name: snapshot_id
-      in: path
-      required: true
-      schema:
-        type: string
-        example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
-    leaderboard_id:
-      name: leaderboard_id
-      in: path
-      required: true
-      schema:
-        type: string
-        example: "lb_market_season_return"
-    cycle_id:
-      name: cycle_id
-      in: query
-      description: Cycle/continuity id (Auraborialis-aware). If omitted, server may default to current cycle.
-      schema:
-        type: string
-        example: "cycle_auraborialis_0001"
-    cycle_id_optional:
-      name: cycle_id
-      in: query
-      required: false
-      description: Optional cycle/continuity id.
-      schema:
-        type: string
-        example: "cycle_auraborialis_0001"
-    status:
-      name: status
-      in: query
-      description: Filter contexts by lifecycle status.
-      schema:
-        $ref: "#/components/schemas/ContextStatus"
-    metric_key:
-      name: metric_key
-      in: query
-      description: Filter leaderboards by primary metric key.
-      schema:
-        type: string
-        example: "return_pct"
-    include_entries:
-      name: include_entries
-      in: query
-      description: Include entries inline.
-      schema:
+  /admin/users/{user_id}/revoke_sessions:
+    post:
+      tags: [Admin]
+      summary: "Revoke all sessions for a user (admin/mod only)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          type: string
+        - name: body
+          in: body
+          required: false
+          schema:
+            $ref: "#/definitions/RevokeSessionsRequest"
+      responses:
+        200:
+          description: "Sessions revoked"
+          schema:
+            $ref: "#/definitions/OkResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ApiError"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /admin/users/{user_id}/set_handle:
+    post:
+      tags: [Admin]
+      summary: "Admin override: set/rename user's handle (admin only recommended)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      description: |
+        Use sparingly. Enforces uniqueness, may be needed to resolve conflicts or moderation issues.
+        Consider restricting to role=admin only (not mod) in implementation.
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          type: string
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/AdminSetHandleRequest"
+      responses:
+        200:
+          description: "Handle set"
+          schema:
+            $ref: "#/definitions/AdminUserDetailResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ApiError"
+        409:
+          description: "Handle taken"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /admin/handles/reserve:
+    post:
+      tags: [Admin]
+      summary: "Reserve a handle (prevent users from claiming it)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      description: |
+        Creates a reservation so handle cannot be chosen. Useful for moderation/branding.
+        Implementation can be a reserved_handles table with UNIQUE(handle_norm).
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/ReserveHandleRequest"
+      responses:
+        200:
+          description: "Reserved"
+          schema:
+            $ref: "#/definitions/OkResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ApiError"
+        409:
+          description: "Already reserved/taken"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /admin/audit:
+    get:
+      tags: [Admin]
+      summary: "Read admin audit log (admin/mod)"
+      security:
+        - BearerAuth: []
+        - SessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          type: integer
+          required: false
+          default: 100
+        - name: cursor
+          in: query
+          type: string
+          required: false
+          description: "Pagination cursor (implementation-defined)"
+      responses:
+        200:
+          description: "Audit entries"
+          schema:
+            $ref: "#/definitions/AdminAuditListResponse"
+        401:
+          description: "Not authenticated"
+          schema:
+            $ref: "#/definitions/ApiError"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+definitions:
+  HealthResponse:
+    type: object
+    properties:
+      ok:
         type: boolean
-        default: true
-    limit_entries:
-      name: limit_entries
-      in: query
-      description: Max entries to include inline.
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 500
-        default: 100
-    cursor_entries:
-      name: cursor_entries
-      in: query
-      description: Cursor for entry pagination when embedded.
-      schema:
+      service:
         type: string
-        nullable: true
-    include_identity:
-      name: include_identity
-      in: query
-      description: >
-        Include display identity (handle, avatar_url). If false, returns stable user_id only.
-        Server may still hide identity based on privacy rules.
-      schema:
+      time:
+        type: string
+    required: [ok]
+
+  OkResponse:
+    type: object
+    properties:
+      ok:
         type: boolean
-        default: true
-    entry_fields:
-      name: fields
-      in: query
-      description: Comma-separated list of extra fields to include (e.g. "secondary_metrics,meta,streak").
-      schema:
+      message:
         type: string
-        example: "secondary_metrics,meta"
-    limit:
-      name: limit
-      in: query
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 200
-        default: 50
-    cursor:
-      name: cursor
-      in: query
-      schema:
+    required: [ok]
+
+  ApiError:
+    type: object
+    properties:
+      code:
         type: string
-        nullable: true
-    from_time:
-      name: from
-      in: query
-      description: ISO-8601 start time (inclusive) for snapshot listing.
-      schema:
+        example: "HONOR_CODE_REQUIRED"
+      message:
         type: string
-        format: date-time
-        nullable: true
-    to_time:
-      name: to
-      in: query
-      description: ISO-8601 end time (exclusive) for snapshot listing.
-      schema:
+        example: "Honor code acceptance required."
+      honor_code:
+        $ref: "#/definitions/HonorCode"
+      details:
+        type: object
+        additionalProperties: true
+
+  AuthStartResponse:
+    type: object
+    properties:
+      url:
         type: string
-        format: date-time
-        nullable: true
+    required: [url]
 
-  schemas:
-    Error:
-      type: object
-      required: [error, message]
-      properties:
-        error:
-          type: string
-          example: "bad_request"
-        message:
-          type: string
-          example: "Invalid cursor"
-        details:
-          type: object
-          additionalProperties: true
+  GoogleCallbackRequest:
+    type: object
+    properties:
+      code:
+        type: string
+      redirect_uri:
+        type: string
+    required: [code, redirect_uri]
 
-    Game:
-      type: string
-      description: Which system produced the events.
-      enum:
-        - KIKORYU_MMO
-        - VS2_POKER
-        - VS3_MARKET
-        - VS7_GOVERNANCE
-        - SYSTEM
+  EmailStartRequest:
+    type: object
+    properties:
+      email:
+        type: string
+        example: "user@example.com"
+      return_to:
+        type: string
+        description: "Optional return path after auth"
+    required: [email]
 
-    ContextType:
-      type: string
-      description: Scoreboard context kind.
-      enum:
-        - match
-        - tournament
-        - season
-        - world
-        - faction
-        - leaderboard
-        - governance
-        - custom
+  EmailStartResponse:
+    type: object
+    properties:
+      ok:
+        type: boolean
+      message:
+        type: string
+        example: "If the email exists, a login link/code has been sent."
+    required: [ok]
 
-    ContextStatus:
-      type: string
-      enum: [created, registering, starting, in_progress, final_table, complete, archived, active]
+  EmailVerifyRequest:
+    type: object
+    properties:
+      email:
+        type: string
+      token:
+        type: string
+        description: "Magic-link token (opaque) OR OTP code, depending on implementation"
+      redirect_uri:
+        type: string
+        description: "Optional; used if token came from an OAuth-style redirect"
+    required: [email, token]
 
-    Context:
-      type: object
-      required: [context_id, context_type, game, cycle_id, title, status]
-      properties:
-        context_id:
-          type: string
-          example: "tournament_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
-        context_type:
-          $ref: "#/components/schemas/ContextType"
-        game:
-          $ref: "#/components/schemas/Game"
-        cycle_id:
-          type: string
-          example: "cycle_auraborialis_0001"
-        title:
-          type: string
-          example: "NLHE MTT #12"
-        subtitle:
-          type: string
-          nullable: true
-          example: "Standard Structure"
-        status:
-          $ref: "#/components/schemas/ContextStatus"
-        started_at:
-          type: string
-          format: date-time
-          nullable: true
-        ended_at:
-          type: string
-          format: date-time
-          nullable: true
-        visibility:
-          type: string
-          enum: [public, followers, private]
-          default: public
-        primary_metric_key:
-          type: string
-          example: "rank"
-        sort_order:
-          type: string
-          enum: [asc, desc]
-          example: "asc"
-        meta:
-          type: object
-          additionalProperties: true
-          example:
-            region: "global"
-            ruleset: "standard"
+  AuthCompleteResponse:
+    type: object
+    properties:
+      token:
+        type: string
+        description: "JWT access token (optional if using cookie sessions)"
+      user:
+        $ref: "#/definitions/User"
+      honor_code:
+        $ref: "#/definitions/HonorCode"
+    required: [user]
 
-    IdentityRef:
-      type: object
-      properties:
-        user_id:
-          type: string
-          example: "usr_01J0Z7V5B6M6J3PZ2K8D6W1T9A"
-        handle:
-          type: string
-          nullable: true
-          example: "AuntSally"
-        avatar_url:
-          type: string
-          nullable: true
-          example: "https://cdn.example.com/avatars/usr_...png"
+  MeResponse:
+    type: object
+    properties:
+      user:
+        $ref: "#/definitions/User"
+      honor_code:
+        $ref: "#/definitions/HonorCode"
+    required: [user]
 
-    MetricValue:
-      type: object
-      required: [key, value]
-      properties:
-        key:
+  User:
+    type: object
+    properties:
+      id:
+        type: string
+        description: "UUID string"
+      status:
+        type: string
+        enum: [pending_email_verify, pending_honor, active, suspended, deleted]
+      email:
+        type: string
+      display_name:
+        type: string
+      handle:
+        type: string
+        description: "Gamertag / character name"
+      avatar_url:
+        type: string
+      roles:
+        type: array
+        items:
           type: string
-          example: "return_pct"
-        value:
-          type: number
-          example: 12.34
-        display:
-          type: string
-          nullable: true
-          example: "+12.34%"
-        unit:
-          type: string
-          nullable: true
-          example: "percent"
+        example: ["user"]
+      created_at:
+        type: string
+      updated_at:
+        type: string
 
-    ScoreboardEntry:
-      type: object
-      required: [rank, identity, primary]
-      properties:
-        rank:
-          type: integer
-          example: 1
-        identity:
-          $ref: "#/components/schemas/IdentityRef"
-        primary:
-          $ref: "#/components/schemas/MetricValue"
-        secondary:
-          type: array
-          items:
-            $ref: "#/components/schemas/MetricValue"
-          default: []
-        meta:
-          type: object
-          additionalProperties: true
-          example:
-            k: 10
-            d: 2
-            a: 21
-            table_id: "table_3"
-            streak: 4
+  HonorCode:
+    type: object
+    properties:
+      required:
+        type: boolean
+      title:
+        type: string
+        example: "THE_HONOR_CODE"
+      body_markdown:
+        type: string
+      sha256:
+        type: string
+        description: "SHA-256 hash of canonical honor code markdown"
+      version:
+        type: string
+        example: "2026-02-22"
 
-    ScoreboardSummary:
-      type: object
-      required: [snapshot_id, context, computed_at, projection_version]
-      properties:
-        snapshot_id:
-          type: string
-          example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
-        context:
-          $ref: "#/components/schemas/Context"
-        computed_at:
-          type: string
-          format: date-time
-        published_at:
-          type: string
-          format: date-time
-          nullable: true
-        projection_version:
-          type: integer
-          example: 3
-        entry_count:
-          type: integer
-          example: 128
-        headline:
-          type: string
-          nullable: true
-          example: "Final standings"
-        meta:
-          type: object
-          additionalProperties: true
-          example:
-            blind_level: 12
-            players_remaining: 34
+  HonorCodeResponse:
+    type: object
+    properties:
+      honor_code:
+        $ref: "#/definitions/HonorCode"
+    required: [honor_code]
 
-    ScoreboardResponse:
-      type: object
-      required: [summary]
-      properties:
-        summary:
-          $ref: "#/components/schemas/ScoreboardSummary"
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScoreboardEntry"
-        next_cursor:
-          type: string
-          nullable: true
+  HonorCodeAcceptRequest:
+    type: object
+    properties:
+      sha256:
+        type: string
+    required: [sha256]
 
-    SnapshotListResponse:
-      type: object
-      required: [snapshots]
-      properties:
-        snapshots:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScoreboardSummary"
-        next_cursor:
-          type: string
-          nullable: true
+  GamertagCheckResponse:
+    type: object
+    properties:
+      available:
+        type: boolean
+      reason:
+        type: string
+        example: "Taken"
+    required: [available]
 
-    ScoreboardSnapshotResponse:
-      type: object
-      required: [summary]
-      properties:
-        summary:
-          $ref: "#/components/schemas/ScoreboardSummary"
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScoreboardEntry"
-        next_cursor:
-          type: string
-          nullable: true
+  SetHandleRequest:
+    type: object
+    properties:
+      handle:
+        type: string
+        example: "LASVEGASEMILY89"
+    required: [handle]
 
-    EntryListResponse:
-      type: object
-      required: [context, entries]
-      properties:
-        context:
-          $ref: "#/components/schemas/Context"
-        snapshot_id:
-          type: string
-          nullable: true
-          example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScoreboardEntry"
-        next_cursor:
-          type: string
-          nullable: true
+  AdminUserListResponse:
+    type: object
+    properties:
+      users:
+        type: array
+        items:
+          $ref: "#/definitions/AdminUserSummary"
+      next_cursor:
+        type: string
+    required: [users]
 
-    ContextListResponse:
-      type: object
-      required: [contexts]
-      properties:
-        contexts:
-          type: array
-          items:
-            $ref: "#/components/schemas/Context"
-        next_cursor:
+  AdminUserSummary:
+    type: object
+    properties:
+      id:
+        type: string
+      email:
+        type: string
+      handle:
+        type: string
+      status:
+        type: string
+      roles:
+        type: array
+        items:
           type: string
-          nullable: true
 
-    LeaderboardDirectoryItem:
-      type: object
-      required: [leaderboard_id, title, game, context_type, primary_metric_key, sort_order]
-      properties:
-        leaderboard_id:
-          type: string
-          example: "lb_market_season_return"
-        title:
-          type: string
-          example: "Market Season Returns"
-        game:
-          $ref: "#/components/schemas/Game"
-        context_type:
-          $ref: "#/components/schemas/ContextType"
-        primary_metric_key:
-          type: string
-          example: "return_pct"
-        sort_order:
-          type: string
-          enum: [asc, desc]
-          example: "desc"
-        description:
-          type: string
-          nullable: true
-        meta:
-          type: object
-          additionalProperties: true
-          example:
-            scope: "season"
-            cadence: "daily_close"
+  AdminUserDetailResponse:
+    type: object
+    properties:
+      user:
+        $ref: "#/definitions/User"
+      identities:
+        type: array
+        items:
+          $ref: "#/definitions/UserIdentity"
+      honor_acceptances:
+        type: array
+        items:
+          $ref: "#/definitions/HonorAcceptance"
+      sessions:
+        type: array
+        items:
+          $ref: "#/definitions/SessionInfo"
+    required: [user]
 
-    LeaderboardDirectoryResponse:
-      type: object
-      required: [leaderboards]
-      properties:
-        leaderboards:
-          type: array
-          items:
-            $ref: "#/components/schemas/LeaderboardDirectoryItem"
-        next_cursor:
-          type: string
-          nullable: true
+  UserIdentity:
+    type: object
+    properties:
+      provider:
+        type: string
+        example: "google"
+      provider_subject:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      created_at:
+        type: string
+      last_login_at:
+        type: string
 
-    LeaderboardEntriesResponse:
-      type: object
-      required: [leaderboard, entries]
-      properties:
-        leaderboard:
-          $ref: "#/components/schemas/LeaderboardDirectoryItem"
-        cycle_id:
-          type: string
-          nullable: true
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScoreboardEntry"
-        next_cursor:
-          type: string
-          nullable: true
+  HonorAcceptance:
+    type: object
+    properties:
+      version:
+        type: string
+      sha256:
+        type: string
+      accepted_at:
+        type: string
 
-    MyStanding:
-      type: object
-      required: [context, snapshot_id]
-      properties:
-        context:
-          $ref: "#/components/schemas/Context"
-        snapshot_id:
-          type: string
-          example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
-        rank:
-          type: integer
-          nullable: true
-          example: 42
-        primary:
-          $ref: "#/components/schemas/MetricValue"
-        secondary:
-          type: array
-          items:
-            $ref: "#/components/schemas/MetricValue"
-          default: []
+  SessionInfo:
+    type: object
+    properties:
+      session_id:
+        type: string
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      revoked_at:
+        type: string
+      ip_hash:
+        type: string
+      ua_hash:
+        type: string
 
-    MyStandingsResponse:
-      type: object
-      required: [standings]
-      properties:
-        cycle_id:
-          type: string
-          nullable: true
-        standings:
-          type: array
-          items:
-            $ref: "#/components/schemas/MyStanding"
-        next_cursor:
-          type: string
-          nullable: true
+  SuspendUserRequest:
+    type: object
+    properties:
+      reason:
+        type: string
+        example: "Abusive behavior"
+      until:
+        type: string
+        description: "Optional ISO timestamp for temporary suspension"
+    required: [reason]
 
-    RecomputeRequest:
-      type: object
-      required: [target_type]
-      properties:
-        target_type:
-          type: string
-          enum: [context, leaderboard]
-        context_type:
-          $ref: "#/components/schemas/ContextType"
-        context_id:
-          type: string
-          nullable: true
-          description: Required when target_type=context.
-        leaderboard_id:
-          type: string
-          nullable: true
-          description: Required when target_type=leaderboard.
-        cycle_id:
-          type: string
-          nullable: true
-        reason:
-          type: string
-          nullable: true
-          example: "Projection version bump"
-        force:
-          type: boolean
-          default: false
+  UnsuspendUserRequest:
+    type: object
+    properties:
+      reason:
+        type: string
+        example: "Appeal accepted"
 
-    RecomputeResponse:
-      type: object
-      required: [job_id, status]
-      properties:
-        job_id:
-          type: string
-          example: "job_01J0ZB2N8S9W6Q4B3T0V7M1X2A"
-        status:
-          type: string
-          enum: [queued, running, complete, failed]
-        enqueued_at:
-          type: string
-          format: date-time
+  RevokeSessionsRequest:
+    type: object
+    properties:
+      reason:
+        type: string
 
-    PublishRequest:
-      type: object
-      required: [context_type, context_id]
-      properties:
-        context_type:
-          $ref: "#/components/schemas/ContextType"
-        context_id:
-          type: string
-        cycle_id:
-          type: string
-          nullable: true
-        snapshot_id:
-          type: string
-          nullable: true
-          description: If omitted, publishes the most recent computed snapshot.
-        reason:
-          type: string
-          nullable: true
-          example: "Finalize standings"
+  AdminSetHandleRequest:
+    type: object
+    properties:
+      handle:
+        type: string
+      reason:
+        type: string
+    required: [handle]
 
-    PublishResponse:
-      type: object
-      required: [snapshot_id, published_at]
-      properties:
-        snapshot_id:
-          type: string
-        published_at:
-          type: string
-          format: date-time
+  ReserveHandleRequest:
+    type: object
+    properties:
+      handle:
+        type: string
+      reason:
+        type: string
+    required: [handle]
 
-    ScoreboardConfig:
-      type: object
-      required: [config_id, game, context_type, primary_metric_key, sort_order]
-      properties:
-        config_id:
-          type: string
-          example: "cfg_kikoryu_match_kda"
-        game:
-          $ref: "#/components/schemas/Game"
-        context_type:
-          $ref: "#/components/schemas/ContextType"
-        primary_metric_key:
-          type: string
-          example: "kda"
-        sort_order:
-          type: string
-          enum: [asc, desc]
-          example: "desc"
-        secondary_metric_keys:
-          type: array
-          items:
-            type: string
-          default: []
-        visibility:
-          type: string
-          enum: [public, followers, private]
-          default: public
-        projection_version:
-          type: integer
-          example: 1
-        meta:
-          type: object
-          additionalProperties: true
-          example:
-            tie_breakers: ["kills", "assists", "damage"]
+  AdminAuditListResponse:
+    type: object
+    properties:
+      entries:
+        type: array
+        items:
+          $ref: "#/definitions/AdminAuditEntry"
+      next_cursor:
+        type: string
+    required: [entries]
 
-    ScoreboardConfigListResponse:
-      type: object
-      required: [configs]
-      properties:
-        configs:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScoreboardConfig"
+  AdminAuditEntry:
+    type: object
+    properties:
+      id:
+        type: string
+      actor_user_id:
+        type: string
+      action:
+        type: string
+        example: "SUSPEND_USER"
+      target_user_id:
+        type: string
+      reason:
+        type: string
+      created_at:
+        type: string
+      meta:
+        type: object
+        additionalProperties: true
