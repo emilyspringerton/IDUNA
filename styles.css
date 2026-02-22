@@ -103,6 +103,37 @@ body {
   text-align: left;
 }
 
+.honor-code {
+  margin-top: 1rem;
+  max-height: 380px;
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--gold) 42%, white 58%);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-bg) 95%, #f1e8d7 5%);
+  color: var(--text-main);
+  line-height: 1.55;
+  font-size: 0.9rem;
+}
+
+.honor-code h2 {
+  margin: 1rem 0 0.45rem;
+  font-size: 0.95rem;
+}
+
+.honor-code p,
+.honor-code ul {
+  margin: 0.55rem 0;
+}
+
+.honor-code ul {
+  padding-left: 1.2rem;
+}
+
+.honor-code li + li {
+  margin-top: 0.45rem;
+}
+
 .consent-row {
   margin-top: 1.4rem;
   display: flex;
