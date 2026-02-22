@@ -1,5 +1,5 @@
 # IDUNA (VS0) — Social Tournament Network + Google OAuth + THE_HONOR_CODE
-tldr: https://petstore.swagger.io/?_gl=1*gw7r8u*_gcl_aw*R0NMLjE3NzE3OTM3NDEuQ2owS0NRaUE3LXJNQmhDRkFSSXNBS25MS3RDbWdzdWZKa2w0WnN1WXJlaGx6QUlyNmJKRWhELUExRHRLYWNjbGJnZVFtei15VGR1Wl92UWFBaXl4RUFMd193Y0I.*_gcl_dc*R0NMLjE3NzE3OTM3NDEuQ2owS0NRaUE3LXJNQmhDRkFSSXNBS25MS3RDbWdzdWZKa2w0WnN1WXJlaGx6QUlyNmJKRWhELUExRHRLYWNjbGJnZVFtei15VGR1Wl92UWFBaXl4RUFMd193Y0I.*_gcl_au*MzM0MDk4MjEuMTc3MTc5Mzc0MA..
+tldr: insert swagger ui link here
 > Codename: **IDUNA**  
 > Stack: **Go + MySQL**  
 > Architecture: **Event Store (append-only) → Projectors → True Store (current state)**  
