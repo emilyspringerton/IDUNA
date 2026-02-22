@@ -1,0 +1,972 @@
+openapi: 3.0.3
+info:
+  title: IDUNA Scoreboard Service
+  version: "1.0.0"
+  description: >
+    Canonical, cycle-aware scoreboard/leaderboard read API for all game systems
+    (KIKORYU matches/world, VS2 tournaments, VS3 market seasons, governance).
+    Scoreboards are projections derived from the event archive; they are never the source of truth.
+servers:
+  - url: https://iduna.example.com
+    description: Production
+  - url: http://localhost:8080
+    description: Local
+
+tags:
+  - name: Scoreboards
+    description: Discover contexts and read scoreboards/leaderboards.
+  - name: Snapshots
+    description: Immutable scoreboard snapshots (archival records).
+  - name: Leaderboards
+    description: Ranked lists (latest or historical).
+  - name: Admin
+    description: Internal governance endpoints (recompute/publish/override configs).
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/scoreboards/contexts:
+    get:
+      tags: [Scoreboards]
+      summary: List available scoreboard contexts
+      description: >
+        Returns contexts for which scoreboards exist or can be generated
+        (match, tournament, season, world, governance, etc). Use filters to narrow.
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/game"
+        - $ref: "#/components/parameters/context_type"
+        - $ref: "#/components/parameters/cycle_id"
+        - $ref: "#/components/parameters/status"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Context list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/scoreboards/contexts/{context_id}:
+    get:
+      tags: [Scoreboards]
+      summary: Get a specific scoreboard context
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/context_id"
+      responses:
+        "200":
+          description: Context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Context"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/scoreboards/{context_type}/{context_id}/latest:
+    get:
+      tags: [Scoreboards]
+      summary: Get the latest published scoreboard for a context
+      description: >
+        Returns the latest published scoreboard snapshot summary plus entries (optionally).
+        If include_entries=false, returns only metadata and top-level metrics.
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/context_type_path"
+        - $ref: "#/components/parameters/context_id_path"
+        - $ref: "#/components/parameters/cycle_id_optional"
+        - $ref: "#/components/parameters/include_entries"
+        - $ref: "#/components/parameters/limit_entries"
+        - $ref: "#/components/parameters/cursor_entries"
+      responses:
+        "200":
+          description: Latest scoreboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreboardResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/scoreboards/{context_type}/{context_id}/entries:
+    get:
+      tags: [Leaderboards]
+      summary: List scoreboard entries for a context (latest)
+      description: >
+        Returns ranked entries for the latest published scoreboard in the given context.
+        Use cursor pagination for long lists.
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/context_type_path"
+        - $ref: "#/components/parameters/context_id_path"
+        - $ref: "#/components/parameters/cycle_id_optional"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/entry_fields"
+        - $ref: "#/components/parameters/include_identity"
+      responses:
+        "200":
+          description: Entry list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/scoreboards/{context_type}/{context_id}/snapshots:
+    get:
+      tags: [Snapshots]
+      summary: List published snapshots for a context (archival)
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/context_type_path"
+        - $ref: "#/components/parameters/context_id_path"
+        - $ref: "#/components/parameters/cycle_id_optional"
+        - $ref: "#/components/parameters/from_time"
+        - $ref: "#/components/parameters/to_time"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Snapshot list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/scoreboards/snapshots/{snapshot_id}:
+    get:
+      tags: [Snapshots]
+      summary: Get a snapshot by id
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/snapshot_id"
+        - $ref: "#/components/parameters/include_entries"
+        - $ref: "#/components/parameters/limit_entries"
+        - $ref: "#/components/parameters/cursor_entries"
+        - $ref: "#/components/parameters/include_identity"
+      responses:
+        "200":
+          description: Snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreboardSnapshotResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/leaderboards:
+    get:
+      tags: [Leaderboards]
+      summary: List leaderboards across games (directory)
+      description: >
+        Returns named leaderboards (e.g., "Market Season Returns", "Poker Placement",
+        "KIKORYU Match KDA", "Governance Actions") with their default metrics and scopes.
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/game"
+        - $ref: "#/components/parameters/metric_key"
+        - $ref: "#/components/parameters/context_type"
+        - $ref: "#/components/parameters/cycle_id"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Leaderboard directory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardDirectoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/leaderboards/{leaderboard_id}/latest:
+    get:
+      tags: [Leaderboards]
+      summary: Get latest entries for a leaderboard id
+      security: []  # public
+      parameters:
+        - $ref: "#/components/parameters/leaderboard_id"
+        - $ref: "#/components/parameters/cycle_id_optional"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/include_identity"
+      responses:
+        "200":
+          description: Latest leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardEntriesResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/me/scoreboards:
+    get:
+      tags: [Scoreboards]
+      summary: Get the caller's standings across contexts
+      description: >
+        Returns the caller's rank/metrics across active contexts (current cycle by default).
+        Requires authentication.
+      parameters:
+        - $ref: "#/components/parameters/cycle_id_optional"
+        - $ref: "#/components/parameters/game"
+        - $ref: "#/components/parameters/context_type"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: My standings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyStandingsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # -------------------------
+  # Internal/Admin endpoints
+  # -------------------------
+  /v1/admin/scoreboards/recompute:
+    post:
+      tags: [Admin]
+      summary: Request a recompute for a context or leaderboard
+      description: >
+        Internal endpoint. Enqueues a recompute job for projections. Does not guarantee immediate publish.
+        Requires ADMIN or GM_AGENT capability.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecomputeRequest"
+      responses:
+        "202":
+          description: Recompute enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecomputeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/scoreboards/publish:
+    post:
+      tags: [Admin]
+      summary: Publish the latest computed snapshot for a context
+      description: >
+        Internal endpoint. Publishes a computed snapshot as the context's latest official scoreboard.
+        Requires ADMIN or appropriate agent capability.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRequest"
+      responses:
+        "200":
+          description: Published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/scoreboards/config:
+    get:
+      tags: [Admin]
+      summary: List scoreboard configuration rules
+      description: Internal endpoint for viewing config (metrics, sorting, visibility).
+      responses:
+        "200":
+          description: Config list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreboardConfigListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Admin]
+      summary: Replace scoreboard configuration rules
+      description: >
+        Internal endpoint. Replaces the config set (use cautiously). Prefer PATCH in future.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScoreboardConfigListResponse"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreboardConfigListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  parameters:
+    game:
+      name: game
+      in: query
+      description: Filter by game/system.
+      schema:
+        $ref: "#/components/schemas/Game"
+    context_type:
+      name: context_type
+      in: query
+      description: Filter by context type.
+      schema:
+        $ref: "#/components/schemas/ContextType"
+    context_type_path:
+      name: context_type
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ContextType"
+    context_id:
+      name: context_id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "ctx_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
+    context_id_path:
+      name: context_id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "tournament_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
+    snapshot_id:
+      name: snapshot_id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
+    leaderboard_id:
+      name: leaderboard_id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "lb_market_season_return"
+    cycle_id:
+      name: cycle_id
+      in: query
+      description: Cycle/continuity id (Auraborialis-aware). If omitted, server may default to current cycle.
+      schema:
+        type: string
+        example: "cycle_auraborialis_0001"
+    cycle_id_optional:
+      name: cycle_id
+      in: query
+      required: false
+      description: Optional cycle/continuity id.
+      schema:
+        type: string
+        example: "cycle_auraborialis_0001"
+    status:
+      name: status
+      in: query
+      description: Filter contexts by lifecycle status.
+      schema:
+        $ref: "#/components/schemas/ContextStatus"
+    metric_key:
+      name: metric_key
+      in: query
+      description: Filter leaderboards by primary metric key.
+      schema:
+        type: string
+        example: "return_pct"
+    include_entries:
+      name: include_entries
+      in: query
+      description: Include entries inline.
+      schema:
+        type: boolean
+        default: true
+    limit_entries:
+      name: limit_entries
+      in: query
+      description: Max entries to include inline.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    cursor_entries:
+      name: cursor_entries
+      in: query
+      description: Cursor for entry pagination when embedded.
+      schema:
+        type: string
+        nullable: true
+    include_identity:
+      name: include_identity
+      in: query
+      description: >
+        Include display identity (handle, avatar_url). If false, returns stable user_id only.
+        Server may still hide identity based on privacy rules.
+      schema:
+        type: boolean
+        default: true
+    entry_fields:
+      name: fields
+      in: query
+      description: Comma-separated list of extra fields to include (e.g. "secondary_metrics,meta,streak").
+      schema:
+        type: string
+        example: "secondary_metrics,meta"
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+        nullable: true
+    from_time:
+      name: from
+      in: query
+      description: ISO-8601 start time (inclusive) for snapshot listing.
+      schema:
+        type: string
+        format: date-time
+        nullable: true
+    to_time:
+      name: to
+      in: query
+      description: ISO-8601 end time (exclusive) for snapshot listing.
+      schema:
+        type: string
+        format: date-time
+        nullable: true
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          example: "bad_request"
+        message:
+          type: string
+          example: "Invalid cursor"
+        details:
+          type: object
+          additionalProperties: true
+
+    Game:
+      type: string
+      description: Which system produced the events.
+      enum:
+        - KIKORYU_MMO
+        - VS2_POKER
+        - VS3_MARKET
+        - VS7_GOVERNANCE
+        - SYSTEM
+
+    ContextType:
+      type: string
+      description: Scoreboard context kind.
+      enum:
+        - match
+        - tournament
+        - season
+        - world
+        - faction
+        - leaderboard
+        - governance
+        - custom
+
+    ContextStatus:
+      type: string
+      enum: [created, registering, starting, in_progress, final_table, complete, archived, active]
+
+    Context:
+      type: object
+      required: [context_id, context_type, game, cycle_id, title, status]
+      properties:
+        context_id:
+          type: string
+          example: "tournament_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
+        context_type:
+          $ref: "#/components/schemas/ContextType"
+        game:
+          $ref: "#/components/schemas/Game"
+        cycle_id:
+          type: string
+          example: "cycle_auraborialis_0001"
+        title:
+          type: string
+          example: "NLHE MTT #12"
+        subtitle:
+          type: string
+          nullable: true
+          example: "Standard Structure"
+        status:
+          $ref: "#/components/schemas/ContextStatus"
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        visibility:
+          type: string
+          enum: [public, followers, private]
+          default: public
+        primary_metric_key:
+          type: string
+          example: "rank"
+        sort_order:
+          type: string
+          enum: [asc, desc]
+          example: "asc"
+        meta:
+          type: object
+          additionalProperties: true
+          example:
+            region: "global"
+            ruleset: "standard"
+
+    IdentityRef:
+      type: object
+      properties:
+        user_id:
+          type: string
+          example: "usr_01J0Z7V5B6M6J3PZ2K8D6W1T9A"
+        handle:
+          type: string
+          nullable: true
+          example: "AuntSally"
+        avatar_url:
+          type: string
+          nullable: true
+          example: "https://cdn.example.com/avatars/usr_...png"
+
+    MetricValue:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+          example: "return_pct"
+        value:
+          type: number
+          example: 12.34
+        display:
+          type: string
+          nullable: true
+          example: "+12.34%"
+        unit:
+          type: string
+          nullable: true
+          example: "percent"
+
+    ScoreboardEntry:
+      type: object
+      required: [rank, identity, primary]
+      properties:
+        rank:
+          type: integer
+          example: 1
+        identity:
+          $ref: "#/components/schemas/IdentityRef"
+        primary:
+          $ref: "#/components/schemas/MetricValue"
+        secondary:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricValue"
+          default: []
+        meta:
+          type: object
+          additionalProperties: true
+          example:
+            k: 10
+            d: 2
+            a: 21
+            table_id: "table_3"
+            streak: 4
+
+    ScoreboardSummary:
+      type: object
+      required: [snapshot_id, context, computed_at, projection_version]
+      properties:
+        snapshot_id:
+          type: string
+          example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
+        context:
+          $ref: "#/components/schemas/Context"
+        computed_at:
+          type: string
+          format: date-time
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        projection_version:
+          type: integer
+          example: 3
+        entry_count:
+          type: integer
+          example: 128
+        headline:
+          type: string
+          nullable: true
+          example: "Final standings"
+        meta:
+          type: object
+          additionalProperties: true
+          example:
+            blind_level: 12
+            players_remaining: 34
+
+    ScoreboardResponse:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          $ref: "#/components/schemas/ScoreboardSummary"
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreboardEntry"
+        next_cursor:
+          type: string
+          nullable: true
+
+    SnapshotListResponse:
+      type: object
+      required: [snapshots]
+      properties:
+        snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreboardSummary"
+        next_cursor:
+          type: string
+          nullable: true
+
+    ScoreboardSnapshotResponse:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          $ref: "#/components/schemas/ScoreboardSummary"
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreboardEntry"
+        next_cursor:
+          type: string
+          nullable: true
+
+    EntryListResponse:
+      type: object
+      required: [context, entries]
+      properties:
+        context:
+          $ref: "#/components/schemas/Context"
+        snapshot_id:
+          type: string
+          nullable: true
+          example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreboardEntry"
+        next_cursor:
+          type: string
+          nullable: true
+
+    ContextListResponse:
+      type: object
+      required: [contexts]
+      properties:
+        contexts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Context"
+        next_cursor:
+          type: string
+          nullable: true
+
+    LeaderboardDirectoryItem:
+      type: object
+      required: [leaderboard_id, title, game, context_type, primary_metric_key, sort_order]
+      properties:
+        leaderboard_id:
+          type: string
+          example: "lb_market_season_return"
+        title:
+          type: string
+          example: "Market Season Returns"
+        game:
+          $ref: "#/components/schemas/Game"
+        context_type:
+          $ref: "#/components/schemas/ContextType"
+        primary_metric_key:
+          type: string
+          example: "return_pct"
+        sort_order:
+          type: string
+          enum: [asc, desc]
+          example: "desc"
+        description:
+          type: string
+          nullable: true
+        meta:
+          type: object
+          additionalProperties: true
+          example:
+            scope: "season"
+            cadence: "daily_close"
+
+    LeaderboardDirectoryResponse:
+      type: object
+      required: [leaderboards]
+      properties:
+        leaderboards:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardDirectoryItem"
+        next_cursor:
+          type: string
+          nullable: true
+
+    LeaderboardEntriesResponse:
+      type: object
+      required: [leaderboard, entries]
+      properties:
+        leaderboard:
+          $ref: "#/components/schemas/LeaderboardDirectoryItem"
+        cycle_id:
+          type: string
+          nullable: true
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreboardEntry"
+        next_cursor:
+          type: string
+          nullable: true
+
+    MyStanding:
+      type: object
+      required: [context, snapshot_id]
+      properties:
+        context:
+          $ref: "#/components/schemas/Context"
+        snapshot_id:
+          type: string
+          example: "snap_01J0Z9Q5Y0N9H8V6A0QZ2K4G8B"
+        rank:
+          type: integer
+          nullable: true
+          example: 42
+        primary:
+          $ref: "#/components/schemas/MetricValue"
+        secondary:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricValue"
+          default: []
+
+    MyStandingsResponse:
+      type: object
+      required: [standings]
+      properties:
+        cycle_id:
+          type: string
+          nullable: true
+        standings:
+          type: array
+          items:
+            $ref: "#/components/schemas/MyStanding"
+        next_cursor:
+          type: string
+          nullable: true
+
+    RecomputeRequest:
+      type: object
+      required: [target_type]
+      properties:
+        target_type:
+          type: string
+          enum: [context, leaderboard]
+        context_type:
+          $ref: "#/components/schemas/ContextType"
+        context_id:
+          type: string
+          nullable: true
+          description: Required when target_type=context.
+        leaderboard_id:
+          type: string
+          nullable: true
+          description: Required when target_type=leaderboard.
+        cycle_id:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          example: "Projection version bump"
+        force:
+          type: boolean
+          default: false
+
+    RecomputeResponse:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          example: "job_01J0ZB2N8S9W6Q4B3T0V7M1X2A"
+        status:
+          type: string
+          enum: [queued, running, complete, failed]
+        enqueued_at:
+          type: string
+          format: date-time
+
+    PublishRequest:
+      type: object
+      required: [context_type, context_id]
+      properties:
+        context_type:
+          $ref: "#/components/schemas/ContextType"
+        context_id:
+          type: string
+        cycle_id:
+          type: string
+          nullable: true
+        snapshot_id:
+          type: string
+          nullable: true
+          description: If omitted, publishes the most recent computed snapshot.
+        reason:
+          type: string
+          nullable: true
+          example: "Finalize standings"
+
+    PublishResponse:
+      type: object
+      required: [snapshot_id, published_at]
+      properties:
+        snapshot_id:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+
+    ScoreboardConfig:
+      type: object
+      required: [config_id, game, context_type, primary_metric_key, sort_order]
+      properties:
+        config_id:
+          type: string
+          example: "cfg_kikoryu_match_kda"
+        game:
+          $ref: "#/components/schemas/Game"
+        context_type:
+          $ref: "#/components/schemas/ContextType"
+        primary_metric_key:
+          type: string
+          example: "kda"
+        sort_order:
+          type: string
+          enum: [asc, desc]
+          example: "desc"
+        secondary_metric_keys:
+          type: array
+          items:
+            type: string
+          default: []
+        visibility:
+          type: string
+          enum: [public, followers, private]
+          default: public
+        projection_version:
+          type: integer
+          example: 1
+        meta:
+          type: object
+          additionalProperties: true
+          example:
+            tie_breakers: ["kills", "assists", "damage"]
+
+    ScoreboardConfigListResponse:
+      type: object
+      required: [configs]
+      properties:
+        configs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreboardConfig"
