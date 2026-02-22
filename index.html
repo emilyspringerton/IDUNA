@@ -1,117 +1,107 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IDUNA Threshold</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <main class="viewport">
-      <section class="panel" aria-labelledby="iduna-title">
-        <p id="iduna-title" class="brand">IDUNA</p>
-        <h1 class="headline">Enter the World</h1>
-        <p class="subline">Identity is required to continue</p>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>IDUNA // VS0</title>
 
-        <button class="cta" type="button">Continue</button>
-        <p class="microtext">Secure external authentication</p>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { mono: ['ui-monospace','SFMono-Regular','Menlo','Monaco','Consolas','Liberation Mono','Courier New','monospace'] }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="bg-zinc-950 text-zinc-100 font-mono min-h-screen">
+  <div class="min-h-screen flex items-center justify-center p-6">
+    <main class="w-full max-w-md">
+      <div class="mb-6">
+        <div class="text-xs tracking-[0.35em] text-zinc-400">IDUNA</div>
+        <h1 class="mt-2 text-2xl tracking-tight">VS0 Registration</h1>
+        <p class="mt-2 text-sm text-zinc-400">Google OAuth -> THE_HONOR_CODE -> unique gamertag</p>
+      </div>
+
+      <section class="border border-cyan-500/30 rounded-lg p-5 bg-zinc-950/40 shadow-[0_0_0_1px_rgba(34,211,238,0.10)]">
+        <div id="status" class="text-xs text-zinc-400 mb-4">BOOT: idle</div>
+
+        <div id="screen-login" class="space-y-4">
+          <button id="btn-google"
+            class="w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
+                   bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm">
+            Continue with Google
+          </button>
+          <div class="text-xs text-zinc-500 leading-relaxed">
+            By continuing, you'll be asked to accept <span class="text-zinc-300">THE_HONOR_CODE</span> and choose a permanent gamertag.
+          </div>
+        </div>
+
+        <div id="screen-honor" class="hidden space-y-4">
+          <div class="text-sm text-zinc-200">THE_HONOR_CODE</div>
+          <div id="honor-body"
+               class="h-48 overflow-auto rounded-md border border-cyan-500/20 p-3 text-xs text-zinc-300 bg-black/20 leading-relaxed whitespace-pre-wrap">
+          </div>
+
+          <label class="flex items-start gap-3 text-xs text-zinc-300">
+            <input id="honor-check" type="checkbox" class="mt-1 accent-cyan-400"/>
+            <span>I have read and agree to THE_HONOR_CODE.</span>
+          </label>
+
+          <button id="btn-accept"
+            class="w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
+                   bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm disabled:opacity-40 disabled:hover:border-cyan-500/30"
+            disabled>
+            Accept
+          </button>
+        </div>
+
+        <div id="screen-handle" class="hidden space-y-4">
+          <div class="text-sm text-zinc-200">Choose your gamertag</div>
+
+          <div class="space-y-2">
+            <input id="handle-input"
+              class="w-full px-3 py-3 rounded-md border border-cyan-500/20 bg-black/20 focus:outline-none focus:border-cyan-400/60 text-sm"
+              placeholder="e.g. LASVEGASEMILY89" maxlength="16" autocomplete="off" />
+            <div id="handle-hint" class="text-xs text-zinc-400">
+              3–16 chars • letters/numbers/_ • must be unique
+            </div>
+          </div>
+
+          <button id="btn-lock"
+            class="w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
+                   bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm disabled:opacity-40 disabled:hover:border-cyan-500/30"
+            disabled>
+            Lock it in
+          </button>
+
+          <div class="pt-1 text-[11px] text-zinc-500 leading-relaxed">
+            Your gamertag is your MMO character name on the persistent single-shard world. Pick carefully.
+          </div>
+        </div>
+
+        <div id="screen-done" class="hidden space-y-4">
+          <div class="text-sm text-zinc-200">Complete</div>
+          <div class="text-xs text-zinc-400 leading-relaxed">
+            Registration complete. Routing to the world…
+          </div>
+          <a id="btn-enter" href="/"
+             class="inline-flex items-center justify-center w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
+                    bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm">
+            Enter
+          </a>
+        </div>
       </section>
 
-      <section class="panel honor" aria-labelledby="honor-title">
-        <p id="honor-title" class="brand">THE_HONOR_CODE</p>
-        <p class="subline">密教声明（EINHORN_INDUSTRIAL / EINHORN_MEDIA）</p>
-
-        <article class="honor-code" aria-label="THE_HONOR_CODE declaration">
-          <p>
-            我らは知る。進歩とは直線ではない。一つの突破は、必ず社会の形を変え、予見し得ぬ因果を連れてくる。
-            ゆえに我らは、ただ速さを礼拝せず、ただ利を神格化せず、ただ新しさに酔わぬ。
-            我らの道は「敬い」と「監査」である。人の智慧と機械の力を、対立ではなく相補とし、世界を「獲る」のでなく支えるために用いる。
-          </p>
-
-          <h2>一、誓願（四つの誓い）</h2>
-          <ul>
-            <li>
-              <strong>第一誓：人を食わぬ。</strong>
-              我らは人の弱さを餌にしない。恐怖、依存、羞恥、孤独、焦燥を設計によって増幅し、利益へ変えることを禁ずる。
-            </li>
-            <li>
-              <strong>第二誓：真名を守る。</strong>
-              個人の尊厳を“データ”の名で切り売りしない。見えぬ監視を善と偽らず、必要最小の知のみを持ち、持った知の扱いは記録し、明示する。
-            </li>
-            <li>
-              <strong>第三誓：機械を神にしない。</strong>
-              AIを偶像にせず、人間を余剰物にせず、「説明できぬ力」に依存しない。強さは、責任とともにある。
-            </li>
-            <li>
-              <strong>第四誓：世界を修復する。</strong>
-              産業を蘇らせ、共同体を温め、壊れた基盤に秩序と仕事を戻す。進歩は都市を捨てない。特に、デトロイトのような場所を見捨てない。
-            </li>
-          </ul>
-
-          <h2>二、結界（境界の設計）</h2>
-          <p>
-            我らは境界を張る。それは排除の壁ではなく、被害が拡がらぬための結界である。物語は真（Canon）と影（Dynamic）に分かたれる。真は変えない。影は変えてよい。だが影は真を侵さない。
-            広告は割り込みではなく世界の物である。物語を人質に取らない。理解を買わせない。変化は変更記録（ChangeLog）として残し、「何が差し替わったか」を観客が見られるようにする。
-          </p>
-
-          <h2>三、曼荼羅（全体設計）</h2>
-          <p>
-            我らが作るものは、単体の製品ではない。人・都市・工場・物流・教育・文化・安全・娯楽――それらを結ぶ曼荼羅である。
-            EINHORN_INDUSTRIALは、半導体、材料、エネルギー、輸送、セキュリティ、教育、そして倫理統治を統合し、人間が持つ技能と尊厳が消えない未来を編む。
-            EINHORN_MEDIAは、物語を“消費させる罠”にせず、透明な技術で、責任ある熱狂を成立させる。
-          </p>
-
-          <h2>四、印契（運用の作法）</h2>
-          <ul>
-            <li>監査可能なログ</li>
-            <li>変更の可視化</li>
-            <li>説明責任の境界</li>
-            <li>不正・濫用への即応</li>
-            <li>失敗の供養（Postmortem）と再発防止</li>
-          </ul>
-          <p>祈りではなく、実装で守る。</p>
-
-          <h2>五、供養（失敗の扱い）</h2>
-          <p>
-            失敗は隠せば怨念となる。我らは失敗を供養する。失敗を認め、記録し、共有し、直す。誰か一人に押し付けず、仕組みを改める。利益のために事実を歪めない。供養とは、責任の継続である。
-          </p>
-
-          <h2>六、方便（成長の方法）</h2>
-          <ul>
-            <li>まず小さく、確実に</li>
-            <li>透明性を先に</li>
-            <li>信頼を通貨に</li>
-            <li>速さより継続を尊ぶ</li>
-          </ul>
-
-          <h2>七、回向（利益の向け先）</h2>
-          <p>
-            我らが得る利益は、ただ内部に積み上げぬ。産業、教育、都市、文化へ回向する。“勝ち”は、世界の負債を増やす形で得てはならない。
-          </p>
-
-          <h2>結語</h2>
-          <p>
-            我らは宣言する。進歩は、敬意とともに歩むべきである。機械の力が大きくなるほど、人の尊厳を守る結界は厚くならねばならない。
-            我らのコードは、名誉である。我らの名誉は、監査に耐える。我らの進歩は、人を置き去りにしない。
-          </p>
-        </article>
-
-        <label class="consent-row" for="consent-check">
-          <input id="consent-check" type="checkbox" />
-          <span>私は声明を読み、これに同意します</span>
-        </label>
-
-        <button id="consent-btn" class="consent-btn" type="button" disabled>受諾する</button>
-      </section>
+      <div class="mt-4 text-[11px] text-zinc-600">
+        Build: VS0 • Component: <span class="text-zinc-400">IDUNA</span>
+      </div>
     </main>
+  </div>
 
-    <script>
-      const checkbox = document.getElementById('consent-check');
-      const consentBtn = document.getElementById('consent-btn');
-
-      checkbox.addEventListener('change', () => {
-        consentBtn.disabled = !checkbox.checked;
-      });
-    </script>
-  </body>
+  <script src="/app.js"></script>
+</body>
 </html>
