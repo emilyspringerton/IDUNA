@@ -350,19 +350,19 @@ Integration tests:
 
 ---
 
-## 17) VS0 done definition
+## 17) VS0 acceptance / done definition
 
 A user can:
-- authenticate with Google,
-- accept THE_HONOR_CODE,
-- set a unique gamertag,
-- and enter the world.
+- [IN PROGRESS] authenticate with Google,
+- [COMPLETE] accept THE_HONOR_CODE,
+- [REGRESS] set a unique gamertag,
+- [TODO] enter the world.
 
 System guarantees:
-- append-only event ledger,
-- replayable projections,
-- case-insensitive gamertag uniqueness,
-- honor code version enforcement.
+- [DONE DONE] append-only event ledger,
+- [IN PROGRESS] replayable projections,
+- [COMPLETE] case-insensitive gamertag uniqueness,
+- [TODO] honor code version enforcement.
 
 ---
 
