@@ -1,107 +1,104 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>IDUNA // VS0</title>
-
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: { mono: ['ui-monospace','SFMono-Regular','Menlo','Monaco','Consolas','Liberation Mono','Courier New','monospace'] }
-        }
-      }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UNAGENT — Event Stream</title>
+  <style>
+    :root {
+      color-scheme: light;
     }
-  </script>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f7f7f7;
+      margin: 0;
+      padding: 1rem;
+      color: #222;
+    }
+    h1 {
+      font-size: 1rem;
+      font-weight: 500;
+      margin: 0 0 1rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: #777;
+      margin-bottom: 1rem;
+    }
+    .event {
+      background: white;
+      padding: 0.65rem 0.75rem;
+      margin-bottom: 0.5rem;
+      border-left: 3px solid #ccc;
+      font-size: 0.85rem;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+    .type {
+      font-weight: 600;
+      color: #555;
+    }
+    .summary {
+      margin-top: 0.25rem;
+    }
+    .meta {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.35rem;
+      color: #999;
+      font-size: 0.75rem;
+    }
+    .empty {
+      font-size: 0.85rem;
+      color: #888;
+      padding: 1rem 0;
+    }
+  </style>
 </head>
+<body>
+  <h1>Event Stream (read-only)</h1>
+  <div class="subtitle">This viewer exists so you can look, not react.</div>
 
-<body class="bg-zinc-950 text-zinc-100 font-mono min-h-screen">
-  <div class="min-h-screen flex items-center justify-center p-6">
-    <main class="w-full max-w-md">
-      <div class="mb-6">
-        <div class="text-xs tracking-[0.35em] text-zinc-400">IDUNA</div>
-        <h1 class="mt-2 text-2xl tracking-tight">VS0 Registration</h1>
-        <p class="mt-2 text-sm text-zinc-400">Google OAuth -> THE_HONOR_CODE -> unique gamertag</p>
-      </div>
+  <div id="events" class="events"></div>
+  <div id="empty" class="empty">No events yet. Check back later.</div>
 
-      <section class="border border-cyan-500/30 rounded-lg p-5 bg-zinc-950/40 shadow-[0_0_0_1px_rgba(34,211,238,0.10)]">
-        <div id="status" class="text-xs text-zinc-400 mb-4">BOOT: idle</div>
+  <script>
+    let lastID = 0;
 
-        <div id="screen-login" class="space-y-4">
-          <button id="btn-google"
-            class="w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
-                   bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm">
-            Continue with Google
-          </button>
-          <div class="text-xs text-zinc-500 leading-relaxed">
-            By continuing, you'll be asked to accept <span class="text-zinc-300">THE_HONOR_CODE</span> and choose a permanent gamertag.
-          </div>
+    async function poll() {
+      const res = await fetch(`/events?since=${lastID}`);
+      const data = await res.json();
+
+      if (data.length > 0) {
+        document.getElementById("empty").style.display = "none";
+      }
+
+      data.forEach((event) => {
+        lastID = Math.max(lastID, event.id);
+        render(event);
+      });
+    }
+
+    function render(event) {
+      const div = document.createElement("div");
+      div.className = "event";
+      div.innerHTML = `
+        <div class="type">${event.type}</div>
+        <div class="summary">${event.summary}</div>
+        <div class="meta">
+          <span>${new Date(event.ts / 1e6).toLocaleString()}</span>
+          <span>•</span>
+          <span>${event.key || "—"}</span>
         </div>
+      `;
 
-        <div id="screen-honor" class="hidden space-y-4">
-          <div class="text-sm text-zinc-200">THE_HONOR_CODE</div>
-          <div id="honor-body"
-               class="h-48 overflow-auto rounded-md border border-cyan-500/20 p-3 text-xs text-zinc-300 bg-black/20 leading-relaxed whitespace-pre-wrap">
-          </div>
+      const container = document.getElementById("events");
+      container.prepend(div);
+    }
 
-          <label class="flex items-start gap-3 text-xs text-zinc-300">
-            <input id="honor-check" type="checkbox" class="mt-1 accent-cyan-400"/>
-            <span>I have read the declaration and agree to it.</span>
-          </label>
-
-          <button id="btn-accept"
-            class="w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
-                   bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm disabled:opacity-40 disabled:hover:border-cyan-500/30"
-            disabled>
-            Accept
-          </button>
-        </div>
-
-        <div id="screen-handle" class="hidden space-y-4">
-          <div class="text-sm text-zinc-200">Choose your gamertag</div>
-
-          <div class="space-y-2">
-            <input id="handle-input"
-              class="w-full px-3 py-3 rounded-md border border-cyan-500/20 bg-black/20 focus:outline-none focus:border-cyan-400/60 text-sm"
-              placeholder="e.g. LASVEGASEMILY89" maxlength="16" autocomplete="off" />
-            <div id="handle-hint" class="text-xs text-zinc-400">
-              3–16 chars • letters/numbers/_ • must be unique
-            </div>
-          </div>
-
-          <button id="btn-lock"
-            class="w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
-                   bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm disabled:opacity-40 disabled:hover:border-cyan-500/30"
-            disabled>
-            Lock it in
-          </button>
-
-          <div class="pt-1 text-[11px] text-zinc-500 leading-relaxed">
-            Your gamertag is your MMO character name on the persistent single-shard world. Pick carefully.
-          </div>
-        </div>
-
-        <div id="screen-done" class="hidden space-y-4">
-          <div class="text-sm text-zinc-200">Complete</div>
-          <div class="text-xs text-zinc-400 leading-relaxed">
-            Registration complete. Routing to the world…
-          </div>
-          <a id="btn-enter" href="/"
-             class="inline-flex items-center justify-center w-full px-4 py-3 rounded-md border border-cyan-500/30 hover:border-cyan-400/60
-                    bg-zinc-950/40 hover:bg-zinc-950/60 transition text-sm">
-            Enter
-          </a>
-        </div>
-      </section>
-
-      <div class="mt-4 text-[11px] text-zinc-600">
-        Build: VS0 • Component: <span class="text-zinc-400">IDUNA</span>
-      </div>
-    </main>
-  </div>
-
-  <script src="/app.js"></script>
+    setInterval(poll, 2000);
+    poll();
+  </script>
 </body>
 </html>
