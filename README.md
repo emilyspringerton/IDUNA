@@ -1,280 +1,83 @@
-# IDUNA
-CITY_OF_LIGHT
-
-Threat Level Megamacrometa Prompt
-Core Concept
-
-Threat levels are not “difficulty ratings.”
-
-They are:
-
-Measures of systemic reality destabilization
-
-A threat is defined by how much of the world model it stresses, violates, or endangers.
-
-Threats may be:
-
-technical
-
-economic
-
-social
-
-narrative
-
-governance-related
-
-ontological (continuity breaking)
-
-MIN → MAX Threat Spectrum
-LEVEL 0 — Ambient Noise
-
-Normal background fluctuation
-
-Characteristics:
-
-✔ No persistent damage
-✔ No rule violations
-✔ No continuity risks
-✔ No governance response required
-
-Examples:
-
-transient glitches
-
-expected variance
-
-harmless anomalies
-
-cosmetic inconsistencies
-
-System posture:
-
-IGNORE / LOG ONLY
-
-LEVEL 1 — Localized Anomaly
-
-Contained irregularity
-
-Characteristics:
-
-✔ Bounded scope
-✔ No cross-system effects
-✔ No economy distortion
-✔ No identity corruption
-
-Examples:
-
-minor projection mismatch
-
-isolated simulation divergence
-
-non-reproducible visual errors
-
-System posture:
-
-OBSERVE / SOFT CORRECT
-
-LEVEL 2 — Mechanical Instability
-
-Rules behave unexpectedly
-
-Characteristics:
-
-✔ Determinism threatened
-✔ Crafting/material flows may misbehave
-✔ Scoreboards may drift
-✔ Player-visible inconsistencies
-
-Examples:
-
-duplicate drops
-
-crafting miscalculations
-
-ranking discrepancies
-
-timing/state desync
-
-System posture:
-
-CORRECTIVE EVENTS / INVESTIGATE CAUSALITY
-
-LEVEL 3 — Economic Distortion
-
-Value systems at risk
-
-Characteristics:
-
-✔ Resource lineage integrity threatened
-✔ Scarcity assumptions break
-✔ Trade systems destabilize
-✔ Exploit potential high
-
-Examples:
-
-unintended material generation loops
-
-market simulation corruption
-
-inventory/state divergence
-
-replay inconsistencies affecting value
-
-System posture:
-
-IMMEDIATE GOVERNANCE VISIBILITY / HARD CORRECTIONS
-
-LEVEL 4 — Identity / Authority Risk
-
-Trust & legitimacy endangered
-
-Characteristics:
-
-✔ IAM inconsistencies
-✔ Agent capability violations
-✔ Permission model stress
-✔ Governance anomalies
-
-Examples:
-
-privilege leakage
-
-role misassignment
-
-token/session inconsistencies
-
-impersonation-like state
-
-System posture:
-
-LOCK / FREEZE / AUDIT / REVOKE IF NECESSARY
-
-LEVEL 5 — Cross-System Reality Drift
-
-Multiple subsystems disagree about truth
-
-Characteristics:
-
-✔ Event store vs projections diverge
-✔ Scoreboards unreliable
-✔ Material lineage ambiguous
-✔ Replay safety threatened
-
-Examples:
-
-inconsistent state rebuilds
-
-conflicting world truths
-
-systemic reconciliation failure
-
-System posture:
-
-SYSTEMIC INTERVENTION / REBUILD / AGENT ESCALATION
-
-LEVEL 6 — Continuity Hazard
-
-Auraborialis-class risk
-
-Characteristics:
-
-✔ Timeline integrity threatened
-✔ Cycle boundaries ambiguous
-✔ Historical causality endangered
-✔ Archive legitimacy at risk
-
-Examples:
-
-event ordering violations
-
-cycle corruption
-
-irreversible projection conflicts
-
-causality paradox states
-
-System posture:
-
-CONSTITUTIONAL RESPONSE / WORLD-STABILITY PROTOCOLS
-
-LEVEL 7 — Ontological Threat
-
-Reality definition failure
-
-Characteristics:
-
-✔ World rules no longer authoritative
-✔ Identity/material causality collapses
-✔ Governance semantics break
-✔ Simulation trust lost
-
-Examples:
-
-unbounded creation/destruction
-
-identity incoherence
-
-unrecoverable state ambiguity
-
-System posture:
-
-EMERGENCY MODE / CONTAINMENT / POSSIBLE CYCLE TERMINATION
-
-LEVEL Ω — Mythic / Narrative Catastrophe
-
-Reserved for design metaphysics
-
-Not technical severity.
-
-Represents:
-
-✔ Universe reboot logic
-✔ Canonical reality reset triggers
-✔ Auraborialis invocation conditions
-
-Used sparingly.
-
-Critical Design Insight
-
-In Avengers-style fiction:
-
-Threat = physical destruction
-
-In your system:
-
-Threat = reality model destabilization
-
-Which is far more powerful and internally consistent with:
-
-✔ Event sourcing
-✔ Governance systems
-✔ Persistent identity
-✔ Crafting/material lineage
-✔ Scoreboards
-
-How Codex / Systems Should Use This
-
-This becomes a reasoning scaffold:
-
-When adding any feature / mechanic / subsystem, ask:
-
-What threat levels could this introduce if misbehaving?
-
-Which levels are tolerable without intervention?
-
-Which levels require governance events?
-
-Which levels justify projection rebuilds?
-
-Which levels justify continuity protocols?
-
-Megamacrometa Framing Rule
-
-Systems are not designed to eliminate anomalies.
-
-They are designed to:
-
-Prevent low-level anomalies from escalating into continuity hazards
-
-That’s your equivalent of Avengers-scale stakes.
+# IDUNA (VS0)
+
+IDUNA is the **social network of tournaments** component for VS0.
+
+## Activated Mode
+
+**Mode entered:** `IDUNA / VS0 social tournament network` with:
+- Google OAuth registration
+- Mandatory `THE_HONOR_CODE` acceptance (versioned)
+- Tournament social graph and activity feed primitives
+
+## Product Goals
+
+- One durable identity per person via Google (`provider=google`, `sub` as canonical external key).
+- No fully active account until the user accepts the current `THE_HONOR_CODE`.
+- Social tournament baseline: profiles, follows, tournaments, entrants, bracket/matches, results, feed activity.
+- Security-first defaults: rate limiting, minimal PII, auditable actions.
+
+## Core UX Flows
+
+### A) First-time signup
+1. User starts Google OAuth.
+2. Backend verifies callback and resolves/creates account.
+3. Backend returns session/token and `honor_code.required=true` payload.
+4. Client shows honor code gate.
+5. User accepts current honor-code hash.
+6. Account transitions to `active`.
+
+### B) Returning login
+- If the current honor-code version/hash changed, user logs in as restricted and must re-accept before write actions.
+
+## Data Model (Phase 1)
+
+- `users` (`status`: `pending_honor | active | suspended`, handle/display profile fields)
+- `user_identities` (provider + provider_subject unique)
+- `sessions` (or token-based equivalent)
+- `honor_code_versions` (versioned canonical text + hash)
+- `honor_code_acceptances` (user acceptance records)
+- `follows`
+- `tournaments`
+- `tournament_entrants`
+- `matches` (+ optional `match_games`)
+- `activities`
+- `audit_log`
+
+## API Surface (Phase 1)
+
+### Auth / Honor
+- `GET /auth/google/start`
+- `POST /auth/google/callback`
+- `POST /honor-code/accept`
+- `GET /me`
+- `PATCH /me`
+
+### Social
+- `POST /users/:id/follow`
+- `DELETE /users/:id/follow`
+- `GET /users/:id`
+- `GET /feed`
+
+### Tournaments
+- `POST /tournaments`
+- `GET /tournaments`
+- `GET /tournaments/:slug`
+- `POST /tournaments/:id/register`
+- `POST /tournaments/:id/check-in`
+- `POST /tournaments/:id/lock`
+- `POST /tournaments/:id/start`
+- `GET /tournaments/:id/bracket`
+- `POST /matches/:id/report`
+- `POST /matches/:id/verify`
+- `POST /tournaments/:id/complete`
+
+## Enforcement Rule
+
+For all write endpoints, if user is not `active` or has not accepted the current honor code:
+- return `403 HONOR_CODE_REQUIRED`
+- include the current honor-code payload so clients can route the user to acceptance.
+
+## Current Web Routes
+
+- `/` — VS0 registration (Google OAuth -> THE_HONOR_CODE -> handle)
+- `/event-stream/` — read-only event viewer
