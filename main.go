@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"iduna/internal/auth/device"
+	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
+	"iduna/internal/http/middleware"
+	"iduna/internal/store"
 	"iduna/internal/util"
 )
 
@@ -26,16 +29,59 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Device flow (existing).
 	svc := device.NewService(device.NewMySQLStore(db))
-	h := &handlers.DeviceHandler{
+	deviceH := &handlers.DeviceHandler{
 		Svc:            svc,
 		StartLimiter:   util.NewWindowRateLimiter(10, time.Minute),
 		ConfirmLimiter: util.NewWindowRateLimiter(20, time.Minute),
 		JWTSecret:      []byte(os.Getenv("JWT_SECRET")),
 		BaseURL:        getenv("BASE_URL", "http://localhost:8080"),
 	}
+
+	// ES256 key management.
+	keyFile := getenv("KEY_FILE", "./iduna-key.json")
+	keys, err := authjwt.LoadOrGenerateKeys(keyFile)
+	if err != nil {
+		log.Fatalf("loading ES256 keys: %v", err)
+	}
+
+	// IAM store.
+	iamStore := store.NewMySQLStore(db)
+
+	issuer := getenv("JWT_ISSUER", "https://iam.farthq.internal")
+	baseURL := getenv("BASE_URL", "http://localhost:8080")
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+
+	// Handlers.
+	googleAuthH := &handlers.GoogleAuthHandler{
+		GoogleClientID: googleClientID,
+		Keys:           keys,
+		Store:          iamStore,
+		Issuer:         issuer,
+	}
+	meH := &handlers.MeHandler{
+		Store:     iamStore,
+		Authority: baseURL,
+	}
+	jwksH := &handlers.JWKSHandler{Keys: keys}
+	healthH := &handlers.HealthHandler{}
+
 	mux := http.NewServeMux()
-	h.Register(mux)
+
+	// Existing device routes.
+	deviceH.Register(mux)
+
+	// New IAM routes.
+	mux.Handle("/api/v1/auth/google", googleAuthH)
+	mux.Handle("/api/v1/identities/me",
+		middleware.RequireAuth(keys)(
+			middleware.RequirePermission("iduna.me.read")(meH),
+		),
+	)
+	mux.Handle("/.well-known/jwks.json", jwksH)
+	mux.Handle("/health", healthH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
