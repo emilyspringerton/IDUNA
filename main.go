@@ -7,6 +7,8 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
+
 	"iduna/internal/auth/device"
 	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
