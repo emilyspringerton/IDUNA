@@ -62,10 +62,10 @@ Audit Viewer: Queryable stream of the Event Store to track every privileged acti
 Visual Direction: Muted tones, structured rows (ledger feel), and Rose Gold accents used only for irreversible consent or critical agreement actions
 .
 6. Implementation Checklist for Claude Code
-[ ] Implement MySQL schema for RBAC (users, roles, permissions, agents, and join tables).
-[ ] Refactor /auth endpoints to handle the transition from Google OAuth to internal JWT issuance.
-[ ] Create a JWT signer/generator that injects roles and permissions into claims.
-[ ] Add middleware to IDUNA's own API to enforce internal permissions (e.g., users.write).
-[ ] Implement the Event Store producers for all identity and governance actions.
-[ ] Update the /me or /entitlements endpoint to return the new unified identity and capability profile
+[x] Implement MySQL schema for RBAC (users, roles, permissions, agents, and join tables).
+[x] Refactor /auth endpoints to handle the transition from Google OAuth to internal JWT issuance.
+[x] Create a JWT signer/generator that injects roles and permissions into claims.
+[x] Add middleware to IDUNA's own API to enforce internal permissions (e.g., users.write).
+[x] Implement the Event Store producers for all identity and governance actions.
+[x] Update the /me or /entitlements endpoint to return the new unified identity and capability profile
 .
