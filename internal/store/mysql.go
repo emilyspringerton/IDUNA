@@ -133,6 +133,151 @@ func (s *MySQLStore) UpdateUserStatus(ctx context.Context, userID, status, opera
 	return nil
 }
 
+// --- Admin operations ---
+
+// ListUsers returns up to limit users ordered by created_at desc.
+func (s *MySQLStore) ListUsers(ctx context.Context, limit int) ([]auth.User, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, COALESCE(email,''), COALESCE(gamertag,''), status,
+		       COALESCE(roles_json, JSON_ARRAY()),
+		       honor_accepted_current, COALESCE(honor_code_sha,''), honor_code_version, COALESCE(honor_code_text,'')
+		FROM users ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUsers(rows)
+}
+
+// AssignRole grants a role to a user.
+func (s *MySQLStore) AssignRole(ctx context.Context, userID, roleID, operatorID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)`, userID, roleID)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"role_id": roleID})
+	_ = s.AppendIAMEvent(ctx, "RoleAssigned", "USER", userID, operatorID, payload)
+	return nil
+}
+
+// RevokeRole removes a role from a user.
+func (s *MySQLStore) RevokeRole(ctx context.Context, userID, roleID, operatorID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM user_roles WHERE user_id=? AND role_id=?`, userID, roleID)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"role_id": roleID})
+	_ = s.AppendIAMEvent(ctx, "RoleRevoked", "USER", userID, operatorID, payload)
+	return nil
+}
+
+// ListRoles returns all defined roles.
+func (s *MySQLStore) ListRoles(ctx context.Context) ([]auth.Role, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, name, COALESCE(description,'') FROM roles ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var roles []auth.Role
+	for rows.Next() {
+		var r auth.Role
+		if err := rows.Scan(&r.ID, &r.Name, &r.Description); err != nil {
+			return nil, err
+		}
+		roles = append(roles, r)
+	}
+	return roles, rows.Err()
+}
+
+// ListAgents returns all agents ordered by created_at desc.
+func (s *MySQLStore) ListAgents(ctx context.Context) ([]auth.Agent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, owner_user_id, name, type, status, created_at, updated_at
+		FROM agents ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []auth.Agent
+	for rows.Next() {
+		var a auth.Agent
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Type, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// CreateAgent inserts a new agent and emits an AgentCreated event.
+func (s *MySQLStore) CreateAgent(ctx context.Context, ownerUserID, name, agentType, operatorID string) (*auth.Agent, error) {
+	id, err := util.NewUUID()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO agents (id, owner_user_id, name, type, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+		id, ownerUserID, name, agentType, now, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]string{"name": name, "type": agentType, "owner": ownerUserID})
+	_ = s.AppendIAMEvent(ctx, "AgentCreated", "AGENT", id, operatorID, payload)
+	return &auth.Agent{
+		ID:          id,
+		OwnerUserID: ownerUserID,
+		Name:        name,
+		Type:        agentType,
+		Status:      "ACTIVE",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, nil
+}
+
+// UpdateAgentStatus changes an agent's status and emits an event.
+func (s *MySQLStore) UpdateAgentStatus(ctx context.Context, agentID, status, operatorID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET status=?, updated_at=NOW(6) WHERE id=?`, status, agentID)
+	if err != nil {
+		return err
+	}
+	eventType := "AgentStatusChanged"
+	if status == "SUSPENDED" {
+		eventType = "AgentSuspended"
+	}
+	payload, _ := json.Marshal(map[string]string{"status": status})
+	_ = s.AppendIAMEvent(ctx, eventType, "AGENT", agentID, operatorID, payload)
+	return nil
+}
+
+// ListIAMEvents returns the most recent limit events from iam_event_stream.
+func (s *MySQLStore) ListIAMEvents(ctx context.Context, limit int) ([]auth.IAMEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT event_id, event_type, aggregate_type, aggregate_id,
+		       COALESCE(operator_id,''), COALESCE(payload,'null'), recorded_at
+		FROM iam_event_stream ORDER BY event_id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []auth.IAMEvent
+	for rows.Next() {
+		var e auth.IAMEvent
+		if err := rows.Scan(&e.EventID, &e.EventType, &e.AggregateType, &e.AggregateID,
+			&e.OperatorID, &e.Payload, &e.RecordedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
 // --- internal helpers ---
 
 func (s *MySQLStore) getUserByGoogleSubject(ctx context.Context, googleSub string) (*auth.User, error) {
@@ -151,6 +296,26 @@ func (s *MySQLStore) getUserByID(ctx context.Context, id string) (*auth.User, er
 		       honor_accepted_current, COALESCE(honor_code_sha,''), honor_code_version, COALESCE(honor_code_text,'')
 		FROM users WHERE id=?`, id)
 	return scanUser(row)
+}
+
+func scanUsers(rows *sql.Rows) ([]auth.User, error) {
+	var users []auth.User
+	for rows.Next() {
+		var u auth.User
+		var idStr string
+		var rolesJSON []byte
+		if err := rows.Scan(
+			&idStr, &u.Email, &u.Handle, &u.Status, &rolesJSON,
+			&u.HonorAccepted, &u.HonorCurrentSHA, &u.HonorCurrentVer, &u.HonorCurrentText,
+		); err != nil {
+			return nil, err
+		}
+		u.IDString = idStr
+		copy(u.ID[:], []byte(idStr))
+		_ = json.Unmarshal(rolesJSON, &u.Roles)
+		users = append(users, u)
+	}
+	return users, rows.Err()
 }
 
 func scanUser(row *sql.Row) (*auth.User, error) {

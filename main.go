@@ -68,6 +68,8 @@ func main() {
 	}
 	jwksH := &handlers.JWKSHandler{Keys: keys}
 	healthH := &handlers.HealthHandler{}
+	adminH := &handlers.AdminHandler{Store: iamStore}
+	adminH.Init()
 
 	mux := http.NewServeMux()
 
@@ -83,6 +85,11 @@ func main() {
 	)
 	mux.Handle("/.well-known/jwks.json", jwksH)
 	mux.Handle("/health", healthH)
+
+	// Admin UI — requires iduna.admin permission.
+	adminProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("iduna.admin")(adminH))
+	mux.Handle("/admin", adminProtected)
+	mux.Handle("/admin/", adminProtected)
 
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))

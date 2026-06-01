@@ -25,4 +25,30 @@ type IAMStore interface {
 
 	// UpdateUserStatus changes the user's status and emits a corresponding IAM event.
 	UpdateUserStatus(ctx context.Context, userID, status, operatorID string) error
+
+	// --- Admin operations ---
+
+	// ListUsers returns up to limit users ordered by created_at desc.
+	ListUsers(ctx context.Context, limit int) ([]auth.User, error)
+
+	// AssignRole grants a role to a user, emitting a RoleAssigned event.
+	AssignRole(ctx context.Context, userID, roleID, operatorID string) error
+
+	// RevokeRole removes a role from a user, emitting a RoleRevoked event.
+	RevokeRole(ctx context.Context, userID, roleID, operatorID string) error
+
+	// ListRoles returns all defined roles.
+	ListRoles(ctx context.Context) ([]auth.Role, error)
+
+	// ListAgents returns all agents ordered by created_at desc.
+	ListAgents(ctx context.Context) ([]auth.Agent, error)
+
+	// CreateAgent inserts a new agent and emits an AgentCreated event.
+	CreateAgent(ctx context.Context, ownerUserID, name, agentType, operatorID string) (*auth.Agent, error)
+
+	// UpdateAgentStatus changes an agent's status and emits an event.
+	UpdateAgentStatus(ctx context.Context, agentID, status, operatorID string) error
+
+	// ListIAMEvents returns the most recent limit events from iam_event_stream.
+	ListIAMEvents(ctx context.Context, limit int) ([]auth.IAMEvent, error)
 }
