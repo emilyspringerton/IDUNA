@@ -62,6 +62,11 @@ func main() {
 		Store:          iamStore,
 		Issuer:         issuer,
 	}
+	agentAuthH := &handlers.AgentAuthHandler{
+		Keys:   keys,
+		Store:  iamStore,
+		Issuer: issuer,
+	}
 	meH := &handlers.MeHandler{
 		Store:     iamStore,
 		Authority: baseURL,
@@ -78,12 +83,14 @@ func main() {
 
 	// New IAM routes.
 	mux.Handle("/api/v1/auth/google", googleAuthH)
+	mux.Handle("/api/v1/auth/agent", agentAuthH) // M2M credential exchange (HQ-SPEC-IAM-095 §3.1)
 	mux.Handle("/api/v1/identities/me",
 		middleware.RequireAuth(keys)(
 			middleware.RequirePermission("iduna.me.read")(meH),
 		),
 	)
 	mux.Handle("/.well-known/jwks.json", jwksH)
+	mux.Handle("/api/v1/jwks", jwksH) // also serve JWKS on the path idunaauth expects
 	mux.Handle("/health", healthH)
 
 	// Admin UI — requires iduna.admin permission.

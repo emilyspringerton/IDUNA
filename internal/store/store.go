@@ -49,6 +49,19 @@ type IAMStore interface {
 	// UpdateAgentStatus changes an agent's status and emits an event.
 	UpdateAgentStatus(ctx context.Context, agentID, status, operatorID string) error
 
+	// --- Agent M2M credentials (spec HQ-SPEC-IAM-095 §3.1) ---
+
+	// SetAgentCredential stores a bcrypt hash of the given plaintext secret for the
+	// agent. The previous credential (if any) is replaced. operatorID is recorded in
+	// the resulting IAM event for audit.
+	SetAgentCredential(ctx context.Context, agentID, plaintextSecret, operatorID string) error
+
+	// AuthenticateAgent looks up an agent by name, verifies the plaintext secret
+	// against its stored bcrypt hash, and returns the agent with its effective
+	// permissions. Returns a non-nil error when authentication fails (name not found,
+	// no credential set, wrong secret, or agent not ACTIVE).
+	AuthenticateAgent(ctx context.Context, agentName, plaintextSecret string) (*auth.Agent, error)
+
 	// ListIAMEvents returns the most recent limit events from iam_event_stream.
 	ListIAMEvents(ctx context.Context, limit int) ([]auth.IAMEvent, error)
 }

@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -340,4 +343,87 @@ func scanUser(row *sql.Row) (*auth.User, error) {
 	copy(u.ID[:], []byte(idStr))
 	_ = json.Unmarshal(rolesJSON, &u.Roles)
 	return &u, nil
+}
+
+// hashAgentSecret returns a hex-encoded SHA-256 hash of the plaintext secret,
+// salted with the agent ID to prevent rainbow-table attacks.
+// M2M API keys are long random strings, so SHA-256 is appropriate (bcrypt
+// is unnecessary and would add an external dependency).
+func hashAgentSecret(agentID, plaintext string) string {
+	h := sha256.New()
+	h.Write([]byte(agentID))
+	h.Write([]byte(":"))
+	h.Write([]byte(plaintext))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// SetAgentCredential stores a SHA-256 hash of the plaintext secret for the agent.
+func (s *MySQLStore) SetAgentCredential(ctx context.Context, agentID, plaintextSecret, operatorID string) error {
+	hash := hashAgentSecret(agentID, plaintextSecret)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET api_key_hash=?, updated_at=? WHERE id=?`,
+		hash, time.Now().UTC(), agentID,
+	)
+	if err != nil {
+		return fmt.Errorf("set agent credential: %w", err)
+	}
+	payload, _ := json.Marshal(map[string]string{"agent_id": agentID})
+	_ = s.AppendIAMEvent(ctx, "AgentCredentialSet", "AGENT", agentID, operatorID, payload)
+	return nil
+}
+
+// AuthenticateAgent verifies agent name + secret and returns the agent with
+// its effective permissions. Returns error when name not found, no credential
+// set, wrong secret, or agent not ACTIVE.
+func (s *MySQLStore) AuthenticateAgent(ctx context.Context, agentName, plaintextSecret string) (*auth.Agent, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, owner_user_id, name, type, status, COALESCE(api_key_hash,'')
+		 FROM agents WHERE name=?`, agentName)
+	var a auth.Agent
+	var storedHash string
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Type, &a.Status, &storedHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("agent not found")
+		}
+		return nil, err
+	}
+	if a.Status != "ACTIVE" {
+		return nil, fmt.Errorf("agent is not active (status=%s)", a.Status)
+	}
+	if storedHash == "" {
+		return nil, fmt.Errorf("no credential provisioned for agent %q", agentName)
+	}
+	expected := hashAgentSecret(a.ID, plaintextSecret)
+	if storedHash != expected {
+		return nil, fmt.Errorf("invalid agent secret")
+	}
+	perms, err := s.GetAgentPermissions(ctx, a.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get agent permissions: %w", err)
+	}
+	a.Permissions = perms
+	return &a, nil
+}
+
+// GetAgentPermissions returns the effective permissions for an agent via
+// its agent_permissions join table.
+func (s *MySQLStore) GetAgentPermissions(ctx context.Context, agentID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT p.name FROM permissions p
+		 JOIN agent_permissions ap ON ap.permission_id = p.id
+		 WHERE ap.agent_id = ?
+		 ORDER BY p.name`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var perms []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		perms = append(perms, name)
+	}
+	return perms, rows.Err()
 }
