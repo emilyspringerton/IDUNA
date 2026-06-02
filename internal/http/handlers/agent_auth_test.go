@@ -57,6 +57,15 @@ func (s *stubAgentStore) ListIAMEvents(context.Context, int) ([]auth.IAMEvent, e
 func (s *stubAgentStore) SetAgentCredential(context.Context, string, string, string) error {
 	return nil
 }
+func (s *stubAgentStore) AppendApple(context.Context, auth.AppleRecord) (int64, error) {
+	return 0, nil
+}
+func (s *stubAgentStore) ListApples(context.Context, string, string, string, int) ([]auth.AppleRecord, error) {
+	return nil, nil
+}
+func (s *stubAgentStore) GetApple(context.Context, int64) (*auth.AppleRecord, error) {
+	return nil, nil
+}
 
 func TestAgentAuthHandler_Success(t *testing.T) {
 	k, err := jwt.GenerateKeys()

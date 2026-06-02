@@ -64,4 +64,16 @@ type IAMStore interface {
 
 	// ListIAMEvents returns the most recent limit events from iam_event_stream.
 	ListIAMEvents(ctx context.Context, limit int) ([]auth.IAMEvent, error)
+
+	// --- Apples (HQ-SPEC-IAM-096) ---
+
+	// AppendApple inserts a golden documentation record and emits ApplePublished to iam_event_stream.
+	AppendApple(ctx context.Context, apple auth.AppleRecord) (id int64, err error)
+
+	// ListApples returns up to limit apples, most recent first.
+	// Pass empty strings to omit a filter; pass 0 for limit to use the default (50).
+	ListApples(ctx context.Context, agentID, sourceRepo, appleType string, limit int) ([]auth.AppleRecord, error)
+
+	// GetApple returns a single apple by its integer ID.
+	GetApple(ctx context.Context, id int64) (*auth.AppleRecord, error)
 }

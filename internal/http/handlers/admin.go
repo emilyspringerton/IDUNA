@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/agents", h.agents)
 	h.mux.HandleFunc("/admin/agents/", h.agentAction)
 	h.mux.HandleFunc("/admin/audit", h.audit)
+	h.mux.HandleFunc("/admin/apples", h.apples)
+	h.mux.HandleFunc("/admin/apples/", h.appleDetail)
 }
 
 // ServeHTTP dispatches admin routes. Mount at /admin and /admin/ with auth middleware.
@@ -216,6 +219,79 @@ func (h *AdminHandler) audit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- apples ---
+
+func (h *AdminHandler) apples(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+
+	q := r.URL.Query()
+	agentID := q.Get("agent_id")
+	sourceRepo := q.Get("source_repo")
+	appleType := q.Get("apple_type")
+	limit := 200
+
+	apples, err := h.Store.ListApples(ctx, agentID, sourceRepo, appleType, limit)
+	if err != nil {
+		http.Error(w, "failed to list apples: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	renderHTML(w, adminApplesTmpl, map[string]any{
+		"Title":      "Apples Ledger",
+		"Apples":     apples,
+		"AgentID":    agentID,
+		"SourceRepo": sourceRepo,
+		"AppleType":  appleType,
+	})
+}
+
+func (h *AdminHandler) appleDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	idStr := strings.TrimPrefix(r.URL.Path, "/admin/apples/")
+	idStr = strings.Trim(idStr, "/")
+	if idStr == "" {
+		http.Redirect(w, r, "/admin/apples", http.StatusSeeOther)
+		return
+	}
+	id, err := parseInt64(idStr)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid apple id", http.StatusBadRequest)
+		return
+	}
+	apple, err := h.Store.GetApple(r.Context(), id)
+	if err != nil {
+		http.Error(w, "apple not found", http.StatusNotFound)
+		return
+	}
+
+	var metaStr string
+	if len(apple.Metadata) > 0 && string(apple.Metadata) != "null" {
+		var m any
+		if err := json.Unmarshal(apple.Metadata, &m); err == nil {
+			out, _ := json.MarshalIndent(m, "", "  ")
+			metaStr = string(out)
+		} else {
+			metaStr = string(apple.Metadata)
+		}
+	}
+
+	renderHTML(w, adminAppleDetailTmpl, map[string]any{
+		"Title":    fmt.Sprintf("Apple #%d", apple.ID),
+		"Apple":    apple,
+		"Metadata": metaStr,
+	})
+}
+
+func parseInt64(s string) (int64, error) {
+	return strconv.ParseInt(s, 10, 64)
+}
+
 // --- helpers ---
 
 func renderHTML(w http.ResponseWriter, tmpl *template.Template, data any) {
@@ -273,6 +349,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/users">Users</a>
   <a href="/admin/agents">Agents</a>
   <a href="/admin/audit">Audit Log</a>
+  <a href="/admin/apples">Apples</a>
 </nav>
 <div class="container">
 {{block "body" .}}{{end}}
@@ -479,5 +556,82 @@ var adminAuditTmpl = mustParseTmpl("audit", `
 </table>
 {{else}}
 <p class="empty">No audit events yet.</p>
+{{end}}
+{{end}}`)
+
+var adminApplesTmpl = mustParseTmpl("apples", `
+{{define "body"}}
+<h1>Apples Ledger</h1>
+<p class="meta" style="margin-bottom:12px">Golden documentation records from recursive self-improvement runs. Append-only.</p>
+
+<div class="section-card" style="margin-bottom:16px">
+<form method="GET" action="/admin/apples" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+  <div>
+    <label style="font-size:12px;display:block;margin-bottom:3px">Source Repo</label>
+    <input type="text" name="source_repo" value="{{.SourceRepo}}" placeholder="prrject-fatbaby">
+  </div>
+  <div>
+    <label style="font-size:12px;display:block;margin-bottom:3px">Agent ID</label>
+    <input type="text" name="agent_id" value="{{.AgentID}}" placeholder="agent UUID">
+  </div>
+  <div>
+    <label style="font-size:12px;display:block;margin-bottom:3px">Type</label>
+    <select name="apple_type">
+      <option value="">All</option>
+      <option value="improvement"{{if eq .AppleType "improvement"}} selected{{end}}>improvement</option>
+      <option value="observation"{{if eq .AppleType "observation"}} selected{{end}}>observation</option>
+      <option value="incident"{{if eq .AppleType "incident"}} selected{{end}}>incident</option>
+      <option value="release"{{if eq .AppleType "release"}} selected{{end}}>release</option>
+      <option value="audit"{{if eq .AppleType "audit"}} selected{{end}}>audit</option>
+    </select>
+  </div>
+  <div><input type="submit" value="Filter"></div>
+  {{if or .SourceRepo .AgentID .AppleType}}<div><a href="/admin/apples" style="font-size:12px;line-height:26px">clear</a></div>{{end}}
+</form>
+</div>
+
+{{if .Apples}}
+<table>
+<tr><th>#</th><th>Recorded</th><th>Repo</th><th>Agent</th><th>Type</th><th>Title</th></tr>
+{{range .Apples}}
+<tr>
+  <td class="meta"><a href="/admin/apples/{{.ID}}">{{.ID}}</a></td>
+  <td class="meta">{{fmtTime .RecordedAt}}</td>
+  <td class="meta">{{.SourceRepo}}</td>
+  <td class="meta" style="max-width:120px;overflow:hidden;text-overflow:ellipsis">{{.AgentID}}</td>
+  <td><span class="badge badge-pending">{{.AppleType}}</span></td>
+  <td><a href="/admin/apples/{{.ID}}">{{.Title}}</a></td>
+</tr>
+{{end}}
+</table>
+{{else}}
+<p class="empty">No apples yet. Agents submit via POST /api/v1/apples.</p>
+{{end}}
+{{end}}`)
+
+var adminAppleDetailTmpl = mustParseTmpl("apple-detail", `
+{{define "body"}}
+<h1>{{.Title}}</h1>
+<p class="meta" style="margin-bottom:16px">
+  <a href="/admin/apples">← Apples ledger</a>
+</p>
+
+<div class="section-card" style="margin-bottom:16px">
+<table>
+<tr><th style="width:140px">ID</th><td class="meta">{{.Apple.ID}}</td></tr>
+<tr><th>Agent</th><td class="meta">{{.Apple.AgentID}}</td></tr>
+<tr><th>Source Repo</th><td class="meta">{{.Apple.SourceRepo}}</td></tr>
+<tr><th>Run ID</th><td class="meta">{{.Apple.RunID}}</td></tr>
+<tr><th>Type</th><td><span class="badge badge-pending">{{.Apple.AppleType}}</span></td></tr>
+<tr><th>Recorded</th><td class="meta">{{fmtTime .Apple.RecordedAt}}</td></tr>
+</table>
+</div>
+
+<h2>Body</h2>
+<pre style="white-space:pre-wrap;font-size:12px;line-height:1.6;margin-bottom:20px">{{.Apple.Body}}</pre>
+
+{{if .Metadata}}
+<h2>Metadata</h2>
+<pre style="font-size:11px">{{.Metadata}}</pre>
 {{end}}
 {{end}}`)

@@ -2,6 +2,20 @@ package auth
 
 import "time"
 
+// AppleRecord is a golden documentation entry from a self-improvement run.
+// Append-only: records are never updated or deleted.
+type AppleRecord struct {
+	ID         int64
+	AgentID    string
+	SourceRepo string
+	RunID      string
+	AppleType  string
+	Title      string
+	Body       string
+	Metadata   []byte    // raw JSON, may be nil
+	RecordedAt time.Time
+}
+
 // Agent is a first-class IAM identity for automated systems.
 type Agent struct {
 	ID          string

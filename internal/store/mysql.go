@@ -405,6 +405,114 @@ func (s *MySQLStore) AuthenticateAgent(ctx context.Context, agentName, plaintext
 	return &a, nil
 }
 
+// --- Apples (HQ-SPEC-IAM-096) ---
+
+// AppendApple inserts a golden documentation record and emits ApplePublished to iam_event_stream.
+// The insert and event emission run inside a single transaction.
+func (s *MySQLStore) AppendApple(ctx context.Context, apple auth.AppleRecord) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	metadata := apple.Metadata
+	if metadata == nil {
+		metadata = []byte("null")
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO apples (agent_id, source_repo, run_id, apple_type, title, body, metadata, recorded_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		apple.AgentID, apple.SourceRepo, apple.RunID, apple.AppleType,
+		apple.Title, apple.Body, metadata, time.Now().UTC(),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert apple: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("last insert id: %w", err)
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"apple_id":    id,
+		"source_repo": apple.SourceRepo,
+		"run_id":      apple.RunID,
+		"apple_type":  apple.AppleType,
+		"title":       apple.Title,
+	})
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO iam_event_stream (event_type, aggregate_type, aggregate_id, operator_id, payload, recorded_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		"ApplePublished", "AGENT", apple.AgentID, apple.AgentID, payload, time.Now().UTC(),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("append iam event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return id, nil
+}
+
+// ListApples returns up to limit apples ordered by recorded_at DESC.
+// Empty filter strings are ignored. limit <= 0 defaults to 50, max 500.
+func (s *MySQLStore) ListApples(ctx context.Context, agentID, sourceRepo, appleType string, limit int) ([]auth.AppleRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	q := `SELECT id, agent_id, source_repo, run_id, apple_type, title, recorded_at
+	      FROM apples WHERE 1=1`
+	args := []any{}
+	if agentID != "" {
+		q += " AND agent_id = ?"
+		args = append(args, agentID)
+	}
+	if sourceRepo != "" {
+		q += " AND source_repo = ?"
+		args = append(args, sourceRepo)
+	}
+	if appleType != "" {
+		q += " AND apple_type = ?"
+		args = append(args, appleType)
+	}
+	q += " ORDER BY recorded_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var apples []auth.AppleRecord
+	for rows.Next() {
+		var a auth.AppleRecord
+		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &a.RecordedAt); err != nil {
+			return nil, err
+		}
+		apples = append(apples, a)
+	}
+	return apples, rows.Err()
+}
+
+// GetApple returns a single apple by its integer ID, including body and metadata.
+func (s *MySQLStore) GetApple(ctx context.Context, id int64) (*auth.AppleRecord, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, agent_id, source_repo, run_id, apple_type, title, body, COALESCE(metadata,'null'), recorded_at
+		 FROM apples WHERE id = ?`, id)
+	var a auth.AppleRecord
+	if err := row.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &a.Body, &a.Metadata, &a.RecordedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("apple %d not found", id)
+		}
+		return nil, err
+	}
+	return &a, nil
+}
+
 // GetAgentPermissions returns the effective permissions for an agent via
 // its agent_permissions join table.
 func (s *MySQLStore) GetAgentPermissions(ctx context.Context, agentID string) ([]string, error) {

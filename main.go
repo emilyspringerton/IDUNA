@@ -75,6 +75,7 @@ func main() {
 	healthH := &handlers.HealthHandler{}
 	adminH := &handlers.AdminHandler{Store: iamStore}
 	adminH.Init()
+	applesH := &handlers.ApplesHandler{Store: iamStore}
 
 	mux := http.NewServeMux()
 
@@ -92,6 +93,11 @@ func main() {
 	mux.Handle("/.well-known/jwks.json", jwksH)
 	mux.Handle("/api/v1/jwks", jwksH) // also serve JWKS on the path idunaauth expects
 	mux.Handle("/health", healthH)
+
+	// Apples API — auth required; permission checks handled inside the handler.
+	applesProtected := middleware.RequireAuth(keys)(applesH)
+	mux.Handle("/api/v1/apples", applesProtected)
+	mux.Handle("/api/v1/apples/", applesProtected)
 
 	// Admin UI — requires iduna.admin permission.
 	adminProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("iduna.admin")(adminH))
