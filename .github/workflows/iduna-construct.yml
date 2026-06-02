@@ -1,0 +1,57 @@
+name: IDUNA Construct
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+concurrency:
+  group: iduna-construct-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  construct:
+    name: 🏛️ Test & Generate Deterministic Construct
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Go Tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./...
+
+      - name: Generate IDUNA Construct
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/generate_iduna_construct.sh IDUNA_CONSTRUCT.txt IDUNA_MANIFEST.txt
+
+      - name: Verify Deterministic Output
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/generate_iduna_construct.sh IDUNA_CONSTRUCT.verify.txt IDUNA_MANIFEST.verify.txt
+          cmp IDUNA_CONSTRUCT.txt IDUNA_CONSTRUCT.verify.txt
+          cmp IDUNA_MANIFEST.txt IDUNA_MANIFEST.verify.txt
+          rm -f IDUNA_CONSTRUCT.verify.txt IDUNA_MANIFEST.verify.txt
+
+      - name: Upload Construct Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: IDUNA_Construct_${{ github.run_number }}_${{ github.sha }}
+          path: |
+            IDUNA_MANIFEST.txt
+            IDUNA_CONSTRUCT.txt
