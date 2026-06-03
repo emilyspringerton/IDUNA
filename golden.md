@@ -251,25 +251,27 @@ Agents already have M2M credentials. The submission flow:
 
 ## 9. Implementation Checklist for Claude Code
 
+Implementation status as of 2026-06-03: complete in-repository. Live Apple publication still requires a deployed IDUNA instance, seeded agent credential, and database connection.
+
 ```
-[ ] migrations/truestore/202606020001_apples.sql
-[ ] Add AppleRecord type to internal/auth/agent.go
-[ ] Add AppendApple / ListApples / GetApple to IAMStore interface
-[ ] Implement in internal/store/mysql.go
+[x] migrations/truestore/202606020001_apples.sql
+[x] Add AppleRecord type to internal/auth/agent.go
+[x] Add AppendApple / ListApples / GetApple to IAMStore interface
+[x] Implement in internal/store/mysql.go
     - AppendApple: INSERT + AppendIAMEvent in transaction
     - ListApples: SELECT with optional filters
     - GetApple: SELECT by id
-[ ] internal/http/handlers/apples.go
+[x] internal/http/handlers/apples.go
     - POST /api/v1/apples (requires apples.write)
     - GET  /api/v1/apples (requires apples.read)
     - GET  /api/v1/apples/{id} (requires apples.read)
-[ ] Wire routes in main.go
-[ ] Add apples.write / apples.read / apples.admin to permissions seed
-[ ] Admin UI: /admin/apples ledger view
-[ ] Admin UI: /admin/apples/{id} detail view
-[ ] go test ./...
-[ ] Update CHANGELOG.md
-[ ] Publish an Apple from the apple endpoint to confirm the loop closes
+[x] Wire routes in main.go
+[x] Add apples.write / apples.read / apples.admin to permissions seed
+[x] Admin UI: /admin/apples ledger view
+[x] Admin UI: /admin/apples/{id} detail view
+[x] go test ./...
+[x] Update CHANGELOG.md
+[ ] Publish an Apple from the apple endpoint to confirm the loop closes in a live environment
 ```
 
 ---

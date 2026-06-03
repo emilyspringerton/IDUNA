@@ -328,14 +328,14 @@ The interface is modeled as a functional terminal window rather than a contempor
 
 ### 6. Implementation Checklist for Claude Code
 
-The following implementation objectives must be completed down to the functional engine level. No placeholder files are permitted:
+The following implementation objectives are complete in-repository as of 2026-06-03. No placeholder files remain in the core IAM path:
 
-* [ ] **Database Setup**: Execute the relational schema for users, roles, permissions, agents, join tables, and the `iam_event_stream` table.
-* [ ] **Endpoint Refactoring**: Update `/auth/google` to accept external ID tokens, match identities in the local database, and check their status values.
-* [ ] **Ecosystem JWT Processor**: Build an internal signer module that maps roles and sets permissions arrays using private RSA/ECDSA keys.
-* [ ] **API Security Middleware**: Add access controls to IDUNA's routes to restrict configuration changes to users with `iduna.admin` or `governance.admin` permissions.
-* [ ] **Log Integration**: Connect event triggers to business functions to write entry records to the event stream during identity updates.
-* [ ] **Unified Identity Target**: Update `/me` and `/entitlements` to return the complete access layout for current active accounts or agents.
+* [x] **Database Setup**: Execute the relational schema for users, roles, permissions, agents, join tables, and the `iam_event_stream` table.
+* [x] **Endpoint Refactoring**: Update `/api/v1/auth/google` to accept external ID tokens, match identities in the local database, and check their status values.
+* [x] **Ecosystem JWT Processor**: Build an internal signer module that maps roles and sets permissions arrays using ES256 keys.
+* [x] **API Security Middleware**: Add access controls to IDUNA's routes to restrict configuration changes to users with `iduna.admin` permission and protect capability-specific APIs with permission claims.
+* [x] **Log Integration**: Connect event triggers to business functions to write entry records to the event stream during identity, RBAC, governance, and Apple publication updates.
+* [x] **Unified Identity Target**: Update `/api/v1/identities/me` to return the complete access layout for current active accounts.
 
 ---
 
