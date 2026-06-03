@@ -1,5 +1,15 @@
 # IDUNA Changelog
 
+## 2026-06-03
+
+### Documentation rereview — IAM/API alignment
+
+- Rewrote `openapi.yaml` around the implemented IAM surface: Google ID token exchange, agent M2M exchange, JWKS, `/api/v1/identities/me`, Apples, and Back Office entry points.
+- Refreshed `README.md` into a current project overview and documentation index.
+- Marked the IAM and Apples implementation checklists complete in repository, with live Apple publication called out as a deployment-time verification step.
+
+---
+
 ## 2026-06-02
 
 ### HQ-SPEC-IAM-096 — Apples: Golden Documentation Log Streaming
