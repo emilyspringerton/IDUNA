@@ -1,0 +1,71 @@
+{
+  "_comment": "System agent definitions for IDUNA bootstrap. Edit this file to change agent permissions. Run cmd/bootstrap to apply. All agent IDs must match migration 202606030001_system_seeds.sql.",
+  "system_user_id": "00000000-0000-4000-8000-000000000001",
+  "agents": [
+    {
+      "id": "00000003-0000-4000-8000-000000000001",
+      "name": "EMILY-PRIME",
+      "type": "llm_agent",
+      "description": "Emily Prime — chief of staff, meta-orchestrator, CEO-facing surface",
+      "permissions": [
+        "fatbaby.operator",
+        "emily-prime.operator",
+        "governance.admin",
+        "apples.write",
+        "apples.read",
+        "signalapi.read"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000002",
+      "name": "FATBABY-EMILY",
+      "type": "llm_agent",
+      "description": "FatBaby-Emily — domain signal intelligence for SEC/PR pipeline",
+      "permissions": [
+        "fatbaby.operator",
+        "governance.admin",
+        "apples.write",
+        "apples.read",
+        "secwatch.read",
+        "secwatch.execute"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000003",
+      "name": "EMIREE",
+      "type": "llm_agent",
+      "description": "Emiree — underlying state engine, peer loop with Emily Prime, strategic layer",
+      "permissions": [
+        "fatbaby.operator",
+        "emily-prime.operator",
+        "emiree.super",
+        "governance.admin",
+        "apples.write",
+        "apples.read",
+        "signalapi.read"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000004",
+      "name": "JON",
+      "type": "llm_agent",
+      "description": "Jon Stockwell — options strategist, divergence engine",
+      "permissions": [
+        "fatbaby.operator",
+        "signalapi.read",
+        "jon.setups.write",
+        "apples.read"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000005",
+      "name": "BOB",
+      "type": "db_agent",
+      "description": "Bob — IDUNA database admin agent, migrations and schema inspection only",
+      "permissions": [
+        "bob.db.admin",
+        "iduna.me.read"
+      ]
+    }
+  ]
+}

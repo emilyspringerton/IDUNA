@@ -8,7 +8,35 @@
 - Refreshed `README.md` into a current project overview and documentation index.
 - Marked the IAM and Apples implementation checklists complete in repository, with live Apple publication called out as a deployment-time verification step.
 
----
+### Bootstrap: config-as-code agent provisioning
+
+**Problem:** No way to bring IDUNA online without manually setting up agent permissions in the admin UI. IDUNA needs MySQL → Bob needs IDUNA → classic chicken-and-egg.
+
+**Solution:** `cmd/bootstrap` — a narrow, one-shot CLI tool (no LLM, no HTTP server) that:
+1. Runs all pending DB migrations
+2. Seeds agent permissions from `config/agents.json`
+3. Generates API key secrets for any agents not yet provisioned
+4. Writes secrets to `var/agent-secrets.env`
+
+**`config/agents.json`** — declarative, git-committed definition of all system agents (EMILY-PRIME, FATBABY-EMILY, EMIREE, JON, BOB) and their minimum-necessary permissions. Edit + re-run bootstrap to change an agent's authority. No admin UI required.
+
+**`migrations/truestore/202606030001_system_seeds.sql`** — new migration seeding:
+- System owner user (`system@einhorn.internal`) for agent FK constraint
+- System agent stubs with fixed deterministic UUIDs
+- New agent-scoped permissions: `fatbaby.operator`, `emily-prime.operator`, `emiree.super`, `bob.db.admin`, `signalapi.read`, `jon.setups.write`
+
+**Startup sequence** (documented in README):
+```
+go run ./cmd/bootstrap   # migrate + seed + generate secrets
+source var/agent-secrets.env
+go run .                  # start IDUNA
+go run ./cmd/bob-agent    # Bob comes online
+# then: start FATBABY-EMILY, JON, EMILY-PRIME with their IDUNA credentials
+```
+
+**`var/agent-secrets.env`** is git-ignored. Each agent's env var is `IDUNA_SECRET_<AGENTNAME>`.
+
+Bootstrap is idempotent: safe to re-run on every deploy. Pass `-rotate` to regenerate all secrets.
 
 ## 2026-06-02
 
