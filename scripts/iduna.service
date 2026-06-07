@@ -1,0 +1,41 @@
+# IDUNA systemd user unit — process supervision for the IAM service
+#
+# Deploy:
+#   mkdir -p ~/.config/systemd/user
+#   cp iduna.service ~/.config/systemd/user/iduna.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now iduna.service
+#   systemctl --user status iduna.service
+#
+# Build the binary first:
+#   cd /home/fatbaby/IDUNA
+#   go build -o ~/.local/bin/iduna .
+#
+# Required env vars (set in EnvironmentFile or export before enabling):
+#   JWT_SECRET   — random string, min 32 chars
+#   JWT_ISSUER   — e.g. "iduna.einhorn.internal"
+#   SERVER_PORT  — optional, defaults to 8080
+#
+# No MYSQL_DSN needed — embedded SQLite backend runs in-process.
+
+[Unit]
+Description=IDUNA IAM Service — Einhorn Industrial agent authentication
+After=network.target
+Documentation=file:///home/fatbaby/IDUNA/docs
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fatbaby/IDUNA
+EnvironmentFile=-%h/.config/iduna/env
+ExecStart=%h/.local/bin/iduna
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=default.target
