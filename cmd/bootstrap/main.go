@@ -42,6 +42,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"iduna/internal/store"
 )
 
 func main() {
@@ -51,28 +52,36 @@ func main() {
 
 	logger := log.New(os.Stdout, "bootstrap: ", log.LstdFlags|log.LUTC)
 
-	dsn := os.Getenv("MYSQL_DSN")
-	if dsn == "" {
-		logger.Fatal("MYSQL_DSN is required. Set it to your MySQL connection string, e.g.:\n  export MYSQL_DSN=\"user:pass@tcp(host:3306)/iduna?parseTime=true\"")
-	}
-
 	idunaRoot := envOr("IDUNA_ROOT", ".")
 	agentsConfig := envOr("AGENTS_CONFIG", filepath.Join(idunaRoot, "config", "agents.json"))
 
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		logger.Fatalf("open db: %v", err)
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(5)
-	db.SetConnMaxLifetime(time.Minute)
+	dsn := os.Getenv("MYSQL_DSN")
+	embedded := dsn == ""
 
+	var db *sql.DB
+	var err error
 	ctx := context.Background()
 
-	if err := pingWithRetry(ctx, db, logger, 10, 2*time.Second); err != nil {
-		logger.Fatalf("db unreachable: %v", err)
+	if embedded {
+		dbPath := envOr("SQLITE_PATH", filepath.Join(idunaRoot, "var", "iduna.db"))
+		logger.Printf("no MYSQL_DSN set — using embedded SQLite at %s", dbPath)
+		db, err = store.OpenSQLite(dbPath)
+		if err != nil {
+			logger.Fatalf("open sqlite: %v", err)
+		}
+	} else {
+		db, err = sql.Open("mysql", dsn)
+		if err != nil {
+			logger.Fatalf("open db: %v", err)
+		}
+		db.SetMaxOpenConns(5)
+		db.SetConnMaxLifetime(time.Minute)
+		if err := pingWithRetry(ctx, db, logger, 10, 2*time.Second); err != nil {
+			logger.Fatalf("db unreachable: %v", err)
+		}
+		logger.Println("✓ database reachable (MySQL)")
 	}
-	logger.Println("✓ database reachable")
+	defer db.Close()
 
 	if *dryRun {
 		logger.Println("dry-run mode: no changes will be made")
@@ -80,8 +89,22 @@ func main() {
 
 	// Step 1: migrations.
 	logger.Println("── step 1: migrations ──")
-	if err := runMigrations(ctx, db, idunaRoot, *dryRun, logger); err != nil {
-		logger.Fatalf("migrations failed: %v", err)
+	if embedded {
+		// In embedded mode, RunSQLiteMigrations handles its own tracking table
+		// and applies the MySQL→SQLite translation. The MySQL-native runMigrations
+		// function (which uses schema_migrations with sha256 etc.) is not used.
+		if !*dryRun {
+			if err := store.RunSQLiteMigrations(db, filepath.Join(idunaRoot, "migrations", "truestore")); err != nil {
+				logger.Fatalf("sqlite migrations failed: %v", err)
+			}
+			logger.Println("✓ sqlite migrations applied")
+		} else {
+			logger.Println("dry-run: sqlite migrations would run here")
+		}
+	} else {
+		if err := runMigrations(ctx, db, idunaRoot, *dryRun, logger); err != nil {
+			logger.Fatalf("migrations failed: %v", err)
+		}
 	}
 
 	// Step 2: agent permissions.
@@ -354,8 +377,10 @@ func seedAgentPermissions(ctx context.Context, db *sql.DB, cfg *agentsConfig, dr
 				logger.Printf("  ⋯ %s ← %s", a.Name, permName)
 				continue
 			}
+			// INSERT OR IGNORE is valid in both MySQL (synonymous with INSERT IGNORE)
+			// and SQLite. Use it unconditionally.
 			_, err := db.ExecContext(ctx,
-				`INSERT IGNORE INTO agent_permissions (agent_id, permission_id) VALUES (?, ?)`,
+				`INSERT OR IGNORE INTO agent_permissions (agent_id, permission_id) VALUES (?, ?)`,
 				a.ID, permID)
 			if err != nil {
 				return fmt.Errorf("grant %s to %s: %w", permName, a.Name, err)

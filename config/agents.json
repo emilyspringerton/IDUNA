@@ -66,6 +66,17 @@
         "bob.db.admin",
         "iduna.me.read"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000006",
+      "name": "TYLER",
+      "type": "llm_agent",
+      "description": "Tyler (HARRY_HOUDINI) — self-directed RSI agent for the TYLER repo. Iduna-managed. Custody chain: TYLER → EINHORN_INDUSTRIAL → EMILY_OS. Build 0016.",
+      "permissions": [
+        "tyler.rsi.write",
+        "apples.write",
+        "apples.read"
+      ]
     }
   ]
 }

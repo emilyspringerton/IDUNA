@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -18,21 +19,50 @@ import (
 )
 
 func main() {
+	var db *sql.DB
+	var iamStore store.IAMStore
+	var deviceStore device.Store
+
 	dsn := os.Getenv("MYSQL_DSN")
-	if dsn == "" {
-		log.Fatal("MYSQL_DSN is required")
-	}
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.Ping(); err != nil {
-		log.Fatal(err)
+	if dsn != "" {
+		// MySQL mode: external database required.
+		var err error
+		db, err = sql.Open("mysql", dsn)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+		if err := db.Ping(); err != nil {
+			log.Fatal(err)
+		}
+		iamStore = store.NewMySQLStore(db)
+		deviceStore = device.NewMySQLStore(db)
+		log.Println("store: MySQL")
+	} else {
+		// Embedded mode: SQLite, zero external dependencies.
+		// DB file lives next to the binary in var/iduna.db.
+		dbPath := getenv("SQLITE_PATH", filepath.Join("var", "iduna.db"))
+		var err error
+		db, err = store.OpenSQLite(dbPath)
+		if err != nil {
+			log.Fatalf("open sqlite: %v", err)
+		}
+		defer db.Close()
+
+		idunaRoot := getenv("IDUNA_ROOT", ".")
+		migrationsDir := filepath.Join(idunaRoot, "migrations", "truestore")
+		if err := store.RunSQLiteMigrations(db, migrationsDir); err != nil {
+			log.Fatalf("sqlite migrations: %v", err)
+		}
+
+		sq := store.NewSQLiteStore(db)
+		iamStore = sq
+		deviceStore = device.NewSQLiteDeviceStore(db)
+		log.Printf("store: SQLite (embedded) at %s", dbPath)
 	}
 
-	// Device flow (existing).
-	svc := device.NewService(device.NewMySQLStore(db))
+	// Device flow.
+	svc := device.NewService(deviceStore)
 	deviceH := &handlers.DeviceHandler{
 		Svc:            svc,
 		StartLimiter:   util.NewWindowRateLimiter(10, time.Minute),
@@ -47,9 +77,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("loading ES256 keys: %v", err)
 	}
-
-	// IAM store.
-	iamStore := store.NewMySQLStore(db)
 
 	issuer := getenv("JWT_ISSUER", "https://iam.farthq.internal")
 	baseURL := getenv("BASE_URL", "http://localhost:8080")
