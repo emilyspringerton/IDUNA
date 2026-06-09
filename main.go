@@ -103,6 +103,7 @@ func main() {
 	adminH := &handlers.AdminHandler{Store: iamStore}
 	adminH.Init()
 	applesH := &handlers.ApplesHandler{Store: iamStore}
+	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 
 	mux := http.NewServeMux()
 
@@ -125,6 +126,11 @@ func main() {
 	applesProtected := middleware.RequireAuth(keys)(applesH)
 	mux.Handle("/api/v1/apples", applesProtected)
 	mux.Handle("/api/v1/apples/", applesProtected)
+
+	// Push tokens API (MJOLNIR FCM) — auth required; permission checks inside handler.
+	pushTokensProtected := middleware.RequireAuth(keys)(pushTokensH)
+	mux.Handle("/api/v1/push-tokens", pushTokensProtected)
+	mux.Handle("/api/v1/push-tokens/", pushTokensProtected)
 
 	// Admin UI — requires iduna.admin permission.
 	adminProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("iduna.admin")(adminH))

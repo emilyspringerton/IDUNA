@@ -76,4 +76,14 @@ type IAMStore interface {
 
 	// GetApple returns a single apple by its integer ID.
 	GetApple(ctx context.Context, id int64) (*auth.AppleRecord, error)
+
+	// --- Push tokens (MJOLNIR FCM — HQ-SPEC-IAM-097) ---
+
+	// UpsertPushToken inserts or updates an FCM device token for the given agent.
+	// Deduplication key is (agent_name, fingerprint).
+	UpsertPushToken(ctx context.Context, token auth.PushToken) error
+
+	// GetPushToken returns the most recently registered FCM token for agent_name.
+	// Returns nil, nil if no token is registered.
+	GetPushToken(ctx context.Context, agentName string) (*auth.PushToken, error)
 }

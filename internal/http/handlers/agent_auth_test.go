@@ -66,6 +66,10 @@ func (s *stubAgentStore) ListApples(context.Context, string, string, string, int
 func (s *stubAgentStore) GetApple(context.Context, int64) (*auth.AppleRecord, error) {
 	return nil, nil
 }
+func (s *stubAgentStore) UpsertPushToken(context.Context, auth.PushToken) error { return nil }
+func (s *stubAgentStore) GetPushToken(context.Context, string) (*auth.PushToken, error) {
+	return nil, nil
+}
 
 func TestAgentAuthHandler_Success(t *testing.T) {
 	k, err := jwt.GenerateKeys()

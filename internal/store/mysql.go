@@ -515,6 +515,36 @@ func (s *MySQLStore) GetApple(ctx context.Context, id int64) (*auth.AppleRecord,
 
 // GetAgentPermissions returns the effective permissions for an agent via
 // its agent_permissions join table.
+// --- Push tokens ---
+
+func (s *MySQLStore) UpsertPushToken(ctx context.Context, token auth.PushToken) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO push_tokens (agent_name, platform, fcm_token, fingerprint)
+		 VALUES (?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE
+		   fcm_token = VALUES(fcm_token),
+		   platform = VALUES(platform),
+		   last_used_at = CURRENT_TIMESTAMP(6)`,
+		token.AgentName, token.Platform, token.FCMToken, token.Fingerprint,
+	)
+	return err
+}
+
+func (s *MySQLStore) GetPushToken(ctx context.Context, agentName string) (*auth.PushToken, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, agent_name, platform, fcm_token, COALESCE(fingerprint,''), registered_at, last_used_at
+		 FROM push_tokens WHERE agent_name = ?
+		 ORDER BY last_used_at DESC LIMIT 1`, agentName)
+	var t auth.PushToken
+	if err := row.Scan(&t.ID, &t.AgentName, &t.Platform, &t.FCMToken, &t.Fingerprint, &t.RegisteredAt, &t.LastUsedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
 func (s *MySQLStore) GetAgentPermissions(ctx context.Context, agentID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT p.name FROM permissions p

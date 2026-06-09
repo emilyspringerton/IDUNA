@@ -522,6 +522,40 @@ func (s *SQLiteStore) GetAgentPermissions(ctx context.Context, agentID string) (
 	return perms, rows.Err()
 }
 
+// --- Push tokens ---
+
+func (s *SQLiteStore) UpsertPushToken(ctx context.Context, token auth.PushToken) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO push_tokens (agent_name, platform, fcm_token, fingerprint, registered_at, last_used_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(agent_name, fingerprint) DO UPDATE SET
+		   fcm_token = excluded.fcm_token,
+		   platform = excluded.platform,
+		   last_used_at = excluded.last_used_at`,
+		token.AgentName, token.Platform, token.FCMToken, token.Fingerprint, now, now,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetPushToken(ctx context.Context, agentName string) (*auth.PushToken, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, agent_name, platform, fcm_token, COALESCE(fingerprint,''), registered_at, last_used_at
+		 FROM push_tokens WHERE agent_name = ?
+		 ORDER BY last_used_at DESC LIMIT 1`, agentName)
+	var t auth.PushToken
+	var regStr, lastStr string
+	if err := row.Scan(&t.ID, &t.AgentName, &t.Platform, &t.FCMToken, &t.Fingerprint, &regStr, &lastStr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	t.RegisteredAt, _ = time.Parse(time.RFC3339Nano, regStr)
+	t.LastUsedAt, _ = time.Parse(time.RFC3339Nano, lastStr)
+	return &t, nil
+}
+
 // --- internal helpers ---
 
 func (s *SQLiteStore) sqliteGetUserByGoogleSubject(ctx context.Context, googleSub string) (*auth.User, error) {

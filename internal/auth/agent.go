@@ -16,6 +16,18 @@ type AppleRecord struct {
 	RecordedAt time.Time
 }
 
+// PushToken is an FCM device token registered by a MJOLNIR Android client.
+// Upserted on each app launch; agent_name identifies the device owner.
+type PushToken struct {
+	ID          int64
+	AgentName   string
+	Platform    string // "android"
+	FCMToken    string
+	Fingerprint string
+	RegisteredAt time.Time
+	LastUsedAt   time.Time
+}
+
 // Agent is a first-class IAM identity for automated systems.
 type Agent struct {
 	ID          string
