@@ -16,6 +16,20 @@ type AppleRecord struct {
 	RecordedAt time.Time
 }
 
+// CameraObservation is an image submitted by MJOLNIR for Emily Prime vision analysis.
+type CameraObservation struct {
+	ID          int64
+	AgentName   string
+	ImageData   string // base64-encoded
+	MediaType   string // "image/jpeg" | "image/png" | "image/webp"
+	Prompt      string // optional user context
+	Analysis    string // filled by Emily Prime
+	AppleID     int64  // IDUNA Apple filing the analysis
+	Status      string // pending | processing | done | error
+	CreatedAt   time.Time
+	ProcessedAt *time.Time
+}
+
 // PushToken is an FCM device token registered by a MJOLNIR Android client.
 // Upserted on each app launch; agent_name identifies the device owner.
 type PushToken struct {

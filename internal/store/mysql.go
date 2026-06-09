@@ -545,6 +545,85 @@ func (s *MySQLStore) GetPushToken(ctx context.Context, agentName string) (*auth.
 	return &t, nil
 }
 
+func (s *MySQLStore) CreateCameraObservation(ctx context.Context, obs auth.CameraObservation) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO camera_observations (agent_name, image_data, media_type, prompt, status, created_at)
+		 VALUES (?, ?, ?, ?, 'pending', NOW())`,
+		obs.AgentName, obs.ImageData, obs.MediaType, obs.Prompt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *MySQLStore) UpdateCameraObservation(ctx context.Context, id int64, analysis string, appleID int64, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE camera_observations SET analysis=?, apple_id=?, status=?, processed_at=NOW() WHERE id=?`,
+		analysis, appleID, status, id,
+	)
+	return err
+}
+
+func (s *MySQLStore) GetCameraObservation(ctx context.Context, id int64) (*auth.CameraObservation, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, agent_name, image_data, media_type, COALESCE(prompt,''), COALESCE(analysis,''),
+		        COALESCE(apple_id,0), status, created_at, processed_at
+		 FROM camera_observations WHERE id=?`, id)
+	var obs auth.CameraObservation
+	var processedAt sql.NullTime
+	if err := row.Scan(&obs.ID, &obs.AgentName, &obs.ImageData, &obs.MediaType,
+		&obs.Prompt, &obs.Analysis, &obs.AppleID, &obs.Status, &obs.CreatedAt, &processedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if processedAt.Valid {
+		obs.ProcessedAt = &processedAt.Time
+	}
+	return &obs, nil
+}
+
+func (s *MySQLStore) ListCameraObservations(ctx context.Context, agentName, status string, limit int) ([]auth.CameraObservation, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var rows *sql.Rows
+	var err error
+	if status != "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, agent_name, image_data, media_type, COALESCE(prompt,''), COALESCE(analysis,''),
+			        COALESCE(apple_id,0), status, created_at, processed_at
+			 FROM camera_observations WHERE agent_name=? AND status=?
+			 ORDER BY created_at DESC LIMIT ?`, agentName, status, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, agent_name, image_data, media_type, COALESCE(prompt,''), COALESCE(analysis,''),
+			        COALESCE(apple_id,0), status, created_at, processed_at
+			 FROM camera_observations WHERE agent_name=?
+			 ORDER BY created_at DESC LIMIT ?`, agentName, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.CameraObservation
+	for rows.Next() {
+		var obs auth.CameraObservation
+		var processedAt sql.NullTime
+		if err := rows.Scan(&obs.ID, &obs.AgentName, &obs.ImageData, &obs.MediaType,
+			&obs.Prompt, &obs.Analysis, &obs.AppleID, &obs.Status, &obs.CreatedAt, &processedAt); err != nil {
+			return nil, err
+		}
+		if processedAt.Valid {
+			obs.ProcessedAt = &processedAt.Time
+		}
+		out = append(out, obs)
+	}
+	return out, rows.Err()
+}
+
 func (s *MySQLStore) GetAgentPermissions(ctx context.Context, agentID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT p.name FROM permissions p

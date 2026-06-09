@@ -104,6 +104,7 @@ func main() {
 	adminH.Init()
 	applesH := &handlers.ApplesHandler{Store: iamStore}
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
+	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
 
 	mux := http.NewServeMux()
 
@@ -131,6 +132,12 @@ func main() {
 	pushTokensProtected := middleware.RequireAuth(keys)(pushTokensH)
 	mux.Handle("/api/v1/push-tokens", pushTokensProtected)
 	mux.Handle("/api/v1/push-tokens/", pushTokensProtected)
+
+	// Intelligence API (MJOLNIR camera → Emily Prime vision) — auth required; permission checks inside.
+	intelligenceProtected := middleware.RequireAuth(keys)(intelligenceH)
+	mux.Handle("/api/v1/intelligence/observe", intelligenceProtected)
+	mux.Handle("/api/v1/intelligence/observations", intelligenceProtected)
+	mux.Handle("/api/v1/intelligence/observations/", intelligenceProtected)
 
 	// Admin UI — requires iduna.admin permission.
 	adminProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("iduna.admin")(adminH))

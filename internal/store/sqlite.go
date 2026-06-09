@@ -556,6 +556,103 @@ func (s *SQLiteStore) GetPushToken(ctx context.Context, agentName string) (*auth
 	return &t, nil
 }
 
+func (s *SQLiteStore) CreateCameraObservation(ctx context.Context, obs auth.CameraObservation) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO camera_observations (agent_name, image_data, media_type, prompt, status, created_at)
+		 VALUES (?, ?, ?, ?, 'pending', ?)`,
+		obs.AgentName, obs.ImageData, obs.MediaType, obs.Prompt, now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *SQLiteStore) UpdateCameraObservation(ctx context.Context, id int64, analysis string, appleID int64, status string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE camera_observations SET analysis=?, apple_id=?, status=?, processed_at=? WHERE id=?`,
+		analysis, appleID, status, now, id,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetCameraObservation(ctx context.Context, id int64) (*auth.CameraObservation, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, agent_name, image_data, media_type, COALESCE(prompt,''), COALESCE(analysis,''),
+		        COALESCE(apple_id,0), status, created_at, processed_at
+		 FROM camera_observations WHERE id=?`, id)
+	return scanCameraObservation(row)
+}
+
+func (s *SQLiteStore) ListCameraObservations(ctx context.Context, agentName, status string, limit int) ([]auth.CameraObservation, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var rows *sql.Rows
+	var err error
+	if status != "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, agent_name, image_data, media_type, COALESCE(prompt,''), COALESCE(analysis,''),
+			        COALESCE(apple_id,0), status, created_at, processed_at
+			 FROM camera_observations WHERE agent_name=? AND status=?
+			 ORDER BY created_at DESC LIMIT ?`, agentName, status, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, agent_name, image_data, media_type, COALESCE(prompt,''), COALESCE(analysis,''),
+			        COALESCE(apple_id,0), status, created_at, processed_at
+			 FROM camera_observations WHERE agent_name=?
+			 ORDER BY created_at DESC LIMIT ?`, agentName, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.CameraObservation
+	for rows.Next() {
+		obs, err := scanCameraObservationRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *obs)
+	}
+	return out, rows.Err()
+}
+
+func scanCameraObservation(row *sql.Row) (*auth.CameraObservation, error) {
+	var obs auth.CameraObservation
+	var createdStr, processedStr sql.NullString
+	if err := row.Scan(&obs.ID, &obs.AgentName, &obs.ImageData, &obs.MediaType,
+		&obs.Prompt, &obs.Analysis, &obs.AppleID, &obs.Status, &createdStr, &processedStr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	obs.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr.String)
+	if processedStr.Valid && processedStr.String != "" {
+		t, _ := time.Parse(time.RFC3339Nano, processedStr.String)
+		obs.ProcessedAt = &t
+	}
+	return &obs, nil
+}
+
+func scanCameraObservationRow(rows *sql.Rows) (*auth.CameraObservation, error) {
+	var obs auth.CameraObservation
+	var createdStr, processedStr sql.NullString
+	if err := rows.Scan(&obs.ID, &obs.AgentName, &obs.ImageData, &obs.MediaType,
+		&obs.Prompt, &obs.Analysis, &obs.AppleID, &obs.Status, &createdStr, &processedStr); err != nil {
+		return nil, err
+	}
+	obs.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr.String)
+	if processedStr.Valid && processedStr.String != "" {
+		t, _ := time.Parse(time.RFC3339Nano, processedStr.String)
+		obs.ProcessedAt = &t
+	}
+	return &obs, nil
+}
+
 // --- internal helpers ---
 
 func (s *SQLiteStore) sqliteGetUserByGoogleSubject(ctx context.Context, googleSub string) (*auth.User, error) {

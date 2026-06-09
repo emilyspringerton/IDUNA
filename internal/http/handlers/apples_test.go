@@ -101,6 +101,18 @@ func (s *stubApplesStore) UpsertPushToken(context.Context, auth.PushToken) error
 func (s *stubApplesStore) GetPushToken(context.Context, string) (*auth.PushToken, error) {
 	return nil, nil
 }
+func (s *stubApplesStore) CreateCameraObservation(context.Context, auth.CameraObservation) (int64, error) {
+	return 0, nil
+}
+func (s *stubApplesStore) UpdateCameraObservation(context.Context, int64, string, int64, string) error {
+	return nil
+}
+func (s *stubApplesStore) GetCameraObservation(context.Context, int64) (*auth.CameraObservation, error) {
+	return nil, nil
+}
+func (s *stubApplesStore) ListCameraObservations(context.Context, string, string, int) ([]auth.CameraObservation, error) {
+	return nil, nil
+}
 
 func makeAgentToken(t *testing.T, keys *jwt.Keys, sub string, perms []string) string {
 	t.Helper()

@@ -86,4 +86,20 @@ type IAMStore interface {
 	// GetPushToken returns the most recently registered FCM token for agent_name.
 	// Returns nil, nil if no token is registered.
 	GetPushToken(ctx context.Context, agentName string) (*auth.PushToken, error)
+
+	// --- Camera observations (MJOLNIR intelligence — HQ-SPEC-IAM-098) ---
+
+	// CreateCameraObservation inserts a new pending observation and returns its ID.
+	CreateCameraObservation(ctx context.Context, obs auth.CameraObservation) (int64, error)
+
+	// UpdateCameraObservation sets analysis, apple_id, status, and processed_at for an observation.
+	UpdateCameraObservation(ctx context.Context, id int64, analysis string, appleID int64, status string) error
+
+	// GetCameraObservation returns a single observation by ID.
+	GetCameraObservation(ctx context.Context, id int64) (*auth.CameraObservation, error)
+
+	// ListCameraObservations returns up to limit observations for agentName.
+	// Pass status="" to return all statuses; otherwise filters by status.
+	// Returns newest first.
+	ListCameraObservations(ctx context.Context, agentName, status string, limit int) ([]auth.CameraObservation, error)
 }

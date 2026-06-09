@@ -70,6 +70,18 @@ func (s *stubAgentStore) UpsertPushToken(context.Context, auth.PushToken) error 
 func (s *stubAgentStore) GetPushToken(context.Context, string) (*auth.PushToken, error) {
 	return nil, nil
 }
+func (s *stubAgentStore) CreateCameraObservation(context.Context, auth.CameraObservation) (int64, error) {
+	return 0, nil
+}
+func (s *stubAgentStore) UpdateCameraObservation(context.Context, int64, string, int64, string) error {
+	return nil
+}
+func (s *stubAgentStore) GetCameraObservation(context.Context, int64) (*auth.CameraObservation, error) {
+	return nil, nil
+}
+func (s *stubAgentStore) ListCameraObservations(context.Context, string, string, int) ([]auth.CameraObservation, error) {
+	return nil, nil
+}
 
 func TestAgentAuthHandler_Success(t *testing.T) {
 	k, err := jwt.GenerateKeys()
