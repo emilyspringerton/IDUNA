@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"iduna/internal/auth"
@@ -620,6 +621,82 @@ func (s *MySQLStore) ListCameraObservations(ctx context.Context, agentName, stat
 			obs.ProcessedAt = &processedAt.Time
 		}
 		out = append(out, obs)
+	}
+	return out, rows.Err()
+}
+
+func (s *MySQLStore) CreateSprintItem(ctx context.Context, item auth.SprintItem) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO heimdal_sprints (agent_name, requirement, criteria_json, status, created_at, updated_at)
+		 VALUES (?, ?, '[]', 'pending', NOW(), NOW())`,
+		item.AgentName, item.Requirement,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *MySQLStore) UpdateSprintItem(ctx context.Context, id int64, criteriaJSON, roadmapID, status string, appleID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE heimdal_sprints SET criteria_json=?, roadmap_id=?, status=?, apple_id=?, updated_at=NOW() WHERE id=?`,
+		criteriaJSON, roadmapID, status, appleID, id,
+	)
+	return err
+}
+
+func (s *MySQLStore) GetSprintItem(ctx context.Context, id int64) (*auth.SprintItem, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, agent_name, requirement, criteria_json, COALESCE(roadmap_id,''), status,
+		        COALESCE(apple_id,0), created_at, updated_at
+		 FROM heimdal_sprints WHERE id=?`, id)
+	var item auth.SprintItem
+	if err := row.Scan(&item.ID, &item.AgentName, &item.Requirement, &item.CriteriaJSON,
+		&item.RoadmapID, &item.Status, &item.AppleID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *MySQLStore) ListSprintItems(ctx context.Context, agentName, status string, limit int) ([]auth.SprintItem, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `SELECT id, agent_name, requirement, criteria_json, COALESCE(roadmap_id,''), status,
+	                 COALESCE(apple_id,0), created_at, updated_at
+	          FROM heimdal_sprints`
+	var args []any
+	var where []string
+	if agentName != "" {
+		where = append(where, "agent_name=?")
+		args = append(args, agentName)
+	}
+	if status != "" {
+		where = append(where, "status=?")
+		args = append(args, status)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.SprintItem
+	for rows.Next() {
+		var item auth.SprintItem
+		if err := rows.Scan(&item.ID, &item.AgentName, &item.Requirement, &item.CriteriaJSON,
+			&item.RoadmapID, &item.Status, &item.AppleID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }

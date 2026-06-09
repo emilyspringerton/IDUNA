@@ -102,4 +102,19 @@ type IAMStore interface {
 	// Pass status="" to return all statuses; otherwise filters by status.
 	// Returns newest first.
 	ListCameraObservations(ctx context.Context, agentName, status string, limit int) ([]auth.CameraObservation, error)
+
+	// --- HEIMDAL sprints (sprint planning interface — HQ-SPEC-IAM-099) ---
+
+	// CreateSprintItem inserts a new pending sprint and returns its ID.
+	CreateSprintItem(ctx context.Context, item auth.SprintItem) (int64, error)
+
+	// UpdateSprintItem sets criteria, roadmapID, status, apple_id, and updated_at.
+	UpdateSprintItem(ctx context.Context, id int64, criteriaJSON, roadmapID, status string, appleID int64) error
+
+	// GetSprintItem returns a single sprint by ID.
+	GetSprintItem(ctx context.Context, id int64) (*auth.SprintItem, error)
+
+	// ListSprintItems returns up to limit sprints. Pass agentName="" for all agents.
+	// Pass status="" to return all statuses. Returns newest first.
+	ListSprintItems(ctx context.Context, agentName, status string, limit int) ([]auth.SprintItem, error)
 }

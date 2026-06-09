@@ -113,6 +113,14 @@ func (s *stubApplesStore) GetCameraObservation(context.Context, int64) (*auth.Ca
 func (s *stubApplesStore) ListCameraObservations(context.Context, string, string, int) ([]auth.CameraObservation, error) {
 	return nil, nil
 }
+func (s *stubApplesStore) CreateSprintItem(context.Context, auth.SprintItem) (int64, error) { return 0, nil }
+func (s *stubApplesStore) UpdateSprintItem(context.Context, int64, string, string, string, int64) error {
+	return nil
+}
+func (s *stubApplesStore) GetSprintItem(context.Context, int64) (*auth.SprintItem, error) { return nil, nil }
+func (s *stubApplesStore) ListSprintItems(context.Context, string, string, int) ([]auth.SprintItem, error) {
+	return nil, nil
+}
 
 func makeAgentToken(t *testing.T, keys *jwt.Keys, sub string, perms []string) string {
 	t.Helper()

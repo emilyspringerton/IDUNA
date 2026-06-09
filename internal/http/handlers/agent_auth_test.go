@@ -82,6 +82,14 @@ func (s *stubAgentStore) GetCameraObservation(context.Context, int64) (*auth.Cam
 func (s *stubAgentStore) ListCameraObservations(context.Context, string, string, int) ([]auth.CameraObservation, error) {
 	return nil, nil
 }
+func (s *stubAgentStore) CreateSprintItem(context.Context, auth.SprintItem) (int64, error) { return 0, nil }
+func (s *stubAgentStore) UpdateSprintItem(context.Context, int64, string, string, string, int64) error {
+	return nil
+}
+func (s *stubAgentStore) GetSprintItem(context.Context, int64) (*auth.SprintItem, error) { return nil, nil }
+func (s *stubAgentStore) ListSprintItems(context.Context, string, string, int) ([]auth.SprintItem, error) {
+	return nil, nil
+}
 
 func TestAgentAuthHandler_Success(t *testing.T) {
 	k, err := jwt.GenerateKeys()

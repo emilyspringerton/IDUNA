@@ -105,6 +105,7 @@ func main() {
 	applesH := &handlers.ApplesHandler{Store: iamStore}
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
+	heimdalH := &handlers.HeimdalHandler{Store: iamStore}
 
 	mux := http.NewServeMux()
 
@@ -138,6 +139,11 @@ func main() {
 	mux.Handle("/api/v1/intelligence/observe", intelligenceProtected)
 	mux.Handle("/api/v1/intelligence/observations", intelligenceProtected)
 	mux.Handle("/api/v1/intelligence/observations/", intelligenceProtected)
+
+	// HEIMDAL sprint planning API — auth required; permission checks inside.
+	heimdalProtected := middleware.RequireAuth(keys)(heimdalH)
+	mux.Handle("/api/v1/heimdal/sprints", heimdalProtected)
+	mux.Handle("/api/v1/heimdal/sprints/", heimdalProtected)
 
 	// Admin UI — requires iduna.admin permission.
 	adminProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("iduna.admin")(adminH))
