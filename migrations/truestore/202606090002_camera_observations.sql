@@ -19,13 +19,13 @@ CREATE INDEX IF NOT EXISTS idx_camera_obs_agent_status ON camera_observations(ag
 CREATE INDEX IF NOT EXISTS idx_camera_obs_created ON camera_observations(created_at DESC);
 
 -- permissions
-INSERT OR IGNORE INTO permissions(name, description) VALUES
-    ('intelligence.observe', 'Submit a camera observation for analysis'),
-    ('intelligence.read',    'Read camera observation results');
+INSERT OR IGNORE INTO permissions(id, name, description) VALUES
+    ('00000002-0000-4000-8000-000000000024', 'intelligence.observe', 'Submit a camera observation for analysis'),
+    ('00000002-0000-4000-8000-000000000025', 'intelligence.read',    'Read camera observation results');
 
 -- grant to emily agent role
-INSERT OR IGNORE INTO role_permissions(role_id, permission_name)
-SELECT r.id, p.name
+INSERT OR IGNORE INTO role_permissions(role_id, permission_id)
+SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name IN ('emily_prime', 'emily_agent', 'agent_default')
   AND p.name IN ('intelligence.observe', 'intelligence.read');
