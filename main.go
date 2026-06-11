@@ -102,6 +102,7 @@ func main() {
 	healthH := &handlers.HealthHandler{}
 	adminH := &handlers.AdminHandler{Store: iamStore}
 	adminH.Init()
+	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer}
 	applesH := &handlers.ApplesHandler{Store: iamStore}
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
@@ -145,10 +146,26 @@ func main() {
 	mux.Handle("/api/v1/heimdal/sprints", heimdalProtected)
 	mux.Handle("/api/v1/heimdal/sprints/", heimdalProtected)
 
-	// Admin UI — requires iduna.admin permission.
-	adminProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("iduna.admin")(adminH))
+	// Admin login/logout — public (no auth required).
+	mux.Handle("/admin/login", adminLoginH)
+	mux.Handle("/admin/logout", adminLoginH)
+
+	// Admin UI — requires iduna.admin permission; cookie auth for browser navigation.
+	adminProtected := middleware.RequireCookieAuth(keys, "/admin/login")(middleware.RequirePermission("iduna.admin")(adminH))
 	mux.Handle("/admin", adminProtected)
 	mux.Handle("/admin/", adminProtected)
+
+	// Static files (registration SPA + event stream).
+	idunaRoot := getenv("IDUNA_ROOT", ".")
+	serveStatic := func(name string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, filepath.Join(idunaRoot, name))
+		}
+	}
+	mux.HandleFunc("GET /{$}", serveStatic("index.html"))
+	mux.HandleFunc("GET /app.js", serveStatic("app.js"))
+	mux.HandleFunc("GET /styles.css", serveStatic("styles.css"))
+	mux.HandleFunc("GET /event-stream/{$}", serveStatic("event-stream/index.html"))
 
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))

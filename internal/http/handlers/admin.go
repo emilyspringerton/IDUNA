@@ -350,6 +350,8 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/agents">Agents</a>
   <a href="/admin/audit">Audit Log</a>
   <a href="/admin/apples">Apples</a>
+  <span style="flex:1"></span>
+  <a href="/admin/logout" style="font-size:11px;color:#888">Sign out</a>
 </nav>
 <div class="container">
 {{block "body" .}}{{end}}

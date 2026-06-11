@@ -210,6 +210,10 @@ Irreversible DB operations (permanent bans, audit log modification, agent decomm
 - Public signing keys at `/.well-known/jwks.json` and `/api/v1/jwks`
 - Identity and entitlement lookup at `GET /api/v1/identities/me`
 - Back Office admin ledgers at `/admin` (users, agents, audit events, Apples)
+  - Login page: `http://localhost:8080/admin/login` — sign in with an agent that has `iduna.admin` permission
+  - To grant admin to an agent: assign the `iduna.admin` role via the IDUNA CLI or directly in the DB:
+    `INSERT INTO role_assignments(user_id,role_id,operator_id) ...` (see migrations)
+  - To authenticate as EMILY for admin access, use her agent credentials configured in `EMILY_SECRET`
 - Apples golden documentation log at `POST/GET /api/v1/apples`
 
 ## Documentation

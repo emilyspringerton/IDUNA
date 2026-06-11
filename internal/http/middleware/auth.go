@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"iduna/internal/auth/jwt"
@@ -32,6 +33,49 @@ func RequireAuth(keys *jwt.Keys) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// RequireCookieAuth is like RequireAuth but also accepts an iduna_session cookie.
+// When auth fails for a browser request (Accept: text/html), it redirects to loginURL.
+func RequireCookieAuth(keys *jwt.Keys, loginURL string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token := bearerOrCookie(r)
+			if token == "" {
+				redirectOrJSON(w, r, loginURL)
+				return
+			}
+			claims, err := jwt.Verify(keys, token)
+			if err != nil {
+				redirectOrJSON(w, r, loginURL)
+				return
+			}
+			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func bearerOrCookie(r *http.Request) string {
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	if c, err := r.Cookie("iduna_session"); err == nil && c.Value != "" {
+		return c.Value
+	}
+	return ""
+}
+
+func redirectOrJSON(w http.ResponseWriter, r *http.Request, loginURL string) {
+	if loginURL != "" && strings.Contains(r.Header.Get("Accept"), "text/html") {
+		target := loginURL
+		if path := r.URL.RequestURI(); path != "/" && path != loginURL {
+			target += "?next=" + url.QueryEscape(path)
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
+		return
+	}
+	writeUnauthorized(w)
 }
 
 // RequirePermission returns middleware that checks the "permissions" claim
