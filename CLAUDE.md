@@ -86,3 +86,11 @@ Claude Code executes → Emily Prime patches on completion (complete/blocked).
 - `EMILY` — Emily Prime agent (primary Apple filer, HEIMDAL processor)
 - `PRRJECT_FATBABY` — signal pipeline (downstream JWT consumer)
 - `MJOLNIR` — Android app (HEIMDAL submitter, push token registrar)
+
+## Apple Filing Protocol
+
+After any meaningful change, file an Apple:
+```bash
+emily apples post -t completion "<title>" "<body with commit hash>"
+```
+Then mark the item done in EMILY/BACKLOG.md and commit: `git add BACKLOG.md && git commit && git push`
