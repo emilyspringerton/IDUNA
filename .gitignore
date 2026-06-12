@@ -4,3 +4,7 @@ iduna-key.json
 iduna-key*.json
 *.env
 bootstrap
+
+# Go workspace (local only)
+go.work
+go.work.sum
