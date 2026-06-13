@@ -102,3 +102,16 @@ After any meaningful change, update CHANGELOG.md:
 emily changelog add IDUNA "<what changed>"
 # or manually: append a dated bullet under ## YYYY-MM-DD in IDUNA/CHANGELOG.md
 ```
+
+## Golden Doc Registration
+
+If you create a new NORTHSTAR.md, architecture spec, or mission-critical design doc in this repo,
+append a row to `EMILY/context/golden-docs-index.md` so Emily Prime picks it up on the next cycle:
+```
+| NAME | <repo>/path/to/doc.md | 1 | <budget-or-0> | one-line description |
+```
+Then commit and push EMILY:
+```bash
+cd /home/fatbaby/EMILY && git add context/golden-docs-index.md && git commit -m "golden-index: add NAME" && git push
+```
+
