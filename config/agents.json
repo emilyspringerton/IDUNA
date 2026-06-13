@@ -13,7 +13,8 @@
         "governance.admin",
         "apples.write",
         "apples.read",
-        "signalapi.read"
+        "signalapi.read",
+        "heimdal.submit"
       ]
     },
     {
@@ -76,6 +77,18 @@
         "tyler.rsi.write",
         "apples.write",
         "apples.read"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000007",
+      "name": "EDIS-CUSTODIAN",
+      "type": "provisioner_agent",
+      "description": "EDIS Custodian — provisions IDUNA-managed secrets to fresh EDIS WordPress servers. Registered by emily install --edis. One custodian per EDIS instance.",
+      "permissions": [
+        "edis.secrets.read",
+        "apples.write",
+        "apples.read",
+        "iduna.me.read"
       ]
     }
   ]
