@@ -97,6 +97,13 @@ func (s *MySQLStore) GetEffectivePermissions(ctx context.Context, userID string)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// Append cap.query.full when user has active Emily+ subscription.
+	sub, _ := s.GetUserSubscription(ctx, userID)
+	if sub.IsActive() {
+		perms = append(perms, "cap.query.full")
+	}
+
 	sort.Strings(perms)
 	return perms, nil
 }
@@ -699,6 +706,46 @@ func (s *MySQLStore) ListSprintItems(ctx context.Context, agentName, status stri
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// GetUserSubscription returns the active subscription for userID, or nil if none.
+func (s *MySQLStore) GetUserSubscription(ctx context.Context, userID string) (*auth.Subscription, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, plan, status, expires_at, created_at, updated_at
+		FROM user_subscriptions WHERE user_id = ? ORDER BY id DESC LIMIT 1`, userID)
+	var sub auth.Subscription
+	var expiresAt sql.NullTime
+	err := row.Scan(&sub.ID, &sub.UserID, &sub.Plan, &sub.Status,
+		&expiresAt, &sub.CreatedAt, &sub.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if expiresAt.Valid {
+		sub.ExpiresAt = expiresAt.Time
+	}
+	return &sub, nil
+}
+
+// UpsertUserSubscription inserts or updates the subscription for sub.UserID.
+func (s *MySQLStore) UpsertUserSubscription(ctx context.Context, sub auth.Subscription) error {
+	var expiresAt *time.Time
+	if !sub.ExpiresAt.IsZero() {
+		t := sub.ExpiresAt.UTC()
+		expiresAt = &t
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO user_subscriptions (user_id, plan, status, expires_at)
+		VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			plan       = VALUES(plan),
+			status     = VALUES(status),
+			expires_at = VALUES(expires_at),
+			updated_at = NOW()`,
+		sub.UserID, sub.Plan, sub.Status, expiresAt)
+	return err
 }
 
 func (s *MySQLStore) GetAgentPermissions(ctx context.Context, agentID string) ([]string, error) {

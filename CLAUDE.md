@@ -21,6 +21,8 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | GET/PATCH | `/api/v1/heimdal/sprints` | HEIMDAL sprint planning (MJOLNIR → Emily Prime) |
 | GET/POST | `/api/v1/push-tokens/:agent` | FCM device tokens for MJOLNIR push |
 | POST | `/api/v1/intelligence/observations` | Camera observations from MJOLNIR |
+| POST | `/api/v1/subscriptions` | Provision Emily+ subscription (requires subscriptions.admin) |
+| GET | `/api/v1/subscriptions/me` | Get caller's subscription status (requires JWT) |
 | GET | `/admin/` | Back Office UI (admin role required) |
 | GET | `/health` | Health check |
 

@@ -117,4 +117,14 @@ type IAMStore interface {
 	// ListSprintItems returns up to limit sprints. Pass agentName="" for all agents.
 	// Pass status="" to return all statuses. Returns newest first.
 	ListSprintItems(ctx context.Context, agentName, status string, limit int) ([]auth.SprintItem, error)
+
+	// --- Subscriptions (Emily+ subscription gate — S23-04) ---
+
+	// GetUserSubscription returns the most recent subscription for userID.
+	// Returns nil, nil when no subscription exists.
+	GetUserSubscription(ctx context.Context, userID string) (*auth.Subscription, error)
+
+	// UpsertUserSubscription inserts or updates a subscription for userID.
+	// Uses userID as the unique key — one subscription record per user.
+	UpsertUserSubscription(ctx context.Context, sub auth.Subscription) error
 }

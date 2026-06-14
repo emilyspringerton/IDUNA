@@ -80,6 +80,17 @@
       ]
     },
     {
+      "id": "00000003-0000-4000-8000-000000000009",
+      "name": "EDIS-WOOCOMMERCE",
+      "type": "provisioner_agent",
+      "description": "EDIS WooCommerce hook — provisions Emily+ subscriptions in IDUNA on successful payment. One per EDIS WordPress instance.",
+      "permissions": [
+        "subscriptions.admin",
+        "iduna.me.read",
+        "apples.write"
+      ]
+    },
+    {
       "id": "00000003-0000-4000-8000-000000000008",
       "name": "EMILY-TRAINING",
       "type": "training_agent",

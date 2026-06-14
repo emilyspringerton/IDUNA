@@ -109,6 +109,9 @@ func main() {
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
 	heimdalH := &handlers.HeimdalHandler{Store: iamStore}
 
+	// Subscriptions (Emily+ gate) — S23-04.
+	subscriptionH := &handlers.SubscriptionHandler{Store: iamStore}
+
 	// Drive API — configured via GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON + GOOGLE_DRIVE_FOLDER_ID.
 	// Starts in degraded mode (503) if env var not set; no startup failure.
 	driveH := &handlers.DriveHandler{}
@@ -162,6 +165,11 @@ func main() {
 	heimdalProtected := middleware.RequireAuth(keys)(heimdalH)
 	mux.Handle("/api/v1/heimdal/sprints", heimdalProtected)
 	mux.Handle("/api/v1/heimdal/sprints/", heimdalProtected)
+
+	// Subscriptions API — auth required; provision requires subscriptions.admin (inside handler).
+	subsProtected := middleware.RequireAuth(keys)(subscriptionH)
+	mux.Handle("/api/v1/subscriptions", subsProtected)
+	mux.Handle("/api/v1/subscriptions/", subsProtected)
 
 	// Drive API — auth required; permission checks (drive.write / drive.read) inside handler.
 	driveProtected := middleware.RequireAuth(keys)(driveH)

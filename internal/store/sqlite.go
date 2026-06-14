@@ -173,8 +173,18 @@ func (s *SQLiteStore) GetEffectivePermissions(ctx context.Context, userID string
 		}
 		perms = append(perms, name)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Append cap.query.full when the user has an active Emily+ subscription.
+	sub, _ := s.GetUserSubscription(ctx, userID)
+	if sub.IsActive() {
+		perms = append(perms, "cap.query.full")
+	}
+
 	sort.Strings(perms)
-	return perms, rows.Err()
+	return perms, nil
 }
 
 func (s *SQLiteStore) AppendIAMEvent(ctx context.Context, eventType, aggregateType, aggregateID, operatorID string, payload []byte) error {
@@ -804,6 +814,51 @@ func sqliteScanUsers(rows *sql.Rows) ([]auth.User, error) {
 		users = append(users, u)
 	}
 	return users, rows.Err()
+}
+
+// GetUserSubscription returns the most recent subscription record for userID.
+// Returns nil, nil when no record exists.
+func (s *SQLiteStore) GetUserSubscription(ctx context.Context, userID string) (*auth.Subscription, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, plan, status, expires_at, created_at, updated_at
+		FROM user_subscriptions
+		WHERE user_id = ?
+		ORDER BY id DESC LIMIT 1`, userID)
+
+	var sub auth.Subscription
+	var expiresAt, createdAt, updatedAt string
+	err := row.Scan(&sub.ID, &sub.UserID, &sub.Plan, &sub.Status,
+		&expiresAt, &createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if expiresAt != "" {
+		sub.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt)
+	}
+	sub.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	sub.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	return &sub, nil
+}
+
+// UpsertUserSubscription inserts or updates the subscription for sub.UserID.
+func (s *SQLiteStore) UpsertUserSubscription(ctx context.Context, sub auth.Subscription) error {
+	expiresAt := ""
+	if !sub.ExpiresAt.IsZero() {
+		expiresAt = sub.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO user_subscriptions (user_id, plan, status, expires_at, updated_at)
+		VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		ON CONFLICT(user_id) DO UPDATE SET
+			plan       = excluded.plan,
+			status     = excluded.status,
+			expires_at = excluded.expires_at,
+			updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`,
+		sub.UserID, sub.Plan, sub.Status, expiresAt)
+	return err
 }
 
 func sqliteHashAgentSecret(agentID, plaintext string) string {
