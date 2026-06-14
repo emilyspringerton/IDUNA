@@ -2,6 +2,12 @@ package auth
 
 import "time"
 
+// DailyTokenStat is one day's aggregate token usage extracted from Apple metadata.
+type DailyTokenStat struct {
+	Date   string `json:"date"`   // "YYYY-MM-DD" UTC
+	Tokens int64  `json:"tokens"` // sum of metadata.tokens_used for all Apples that day
+}
+
 // Subscription tracks a user's Emily+ plan status.
 type Subscription struct {
 	ID        int64

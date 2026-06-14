@@ -13,15 +13,16 @@ import (
 )
 
 // ApplesHandler handles /api/v1/apples routes.
-// POST /api/v1/apples          requires apples.write
-// GET  /api/v1/apples          requires apples.read
-// GET  /api/v1/apples/{id}     requires apples.read
+// POST /api/v1/apples                  requires apples.write
+// GET  /api/v1/apples                  requires apples.read
+// GET  /api/v1/apples/{id}             requires apples.read
+// GET  /api/v1/apples/stats/daily-tokens?days=7  requires apples.read
 type ApplesHandler struct {
 	Store store.IAMStore
 }
 
 func (h *ApplesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Strip /api/v1/apples prefix and check for /{id}
+	// Strip /api/v1/apples prefix and check for sub-paths.
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apples")
 	path = strings.TrimPrefix(path, "/")
 
@@ -32,6 +33,15 @@ func (h *ApplesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case http.MethodGet:
 			h.list(w, r)
 		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
+
+	if path == "stats/daily-tokens" {
+		if r.Method == http.MethodGet {
+			h.dailyTokenStats(w, r)
+		} else {
 			http.NotFound(w, r)
 		}
 		return
@@ -209,6 +219,41 @@ func (h *ApplesHandler) get(w http.ResponseWriter, r *http.Request, id int64) {
 		"body":        apple.Body,
 		"metadata":    meta,
 		"recorded_at": apple.RecordedAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// GET /api/v1/apples/stats/daily-tokens?days=7
+// Returns daily token usage aggregated from Apple metadata for sparkline display.
+// Response: {"days": 7, "stats": [{"date":"2026-06-14","tokens":12345}, ...]}
+func (h *ApplesHandler) dailyTokenStats(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if !hasClaimPermission(claims, "apples.read") && !hasClaimPermission(claims, "apples.admin") {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"code":    "FORBIDDEN",
+			"message": "apples.read permission required",
+		})
+		return
+	}
+
+	days := 7
+	if d := r.URL.Query().Get("days"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil && n > 0 && n <= 90 {
+			days = n
+		}
+	}
+
+	stats, err := h.Store.DailyTokenStats(r.Context(), days)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"code":    "INTERNAL",
+			"message": "failed to aggregate token stats",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"days":  days,
+		"stats": stats,
 	})
 }
 

@@ -861,6 +861,51 @@ func (s *SQLiteStore) UpsertUserSubscription(ctx context.Context, sub auth.Subsc
 	return err
 }
 
+// DailyTokenStats aggregates tokens_used from Apple metadata, grouped by UTC date.
+// It generates a complete series for the last `days` days so clients get a full
+// sparkline even on days with no activity.
+func (s *SQLiteStore) DailyTokenStats(ctx context.Context, days int) ([]auth.DailyTokenStat, error) {
+	if days <= 0 {
+		days = 7
+	}
+	// Build the series from the DB: sum json_extract(metadata, '$.tokens_used') per day.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			strftime('%Y-%m-%d', recorded_at) AS day,
+			COALESCE(SUM(CAST(json_extract(metadata, '$.tokens_used') AS INTEGER)), 0) AS tokens
+		FROM apples
+		WHERE recorded_at >= datetime('now', '-' || ? || ' days')
+		GROUP BY day
+		ORDER BY day ASC`,
+		days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Collect DB results into a map.
+	byDate := make(map[string]int64, days)
+	for rows.Next() {
+		var day string
+		var tokens int64
+		if err := rows.Scan(&day, &tokens); err != nil {
+			return nil, err
+		}
+		byDate[day] = tokens
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Fill the full series (zero-pad missing days).
+	stats := make([]auth.DailyTokenStat, days)
+	for i := range stats {
+		d := time.Now().UTC().AddDate(0, 0, -(days-1-i)).Format("2006-01-02")
+		stats[i] = auth.DailyTokenStat{Date: d, Tokens: byDate[d]}
+	}
+	return stats, nil
+}
+
 func sqliteHashAgentSecret(agentID, plaintext string) string {
 	h := sha256.New()
 	h.Write([]byte(agentID))

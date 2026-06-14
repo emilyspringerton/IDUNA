@@ -748,6 +748,46 @@ func (s *MySQLStore) UpsertUserSubscription(ctx context.Context, sub auth.Subscr
 	return err
 }
 
+// DailyTokenStats aggregates tokens_used from Apple metadata for the last `days` days.
+func (s *MySQLStore) DailyTokenStats(ctx context.Context, days int) ([]auth.DailyTokenStat, error) {
+	if days <= 0 {
+		days = 7
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			DATE(recorded_at) AS day,
+			COALESCE(SUM(CAST(JSON_EXTRACT(metadata, '$.tokens_used') AS UNSIGNED)), 0) AS tokens
+		FROM apples
+		WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+		GROUP BY day
+		ORDER BY day ASC`,
+		days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byDate := make(map[string]int64, days)
+	for rows.Next() {
+		var day string
+		var tokens int64
+		if err := rows.Scan(&day, &tokens); err != nil {
+			return nil, err
+		}
+		byDate[day] = tokens
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	stats := make([]auth.DailyTokenStat, days)
+	for i := range stats {
+		d := time.Now().UTC().AddDate(0, 0, -(days-1-i)).Format("2006-01-02")
+		stats[i] = auth.DailyTokenStat{Date: d, Tokens: byDate[d]}
+	}
+	return stats, nil
+}
+
 func (s *MySQLStore) GetAgentPermissions(ctx context.Context, agentID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT p.name FROM permissions p
