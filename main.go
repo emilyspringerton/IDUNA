@@ -12,6 +12,7 @@ import (
 
 	"iduna/internal/auth/device"
 	authjwt "iduna/internal/auth/jwt"
+	"iduna/internal/drive"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
@@ -108,6 +109,22 @@ func main() {
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
 	heimdalH := &handlers.HeimdalHandler{Store: iamStore}
 
+	// Drive API — configured via GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON + GOOGLE_DRIVE_FOLDER_ID.
+	// Starts in degraded mode (503) if env var not set; no startup failure.
+	driveH := &handlers.DriveHandler{}
+	if saJSON := os.Getenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"); saJSON != "" {
+		folderID := os.Getenv("GOOGLE_DRIVE_FOLDER_ID")
+		dc, err := drive.New(saJSON, folderID)
+		if err != nil {
+			log.Printf("drive: failed to initialize client: %v (drive API disabled)", err)
+		} else {
+			driveH.Client = dc
+			log.Printf("drive: initialized (folder=%q)", folderID)
+		}
+	} else {
+		log.Printf("drive: GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON not set — drive API in degraded mode")
+	}
+
 	mux := http.NewServeMux()
 
 	// Existing device routes.
@@ -145,6 +162,12 @@ func main() {
 	heimdalProtected := middleware.RequireAuth(keys)(heimdalH)
 	mux.Handle("/api/v1/heimdal/sprints", heimdalProtected)
 	mux.Handle("/api/v1/heimdal/sprints/", heimdalProtected)
+
+	// Drive API — auth required; permission checks (drive.write / drive.read) inside handler.
+	driveProtected := middleware.RequireAuth(keys)(driveH)
+	mux.Handle("/api/v1/drive/upload", driveProtected)
+	mux.Handle("/api/v1/drive/files", driveProtected)
+	mux.Handle("/api/v1/drive/files/", driveProtected)
 
 	// Admin login/logout — public (no auth required).
 	mux.Handle("/admin/login", adminLoginH)

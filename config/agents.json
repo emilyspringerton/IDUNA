@@ -80,6 +80,19 @@
       ]
     },
     {
+      "id": "00000003-0000-4000-8000-000000000008",
+      "name": "EMILY-TRAINING",
+      "type": "training_agent",
+      "description": "Emily Training — manages GPT-2 fine-tuning pipeline; uploads training data and downloads checkpoints via Google Drive API",
+      "permissions": [
+        "drive.write",
+        "drive.read",
+        "apples.write",
+        "apples.read",
+        "iduna.me.read"
+      ]
+    },
+    {
       "id": "00000003-0000-4000-8000-000000000007",
       "name": "EDIS-CUSTODIAN",
       "type": "provisioner_agent",
