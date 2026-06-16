@@ -90,6 +90,13 @@ func (s *stubAgentStore) GetSprintItem(context.Context, int64) (*auth.SprintItem
 func (s *stubAgentStore) ListSprintItems(context.Context, string, string, int) ([]auth.SprintItem, error) {
 	return nil, nil
 }
+func (s *stubAgentStore) DailyTokenStats(context.Context, int) ([]auth.DailyTokenStat, error) {
+	return nil, nil
+}
+func (s *stubAgentStore) GetUserSubscription(context.Context, string) (*auth.Subscription, error) {
+	return nil, nil
+}
+func (s *stubAgentStore) UpsertUserSubscription(context.Context, auth.Subscription) error { return nil }
 
 func TestAgentAuthHandler_Success(t *testing.T) {
 	k, err := jwt.GenerateKeys()

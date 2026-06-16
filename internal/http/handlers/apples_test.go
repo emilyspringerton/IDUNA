@@ -121,6 +121,13 @@ func (s *stubApplesStore) GetSprintItem(context.Context, int64) (*auth.SprintIte
 func (s *stubApplesStore) ListSprintItems(context.Context, string, string, int) ([]auth.SprintItem, error) {
 	return nil, nil
 }
+func (s *stubApplesStore) DailyTokenStats(context.Context, int) ([]auth.DailyTokenStat, error) {
+	return nil, nil
+}
+func (s *stubApplesStore) GetUserSubscription(context.Context, string) (*auth.Subscription, error) {
+	return nil, nil
+}
+func (s *stubApplesStore) UpsertUserSubscription(context.Context, auth.Subscription) error { return nil }
 
 func makeAgentToken(t *testing.T, keys *jwt.Keys, sub string, perms []string) string {
 	t.Helper()

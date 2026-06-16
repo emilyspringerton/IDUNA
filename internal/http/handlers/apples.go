@@ -2,7 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +23,8 @@ import (
 // GET  /api/v1/apples/{id}             requires apples.read
 // GET  /api/v1/apples/stats/daily-tokens?days=7  requires apples.read
 type ApplesHandler struct {
-	Store store.IAMStore
+	Store        store.IAMStore
+	ApplesGitDir string // path to APPLES git repo; if set, every new Apple is auto-synced
 }
 
 func (h *ApplesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +128,10 @@ func (h *ApplesHandler) create(w http.ResponseWriter, r *http.Request) {
 			"message": "failed to store apple",
 		})
 		return
+	}
+	if h.ApplesGitDir != "" {
+		apple.ID = id
+		go h.syncAppleToGit(apple)
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":          id,
@@ -255,6 +265,130 @@ func (h *ApplesHandler) dailyTokenStats(w http.ResponseWriter, r *http.Request) 
 		"days":  days,
 		"stats": stats,
 	})
+}
+
+// syncAppleToGit writes the Apple as a JSON file to ApplesGitDir, updates MANIFEST.json,
+// commits both, and pushes. Runs as a goroutine; all failures are logged and non-fatal.
+func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
+	gitDir := h.ApplesGitDir
+	today := time.Now().UTC().Format("20060102")
+
+	// Write YYYYMMDD/NNN_type.json
+	dir := filepath.Join(gitDir, today)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[apples-git] mkdir %s: %v", dir, err)
+		return
+	}
+	fname := fmt.Sprintf("%d_%s.json", apple.ID, strings.ReplaceAll(apple.AppleType, "_", "-"))
+	fpath := filepath.Join(dir, fname)
+	record := map[string]any{
+		"id":          apple.ID,
+		"agent_id":    apple.AgentID,
+		"apple_type":  apple.AppleType,
+		"source_repo": apple.SourceRepo,
+		"run_id":      apple.RunID,
+		"title":       apple.Title,
+		"body":        apple.Body,
+		"archived_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		log.Printf("[apples-git] marshal apple: %v", err)
+		return
+	}
+	if err := os.WriteFile(fpath, append(data, '\n'), 0o644); err != nil {
+		log.Printf("[apples-git] write %s: %v", fpath, err)
+		return
+	}
+
+	// Update MANIFEST.json
+	appleGitUpdateManifest(gitDir, apple, today)
+
+	// git add -A + commit + push
+	title := apple.Title
+	if len(title) > 60 {
+		title = title[:60]
+	}
+	commitMsg := fmt.Sprintf("apple: #%d %s — %s", apple.ID, apple.AppleType, title)
+	gitEnv := append(os.Environ(),
+		"GIT_AUTHOR_NAME=iduna", "GIT_AUTHOR_EMAIL=iduna@einhorn.internal",
+		"GIT_COMMITTER_NAME=iduna", "GIT_COMMITTER_EMAIL=iduna@einhorn.internal",
+	)
+	addCmd := exec.Command("git", "-C", gitDir, "add", "-A")
+	addCmd.Env = gitEnv
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		log.Printf("[apples-git] git add: %v\n%s", err, out)
+		return
+	}
+	commitCmd := exec.Command("git", "-C", gitDir, "commit", "-m", commitMsg)
+	commitCmd.Env = gitEnv
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		log.Printf("[apples-git] git commit: %v\n%s", err, out)
+		return
+	}
+	pushCmd := exec.Command("git", "-C", gitDir, "push")
+	pushCmd.Env = gitEnv
+	if out, err := pushCmd.CombinedOutput(); err != nil {
+		log.Printf("[apples-git] git push: %v\n%s", err, out)
+		return
+	}
+	log.Printf("[apples-git] synced Apple #%d → %s/%s", apple.ID, today, fname)
+}
+
+// appleGitUpdateManifest reads MANIFEST.json, appends the new entry, and writes it back.
+// Best-effort: failures are logged, sync continues.
+func appleGitUpdateManifest(gitDir string, apple auth.AppleRecord, date string) {
+	type manifestEntry struct {
+		ID         int64  `json:"id"`
+		Type       string `json:"type"`
+		Title      string `json:"title"`
+		SourceRepo string `json:"source_repo"`
+		Date       string `json:"date"`
+		ArchivedAt string `json:"archived_at"`
+	}
+	type manifest struct {
+		GeneratedAt string          `json:"generated_at"`
+		Repo        string          `json:"repo"`
+		Count       int             `json:"count"`
+		Apples      []manifestEntry `json:"apples"`
+	}
+
+	manifestPath := filepath.Join(gitDir, "MANIFEST.json")
+	var m manifest
+	if raw, err := os.ReadFile(manifestPath); err == nil {
+		_ = json.Unmarshal(raw, &m)
+	}
+	if m.Repo == "" {
+		m.Repo = "APPLES"
+	}
+	for _, e := range m.Apples {
+		if e.ID == apple.ID {
+			return // idempotent
+		}
+	}
+	title := apple.Title
+	if len(title) > 140 {
+		title = title[:140]
+	}
+	m.Apples = append(m.Apples, manifestEntry{
+		ID:         apple.ID,
+		Type:       apple.AppleType,
+		Title:      title,
+		SourceRepo: apple.SourceRepo,
+		Date:       date,
+		ArchivedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	m.Count = len(m.Apples)
+	m.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		log.Printf("[apples-git] manifest marshal: %v", err)
+		return
+	}
+	if err := os.WriteFile(manifestPath, append(data, '\n'), 0o644); err != nil {
+		log.Printf("[apples-git] manifest write: %v", err)
+	}
 }
 
 // hasClaimPermission checks the "permissions" claim in the JWT for a specific permission.

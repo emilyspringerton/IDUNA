@@ -104,7 +104,7 @@ func main() {
 	adminH := &handlers.AdminHandler{Store: iamStore}
 	adminH.Init()
 	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer}
-	applesH := &handlers.ApplesHandler{Store: iamStore}
+	applesH := &handlers.ApplesHandler{Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
 	heimdalH := &handlers.HeimdalHandler{Store: iamStore}
