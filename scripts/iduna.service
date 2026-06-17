@@ -12,9 +12,10 @@
 #   go build -o ~/.local/bin/iduna .
 #
 # Required env vars (set in EnvironmentFile or export before enabling):
-#   JWT_SECRET   — random string, min 32 chars
-#   JWT_ISSUER   — e.g. "iduna.einhorn.internal"
-#   SERVER_PORT  — optional, defaults to 8080
+#   JWT_SECRET       — random string, min 32 chars
+#   JWT_ISSUER       — e.g. "iduna.einhorn.internal"
+#   SERVER_PORT      — optional, defaults to 8080
+#   APPLES_GIT_DIR   — /home/fatbaby/APPLES (enables auto-sync on every Apple POST)
 #
 # No MYSQL_DSN needed — embedded SQLite backend runs in-process.
 
