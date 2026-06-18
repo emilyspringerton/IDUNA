@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-06-18
+
+- feat: webmaster uid=0, user CRUD, event log + SQLite/MySQL projectors (Apple #1445)
+
+
 ## 2026-06-16
 
 - ApplesHandler: auto-sync every Apple to APPLES git repo via APPLES_GIT_DIR goroutine (Apple #585)
