@@ -99,6 +99,28 @@ func ClaimsFromContext(ctx context.Context) map[string]any {
 	return v
 }
 
+// PermissionsFromContext returns the "permissions" slice from the JWT stored in context.
+func PermissionsFromContext(ctx context.Context) []string {
+	claims := ClaimsFromContext(ctx)
+	if claims == nil {
+		return nil
+	}
+	perms, _ := claims["permissions"]
+	switch v := perms.(type) {
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, p := range v {
+			if s, ok := p.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return v
+	}
+	return nil
+}
+
 // SubjectFromContext returns the "sub" claim from the JWT stored in context.
 func SubjectFromContext(ctx context.Context) string {
 	claims := ClaimsFromContext(ctx)

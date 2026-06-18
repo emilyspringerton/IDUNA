@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
+	"iduna/internal/userlog"
 	"iduna/internal/util"
 )
 
@@ -197,6 +199,41 @@ func main() {
 	mux.HandleFunc("GET /app.js", serveStatic("app.js"))
 	mux.HandleFunc("GET /styles.css", serveStatic("styles.css"))
 	mux.HandleFunc("GET /event-stream/{$}", serveStatic("event-stream/index.html"))
+
+	// ── User event log + projector ─────────────────────────────────────────────
+	idunaRootForLog := getenv("IDUNA_ROOT", ".")
+	userEventLogDir := filepath.Join(idunaRootForLog, "var", "user-events")
+	uel, err := userlog.NewFileEventLog(userEventLogDir)
+	if err != nil {
+		log.Fatalf("user event log: %v", err)
+	}
+	defer uel.Close()
+
+	var userProj userlog.UserProjector
+	if dsn != "" {
+		userProj = userlog.NewMySQLProjector(db)
+	} else {
+		userProj = userlog.NewSQLiteProjector(db)
+	}
+
+	// Replay unapplied events on startup, then seed webmaster from var/webmaster.json.
+	webmasterCredPath := filepath.Join(idunaRootForLog, "var", "webmaster.json")
+	if err := userlog.SeedWebmaster(context.Background(), webmasterCredPath, uel, userProj); err != nil {
+		log.Printf("webmaster seed: %v (continuing — webmaster may already exist or file is absent)", err)
+	} else {
+		log.Println("webmaster: uid=0 ready")
+	}
+
+	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer}
+	usersH := &handlers.UsersHandler{Log: uel, Proj: userProj}
+
+	// Local (password) auth — public.
+	mux.Handle("/api/v1/auth/local", localAuthH)
+
+	// User CRUD — requires JWT.
+	usersProtected := middleware.RequireAuth(keys)(usersH)
+	mux.Handle("/api/v1/users", usersProtected)
+	mux.Handle("/api/v1/users/", usersProtected)
 
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
