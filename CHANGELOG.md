@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-18
+- feat: OpenAPI spec + Python einhorn_sdk + Colab observability (Apple #1446)
 
 - feat: webmaster uid=0, user CRUD, event log + SQLite/MySQL projectors (Apple #1445)
 
