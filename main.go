@@ -227,6 +227,9 @@ func main() {
 	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer}
 	usersH := &handlers.UsersHandler{Log: uel, Proj: userProj}
 
+	// OpenAPI spec — public.
+	mux.Handle("/api/v1/openapi.json", &handlers.OpenAPIHandler{})
+
 	// Local (password) auth — public.
 	mux.Handle("/api/v1/auth/local", localAuthH)
 
