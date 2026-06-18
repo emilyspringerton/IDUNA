@@ -8,3 +8,8 @@ bootstrap
 # Go workspace (local only)
 go.work
 go.work.sum
+
+# Python SDK
+sdk/python/**/__pycache__/
+sdk/python/**/*.pyc
+sdk/python/.pytest_cache/
