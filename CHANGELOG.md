@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-06-20
+
+- feat: S44-04 GET /api/v1/agents + distributed Emily cluster registry (Apple #1877)
+
+
 ## 2026-06-18
 - feat: OpenAPI spec + Python einhorn_sdk + Colab observability (Apple #1446)
 
