@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-20
+- feat: S44-06 GET /api/v1/stream/user-events SSE stream endpoint for Colab (Apple #1882)
 
 - feat: S44-04 GET /api/v1/agents + distributed Emily cluster registry (Apple #1877)
 
