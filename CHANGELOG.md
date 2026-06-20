@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-20
+- feat: S43-05 email+password SHANKPIT player auth POST /api/v1/auth/email/{register,login} (Apple #1893)
 - feat: S43-03 SHANKPIT Google OAuth flow /api/v1/auth/google/shankpit (Apple #1890)
 - feat: S43-02 SHANKPIT player registry — POST/GET /api/v1/players/{register,{id}} (Apple #1888)
 - feat: S44-06 GET /api/v1/stream/user-events SSE stream endpoint for Colab (Apple #1882)
