@@ -253,6 +253,11 @@ func main() {
 	mux.Handle("/api/v1/players/register", playersH)
 	mux.Handle("/api/v1/players/", playersH)
 
+	// SHANKPIT email+password auth — public (creates/validates player credentials).
+	playerEmailAuthH := &handlers.PlayerEmailAuthHandler{DB: db, Keys: keys, Issuer: issuer}
+	mux.Handle("/api/v1/auth/email/register", playerEmailAuthH)
+	mux.Handle("/api/v1/auth/email/login", playerEmailAuthH)
+
 	// SHANKPIT Google OAuth browser flow — public (no prior auth needed).
 	shankpitAuthH := &handlers.ShankpitAuthHandler{
 		GoogleClientID:     googleClientID,
