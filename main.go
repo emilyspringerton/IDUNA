@@ -238,6 +238,12 @@ func main() {
 	mux.Handle("/api/v1/users", usersProtected)
 	mux.Handle("/api/v1/users/", usersProtected)
 
+	// Agents API — requires JWT; listing emily_cluster agents for distributed Emily.
+	agentsH := &handlers.AgentsHandler{Store: iamStore}
+	agentsProtected := middleware.RequireAuth(keys)(agentsH)
+	mux.Handle("/api/v1/agents", agentsProtected)
+	mux.Handle("/api/v1/agents/", agentsProtected)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

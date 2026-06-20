@@ -316,6 +316,35 @@ var idunaOpenAPISpec = map[string]any{
 				},
 			},
 		},
+		// ── Agents ────────────────────────────────────────────────────────────
+		"/api/v1/agents": map[string]any{
+			"get": map[string]any{
+				"summary":     "List registered agents",
+				"tags":        []string{"agents"},
+				"description": "Returns all agents. Filter by ?type=emily_cluster to enumerate distributed Emily processes.",
+				"parameters": []map[string]any{
+					{"name": "type", "in": "query", "required": false, "schema": map[string]any{"type": "string"}, "description": "Filter by agent type (e.g. emily_cluster)"},
+				},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Agent list", "content": jsonSchemaArray("Agent")},
+				},
+			},
+		},
+		"/api/v1/agents/{id}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+			},
+			"get": map[string]any{
+				"summary":  "Get single agent by ID or name",
+				"tags":     []string{"agents"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Agent", "content": jsonSchema("Agent")},
+					"404": errorResponse("Not found"),
+				},
+			},
+		},
 		// ── Drive ─────────────────────────────────────────────────────────────
 		"/api/v1/drive/upload": map[string]any{
 			"post": map[string]any{
