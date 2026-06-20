@@ -244,6 +244,10 @@ func main() {
 	mux.Handle("/api/v1/agents", agentsProtected)
 	mux.Handle("/api/v1/agents/", agentsProtected)
 
+	// User-event SSE stream — Colab notebooks subscribe here for real-time user events.
+	streamH := middleware.RequireAuth(keys)(&handlers.UserEventStreamHandler{Log: uel})
+	mux.Handle("/api/v1/stream/user-events", streamH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

@@ -345,6 +345,30 @@ var idunaOpenAPISpec = map[string]any{
 				},
 			},
 		},
+		// ── Event stream ──────────────────────────────────────────────────────
+		"/api/v1/stream/user-events": map[string]any{
+			"get": map[string]any{
+				"summary":     "SSE stream of user-event log records",
+				"tags":        []string{"stream"},
+				"description": "Server-Sent Events stream. Events are emitted as they are appended to the user-event log. Colab notebooks and Distributed Emily clusters subscribe here for real-time user lifecycle events.",
+				"parameters": []map[string]any{
+					{"name": "from_seq", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "minimum": 1}, "description": "First sequence number to stream (default 1 = full replay)"},
+					{"name": "timeout", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": 3600}, "description": "Seconds to hold the connection open (default 300, max 3600)"},
+				},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{
+						"description": "SSE stream (text/event-stream). Event types: user_event, error, eof.",
+						"content": map[string]any{
+							"text/event-stream": map[string]any{
+								"schema": map[string]any{"type": "string"},
+							},
+						},
+					},
+					"401": errorResponse("Unauthorized"),
+				},
+			},
+		},
 		// ── Drive ─────────────────────────────────────────────────────────────
 		"/api/v1/drive/upload": map[string]any{
 			"post": map[string]any{
