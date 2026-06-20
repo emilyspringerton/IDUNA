@@ -253,6 +253,20 @@ func main() {
 	mux.Handle("/api/v1/players/register", playersH)
 	mux.Handle("/api/v1/players/", playersH)
 
+	// SHANKPIT Google OAuth browser flow — public (no prior auth needed).
+	shankpitAuthH := &handlers.ShankpitAuthHandler{
+		GoogleClientID:     googleClientID,
+		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		RedirectURI:        os.Getenv("SHANKPIT_OAUTH_REDIRECT_URI"),
+		Keys:               keys,
+		Store:              iamStore,
+		DB:                 db,
+		Issuer:             issuer,
+		BaseURL:            baseURL,
+	}
+	mux.Handle("/api/v1/auth/google/shankpit", shankpitAuthH)
+	mux.Handle("/api/v1/auth/google/shankpit/callback", shankpitAuthH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
