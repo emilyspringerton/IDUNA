@@ -345,6 +345,57 @@ var idunaOpenAPISpec = map[string]any{
 				},
 			},
 		},
+		// ── SHANKPIT players ──────────────────────────────────────────────────
+		"/api/v1/players/register": map[string]any{
+			"post": map[string]any{
+				"summary":  "Register or update a SHANKPIT player identity",
+				"tags":     []string{"players"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type": "object",
+								"required": []string{"provider", "provider_sub"},
+								"properties": map[string]any{
+									"provider":     map[string]any{"type": "string", "example": "google"},
+									"provider_sub": map[string]any{"type": "string"},
+									"display_name": map[string]any{"type": "string"},
+									"email":        map[string]any{"type": "string", "format": "email"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Player registered/updated", "content": map[string]any{
+						"application/json": map[string]any{"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"player_id":    map[string]any{"type": "string"},
+								"display_name": map[string]any{"type": "string"},
+							},
+						}},
+					}},
+					"400": errorResponse("Missing provider or provider_sub"),
+				},
+			},
+		},
+		"/api/v1/players/{id}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "player_id UUID"},
+			},
+			"get": map[string]any{
+				"summary":  "Get SHANKPIT player profile",
+				"tags":     []string{"players"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Player profile with kills, deaths, kd_ratio, sessions"},
+					"404": errorResponse("Not found"),
+				},
+			},
+		},
 		// ── Event stream ──────────────────────────────────────────────────────
 		"/api/v1/stream/user-events": map[string]any{
 			"get": map[string]any{

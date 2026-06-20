@@ -248,6 +248,11 @@ func main() {
 	streamH := middleware.RequireAuth(keys)(&handlers.UserEventStreamHandler{Log: uel})
 	mux.Handle("/api/v1/stream/user-events", streamH)
 
+	// SHANKPIT player registry — register + profile (auth required).
+	playersH := middleware.RequireAuth(keys)(&handlers.PlayersHandler{DB: db})
+	mux.Handle("/api/v1/players/register", playersH)
+	mux.Handle("/api/v1/players/", playersH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
