@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-21
+- test: S66-01 drive.Client test suite (Apple #2404)
 - test: S62-01 auth.Subscription.IsActive() 7-case test suite (Apple #2395)
 - test: S56-02 subscriptions handler test suite — 5 tests (Apple #2382)
 - test: S56-01 push_tokens handler test suite — 5 tests (Apple #2380)
