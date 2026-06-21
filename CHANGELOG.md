@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-21
+- feat: S48-01 GET /api/v1/players leaderboard endpoint (Apple #2338)
 
 - feat: S45-01 POST /api/v1/players/{id}/session stat update endpoint (Apple #2308)
 
