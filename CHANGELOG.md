@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-21
+- test: S56-02 subscriptions handler test suite — 5 tests (Apple #2382)
 - test: S56-01 push_tokens handler test suite — 5 tests (Apple #2380)
 - test: S53-02 intelligence handler test suite — 4 tests (Apple #2367)
 - test: S53-01 HEIMDAL handler test suite — 5 tests (Apple #2365)
