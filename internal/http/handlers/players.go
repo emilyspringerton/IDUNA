@@ -46,6 +46,15 @@ func (h *PlayersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// POST /api/v1/players/{id}/session — increment kills/deaths/sessions from game server.
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/session") {
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/v1/players/"), "/"), "/")
+		if len(parts) == 2 && parts[1] == "session" {
+			h.handleSessionEnd(w, r, parts[0])
+			return
+		}
+	}
+
 	// GET /api/v1/players/{id}
 	if r.Method == http.MethodGet {
 		parts := strings.Split(strings.TrimPrefix(path, "/api/v1/players/"), "/")
@@ -150,6 +159,37 @@ func (h *PlayersHandler) handleGetPlayer(w http.ResponseWriter, r *http.Request,
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(p)
+}
+
+func (h *PlayersHandler) handleSessionEnd(w http.ResponseWriter, r *http.Request, playerID string) {
+	var body struct {
+		Kills  int `json:"kills"`
+		Deaths int `json:"deaths"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	db := h.DB
+	if db == nil {
+		http.Error(w, "players not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	res, err := db.ExecContext(r.Context(),
+		`UPDATE players SET sessions=sessions+1, kills=kills+?, deaths=deaths+?, last_seen=CURRENT_TIMESTAMP WHERE player_id=?`,
+		body.Kills, body.Deaths, playerID,
+	)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		http.Error(w, "player not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"updated": true, "kills_added": body.Kills, "deaths_added": body.Deaths})
 }
 
 func min(a, b int) int {
