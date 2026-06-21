@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,12 @@ func (h *PlayersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleSessionEnd(w, r, parts[0])
 			return
 		}
+	}
+
+	// GET /api/v1/players — list players
+	if r.Method == http.MethodGet && (path == "/api/v1/players" || path == "/api/v1/players/") {
+		h.handleListPlayers(w, r)
+		return
 	}
 
 	// GET /api/v1/players/{id}
@@ -190,6 +197,74 @@ func (h *PlayersHandler) handleSessionEnd(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"updated": true, "kills_added": body.Kills, "deaths_added": body.Deaths})
+}
+
+// handleListPlayers handles GET /api/v1/players?limit=N&sort=kills|deaths|sessions|last_seen
+func (h *PlayersHandler) handleListPlayers(w http.ResponseWriter, r *http.Request) {
+	db := h.DB
+	if db == nil {
+		http.Error(w, "players not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	limit := 50
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	sort := r.URL.Query().Get("sort")
+	orderCol := "kills"
+	switch sort {
+	case "deaths":
+		orderCol = "deaths"
+	case "sessions":
+		orderCol = "sessions"
+	case "last_seen":
+		orderCol = "last_seen"
+	}
+
+	rows, err := db.QueryContext(r.Context(),
+		`SELECT player_id, display_name, kills, deaths, sessions, last_seen
+		 FROM players ORDER BY `+orderCol+` DESC LIMIT ?`, limit)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type listEntry struct {
+		PlayerID    string    `json:"player_id"`
+		DisplayName string    `json:"display_name"`
+		Kills       int       `json:"kills"`
+		Deaths      int       `json:"deaths"`
+		Sessions    int       `json:"sessions"`
+		KDRatio     float64   `json:"kd_ratio"`
+		LastSeen    time.Time `json:"last_seen"`
+	}
+
+	result := make([]listEntry, 0, limit)
+	for rows.Next() {
+		var e listEntry
+		if err := rows.Scan(&e.PlayerID, &e.DisplayName, &e.Kills, &e.Deaths, &e.Sessions, &e.LastSeen); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		if e.Deaths > 0 {
+			e.KDRatio = float64(e.Kills) / float64(e.Deaths)
+		} else {
+			e.KDRatio = float64(e.Kills)
+		}
+		result = append(result, e)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 func min(a, b int) int {
