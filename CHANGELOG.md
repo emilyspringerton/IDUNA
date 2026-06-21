@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-06-21
+
+- feat: S45-01 POST /api/v1/players/{id}/session stat update endpoint (Apple #2308)
+
+
 ## 2026-06-20
 - feat: S43-05 email+password SHANKPIT player auth POST /api/v1/auth/email/{register,login} (Apple #1893)
 - feat: S43-03 SHANKPIT Google OAuth flow /api/v1/auth/google/shankpit (Apple #1890)
