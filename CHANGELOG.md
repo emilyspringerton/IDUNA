@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-21
+- test: S53-02 intelligence handler test suite — 4 tests (Apple #2367)
 - test: S53-01 HEIMDAL handler test suite — 5 tests (Apple #2365)
 - feat: S48-01 GET /api/v1/players leaderboard endpoint (Apple #2338)
 
