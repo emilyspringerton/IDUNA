@@ -95,6 +95,12 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleDeductGold(w, r, id)
 		return
 	}
+	// GET /api/v1/characters/:id/items
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/items") {
+		id := extractSegment(path, "/api/v1/characters/", "/items")
+		h.handleListCharacterItems(w, r, id)
+		return
+	}
 	// GET /api/v1/characters/:id
 	if r.Method == http.MethodGet && len(path) > len("/api/v1/characters/") {
 		id := strings.TrimPrefix(path, "/api/v1/characters/")
@@ -230,6 +236,42 @@ func (h *MMOHandler) handleDeductGold(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListCharacterItems returns all non-destroyed items owned by character_id.
+func (h *MMOHandler) handleListCharacterItems(w http.ResponseWriter, r *http.Request, characterID string) {
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT item_id, item_type, name, item_level, quantity, provenance_chain, created_at
+		 FROM items WHERE owner_character_id=? AND destroyed_at IS NULL
+		 ORDER BY created_at ASC`, characterID)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	type itemRow struct {
+		ItemID          string          `json:"item_id"`
+		ItemType        string          `json:"item_type"`
+		Name            string          `json:"name"`
+		ItemLevel       int             `json:"item_level"`
+		Quantity        int             `json:"quantity"`
+		ProvenanceChain json.RawMessage `json:"provenance_chain"`
+		CreatedAt       string          `json:"created_at"`
+	}
+	var items []itemRow
+	for rows.Next() {
+		var it itemRow
+		var chainStr string
+		if err := rows.Scan(&it.ItemID, &it.ItemType, &it.Name, &it.ItemLevel, &it.Quantity, &chainStr, &it.CreatedAt); err != nil {
+			continue
+		}
+		it.ProvenanceChain = json.RawMessage(chainStr)
+		items = append(items, it)
+	}
+	if items == nil {
+		items = []itemRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
 // ── Items (S75-03) ────────────────────────────────────────────────────────────
