@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-23
+- feat: S76-06 PATCH /api/v1/characters/:id/skills (UPSERT skill value, cap 110); GET /api/v1/characters/:id/skills (list all skills)
 - feat: S76-04 GET /api/v1/characters/:id/items (list non-destroyed items by owner)
 - feat: S76-03 PATCH /api/v1/characters/:id/gold — atomic conditional gold deduction; 409 on insufficient balance
 
