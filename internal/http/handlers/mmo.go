@@ -89,6 +89,12 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleUpdatePosition(w, r, id)
 		return
 	}
+	// PATCH /api/v1/characters/:id/gold
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/gold") {
+		id := extractSegment(path, "/api/v1/characters/", "/gold")
+		h.handleDeductGold(w, r, id)
+		return
+	}
 	// GET /api/v1/characters/:id
 	if r.Method == http.MethodGet && len(path) > len("/api/v1/characters/") {
 		id := strings.TrimPrefix(path, "/api/v1/characters/")
@@ -181,6 +187,46 @@ func (h *MMOHandler) handleUpdatePosition(w http.ResponseWriter, r *http.Request
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		mmoWriteError(w, http.StatusNotFound, "character not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeductGold atomically deducts gold from a character's balance.
+// Payload: {"deduct": N}. Returns 409 Conflict if insufficient gold.
+func (h *MMOHandler) handleDeductGold(w http.ResponseWriter, r *http.Request, id string) {
+	var req struct {
+		Deduct int `json:"deduct"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Deduct <= 0 {
+		mmoWriteError(w, http.StatusBadRequest, "deduct must be positive")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Atomic conditional update: only succeeds if gold_balance >= deduct
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE characters SET gold_balance = gold_balance - ?, updated_at = ?
+		 WHERE character_id = ? AND gold_balance >= ?`,
+		req.Deduct, now, id, req.Deduct,
+	)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// Could be not found OR insufficient gold; check existence
+		var exists int
+		h.DB.QueryRowContext(r.Context(), `SELECT 1 FROM characters WHERE character_id=?`, id).Scan(&exists)
+		if exists == 0 {
+			mmoWriteError(w, http.StatusNotFound, "character not found")
+		} else {
+			mmoWriteError(w, http.StatusConflict, "insufficient gold balance")
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
