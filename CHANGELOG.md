@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-06-23
+
+- feat: S75-01 MMO schema (characters/items/guilds/world_events/scene_state migration); S75-02/03/04/05 MMO API handlers (characters CRUD+position, items provenance, guilds, world events); wired into main.go with RequireAuth
+
+
 ## 2026-06-21
 - test: S66-01 drive.Client test suite (Apple #2404)
 - test: S62-01 auth.Subscription.IsActive() 7-case test suite (Apple #2395)
