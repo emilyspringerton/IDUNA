@@ -101,6 +101,18 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleListCharacterItems(w, r, id)
 		return
 	}
+	// PATCH /api/v1/characters/:id/skills
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/skills") {
+		id := extractSegment(path, "/api/v1/characters/", "/skills")
+		h.handleIncrementSkill(w, r, id)
+		return
+	}
+	// GET /api/v1/characters/:id/skills
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/skills") {
+		id := extractSegment(path, "/api/v1/characters/", "/skills")
+		h.handleGetSkills(w, r, id)
+		return
+	}
 	// GET /api/v1/characters/:id
 	if r.Method == http.MethodGet && len(path) > len("/api/v1/characters/") {
 		id := strings.TrimPrefix(path, "/api/v1/characters/")
@@ -236,6 +248,64 @@ func (h *MMOHandler) handleDeductGold(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleIncrementSkill patches a character's skill value by delta (PATCH /api/v1/characters/:id/skills).
+// Payload: {"skill_name":"...","delta":N}. Capped at 110.0 (SkillCap).
+func (h *MMOHandler) handleIncrementSkill(w http.ResponseWriter, r *http.Request, characterID string) {
+	var req struct {
+		SkillName string  `json:"skill_name"`
+		Delta     float64 `json:"delta"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.SkillName == "" || req.Delta <= 0 {
+		mmoWriteError(w, http.StatusBadRequest, "skill_name and positive delta required")
+		return
+	}
+	const skillCap = 110.0
+	now := time.Now().UTC().Format(time.RFC3339)
+	// UPSERT: insert or add delta, capped at skillCap.
+	_, err := h.DB.ExecContext(r.Context(), `
+		INSERT INTO character_skills (character_id, skill_name, value, updated_at)
+		VALUES (?, ?, MIN(?, ?), ?)
+		ON CONFLICT(character_id, skill_name) DO UPDATE SET
+			value = MIN(character_skills.value + excluded.value, ?),
+			updated_at = excluded.updated_at`,
+		characterID, req.SkillName, req.Delta, skillCap, now, skillCap)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGetSkills returns all skills for a character (GET /api/v1/characters/:id/skills).
+func (h *MMOHandler) handleGetSkills(w http.ResponseWriter, r *http.Request, characterID string) {
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT skill_name, value, updated_at FROM character_skills WHERE character_id=?`, characterID)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	type skillRow struct {
+		SkillName string  `json:"skill_name"`
+		Value     float64 `json:"value"`
+		UpdatedAt string  `json:"updated_at"`
+	}
+	var skills []skillRow
+	for rows.Next() {
+		var s skillRow
+		rows.Scan(&s.SkillName, &s.Value, &s.UpdatedAt)
+		skills = append(skills, s)
+	}
+	if skills == nil {
+		skills = []skillRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"skills": skills})
 }
 
 // handleListCharacterItems returns all non-destroyed items owned by character_id.
