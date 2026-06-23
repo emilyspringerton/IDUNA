@@ -272,6 +272,17 @@ func main() {
 	mux.Handle("/api/v1/auth/google/shankpit", shankpitAuthH)
 	mux.Handle("/api/v1/auth/google/shankpit/callback", shankpitAuthH)
 
+	// DragonsNShit MMO API (S75-02/03/04/05) — auth required.
+	mmoH := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
+	mux.Handle("/api/v1/characters", mmoH)
+	mux.Handle("/api/v1/characters/", mmoH)
+	mux.Handle("/api/v1/items", mmoH)
+	mux.Handle("/api/v1/items/", mmoH)
+	mux.Handle("/api/v1/guilds", mmoH)
+	mux.Handle("/api/v1/guilds/", mmoH)
+	mux.Handle("/api/v1/world-events", mmoH)
+	mux.Handle("/api/v1/world-events/", mmoH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
