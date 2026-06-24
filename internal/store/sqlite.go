@@ -906,6 +906,57 @@ func (s *SQLiteStore) DailyTokenStats(ctx context.Context, days int) ([]auth.Dai
 	return stats, nil
 }
 
+// ── GFD subscription tiers (S124-02) ─────────────────────────────────────────
+
+func (s *SQLiteStore) ListSubscriptionTiers(ctx context.Context) ([]GFDTier, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT tier_id, name, monthly_usd, annual_usd, features
+		FROM subscription_tiers
+		WHERE active = 1
+		ORDER BY monthly_usd ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GFDTier
+	for rows.Next() {
+		var t GFDTier
+		var featJSON string
+		if err := rows.Scan(&t.TierID, &t.Name, &t.MonthlyUSD, &t.AnnualUSD, &featJSON); err != nil {
+			return nil, err
+		}
+		// Decode features JSON array.
+		_ = json.Unmarshal([]byte(featJSON), &t.Features)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) GetGFDUserTier(ctx context.Context, userID string) (*string, error) {
+	var tierID *string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT tier_id FROM user_subscriptions WHERE user_id = ?`, userID,
+	).Scan(&tierID)
+	if err != nil && err.Error() == "sql: no rows in result set" {
+		return nil, nil
+	}
+	return tierID, err
+}
+
+func (s *SQLiteStore) SetGFDUserTier(ctx context.Context, userID, tierID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE user_subscriptions SET tier_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		WHERE user_id = ?`, tierID, userID)
+	return err
+}
+
+func (s *SQLiteStore) RecordStripeEvent(ctx context.Context, eventID, eventType, userID, payload string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO stripe_events (id, type, user_id, payload)
+		VALUES (?, ?, ?, ?)`, eventID, eventType, userID, payload)
+	return err
+}
+
 func sqliteHashAgentSecret(agentID, plaintext string) string {
 	h := sha256.New()
 	h.Write([]byte(agentID))

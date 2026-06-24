@@ -6,6 +6,15 @@ import (
 	"iduna/internal/auth"
 )
 
+// GFDTier is a GoblinFoxDragon subscription tier definition.
+type GFDTier struct {
+	TierID     string   `json:"tier_id"`
+	Name       string   `json:"name"`
+	MonthlyUSD float64  `json:"monthly_usd"`
+	AnnualUSD  float64  `json:"annual_usd"`
+	Features   []string `json:"features"`
+}
+
 // IAMStore defines the persistence interface for IDUNA IAM operations.
 type IAMStore interface {
 	// GetOrCreateUserByGoogleSubject looks up a user by google_subject.
@@ -133,4 +142,18 @@ type IAMStore interface {
 	// UpsertUserSubscription inserts or updates a subscription for userID.
 	// Uses userID as the unique key — one subscription record per user.
 	UpsertUserSubscription(ctx context.Context, sub auth.Subscription) error
+
+	// --- GFD subscription tiers (S124-02) ---
+
+	// ListSubscriptionTiers returns all active GFD subscription tiers.
+	ListSubscriptionTiers(ctx context.Context) ([]GFDTier, error)
+
+	// GetGFDUserTier returns the current GFD tier for a user, or nil if unset.
+	GetGFDUserTier(ctx context.Context, userID string) (*string, error)
+
+	// SetGFDUserTier sets the tier_id on the user's subscription row.
+	SetGFDUserTier(ctx context.Context, userID, tierID string) error
+
+	// RecordStripeEvent records a Stripe webhook event (idempotent by event ID).
+	RecordStripeEvent(ctx context.Context, eventID, eventType, userID, payload string) error
 }

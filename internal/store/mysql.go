@@ -808,3 +808,19 @@ func (s *MySQLStore) GetAgentPermissions(ctx context.Context, agentID string) ([
 	}
 	return perms, rows.Err()
 }
+
+// ── GFD subscription tiers (S124-02) — MySQL stubs ───────────────────────────
+// MySQL is used for bob-agent schema admin. GFD tier operations target SQLite (truestore).
+// These stubs satisfy the IAMStore interface.
+
+func (s *MySQLStore) ListSubscriptionTiers(_ context.Context) ([]GFDTier, error) {
+	return nil, nil
+}
+
+func (s *MySQLStore) GetGFDUserTier(_ context.Context, _ string) (*string, error) {
+	return nil, nil
+}
+
+func (s *MySQLStore) SetGFDUserTier(_ context.Context, _, _ string) error { return nil }
+
+func (s *MySQLStore) RecordStripeEvent(_ context.Context, _, _, _, _ string) error { return nil }

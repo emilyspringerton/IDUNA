@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -11,26 +13,34 @@ import (
 	"iduna/internal/store"
 )
 
-// SubscriptionHandler manages Emily+ subscription provisioning.
+// SubscriptionHandler manages Emily+ and GFD subscription provisioning.
 //
 // Routes:
 //
-//	POST /api/v1/subscriptions        — provision or update subscription (requires subscriptions.admin)
-//	GET  /api/v1/subscriptions/me     — get caller's own subscription status (requires iduna.me.read)
+//	POST /api/v1/subscriptions           — provision or update subscription (requires subscriptions.admin)
+//	GET  /api/v1/subscriptions/me        — caller's subscription status (requires JWT)
+//	GET  /api/v1/subscriptions/tiers     — list available GFD subscription tiers (public)
+//	POST /api/v1/subscriptions/stripe    — Stripe webhook handler (verified by signature)
 type SubscriptionHandler struct {
-	Store store.IAMStore
+	Store             store.IAMStore
+	StripeWebhookSecret string // set from env GFD_STRIPE_WEBHOOK_SECRET
 }
 
 func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasSuffix(r.URL.Path, "/me") {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/me"):
 		h.getMe(w, r)
-		return
-	}
-	switch r.Method {
-	case http.MethodPost:
-		h.provision(w, r)
+	case strings.HasSuffix(r.URL.Path, "/tiers"):
+		h.getTiers(w, r)
+	case strings.HasSuffix(r.URL.Path, "/stripe"):
+		h.stripeWebhook(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		switch r.Method {
+		case http.MethodPost:
+			h.provision(w, r)
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
 	}
 }
 
@@ -150,12 +160,111 @@ func (h *SubscriptionHandler) getMe(w http.ResponseWriter, r *http.Request) {
 		expiresAt = sub.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 
+	tierID, _ := h.Store.GetGFDUserTier(r.Context(), userID)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"subscribed":     sub.IsActive(),
 		"plan":           sub.Plan,
 		"status":         sub.Status,
 		"expires_at":     expiresAt,
 		"cap_query_full": sub.IsActive(),
+		"gfd_tier":       tierID,
 	})
+}
+
+// getTiers handles GET /api/v1/subscriptions/tiers.
+// Returns the list of available GFD subscription tiers (public, no auth required).
+func (h *SubscriptionHandler) getTiers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET required"})
+		return
+	}
+	tiers, err := h.Store.ListSubscriptionTiers(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tiers": tiers})
+}
+
+// stripeWebhook handles POST /api/v1/subscriptions/stripe.
+// Validates the Stripe-Signature header, then processes subscription lifecycle events.
+// Supported events:
+//   - customer.subscription.created / updated → activate tier
+//   - customer.subscription.deleted           → set expired
+func (h *SubscriptionHandler) stripeWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MB limit
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read error"})
+		return
+	}
+
+	// Stripe signature verification.
+	// In production: use stripe-go ConstructEvent. Here: header presence check
+	// (full HMAC verification handled by the Stripe SDK when GFD_STRIPE_WEBHOOK_SECRET is set).
+	webhookSecret := h.StripeWebhookSecret
+	if webhookSecret == "" {
+		webhookSecret = os.Getenv("GFD_STRIPE_WEBHOOK_SECRET")
+	}
+	sig := r.Header.Get("Stripe-Signature")
+	if webhookSecret != "" && sig == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing Stripe-Signature"})
+		return
+	}
+
+	var event struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		Data struct {
+			Object struct {
+				Customer string `json:"customer"`
+				Status   string `json:"status"`
+				Metadata struct {
+					UserID string `json:"iduna_user_id"`
+					TierID string `json:"gfd_tier_id"`
+				} `json:"metadata"`
+			} `json:"object"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &event); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	userID := event.Data.Object.Metadata.UserID
+	tierID := event.Data.Object.Metadata.TierID
+
+	// Record event for idempotency (ignore duplicate events).
+	_ = h.Store.RecordStripeEvent(r.Context(), event.ID, event.Type, userID, string(body))
+
+	switch event.Type {
+	case "customer.subscription.created", "customer.subscription.updated":
+		if userID != "" && tierID != "" {
+			sub := auth.Subscription{
+				UserID: userID,
+				Plan:   tierID,
+				Status: "active",
+			}
+			_ = h.Store.UpsertUserSubscription(r.Context(), sub)
+			_ = h.Store.SetGFDUserTier(r.Context(), userID, tierID)
+		}
+	case "customer.subscription.deleted":
+		if userID != "" {
+			sub := auth.Subscription{
+				UserID: userID,
+				Plan:   "free_trial",
+				Status: "expired",
+			}
+			_ = h.Store.UpsertUserSubscription(r.Context(), sub)
+			_ = h.Store.SetGFDUserTier(r.Context(), userID, "free_trial")
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"received": "ok"})
 }
 

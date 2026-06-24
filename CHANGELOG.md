@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-06-24
+- feat: S124-02 subscription_tiers migration, GFDTier struct, ListSubscriptionTiers/GetGFDUserTier/SetGFDUserTier/RecordStripeEvent IAMStore methods, /tiers + /stripe webhook handlers (Apple #3497)
+
 ## 2026-06-23
 - feat: S76-06 PATCH /api/v1/characters/:id/skills (UPSERT skill value, cap 110); GET /api/v1/characters/:id/skills (list all skills)
 - feat: S76-04 GET /api/v1/characters/:id/items (list non-destroyed items by owner)
