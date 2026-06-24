@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -255,10 +256,19 @@ func main() {
 	streamH := middleware.RequireAuth(keys)(&handlers.UserEventStreamHandler{Log: uel})
 	mux.Handle("/api/v1/stream/user-events", streamH)
 
-	// SHANKPIT player registry — register + profile (auth required).
-	playersH := middleware.RequireAuth(keys)(&handlers.PlayersHandler{DB: db})
-	mux.Handle("/api/v1/players/register", playersH)
-	mux.Handle("/api/v1/players/", playersH)
+	// SHANKPIT player registry — register + profile.
+	// S126-10: /profile sub-path is public; all other player routes require auth.
+	profileH := &handlers.PlayerProfileHandler{DB: db, Store: iamStore}
+	rawPlayersH := &handlers.PlayersHandler{DB: db}
+	playerDispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/profile") {
+			profileH.ServeHTTP(w, r)
+			return
+		}
+		middleware.RequireAuth(keys)(rawPlayersH).ServeHTTP(w, r)
+	})
+	mux.Handle("/api/v1/players/register", middleware.RequireAuth(keys)(rawPlayersH))
+	mux.Handle("/api/v1/players/", playerDispatch)
 
 	// SHANKPIT email+password auth — public (creates/validates player credentials).
 	playerEmailAuthH := &handlers.PlayerEmailAuthHandler{DB: db, Keys: keys, Issuer: issuer}
