@@ -138,6 +138,7 @@ func main() {
 	// New IAM routes.
 	mux.Handle("/api/v1/auth/google", googleAuthH)
 	mux.Handle("/api/v1/auth/agent", agentAuthH) // M2M credential exchange (HQ-SPEC-IAM-095 §3.1)
+	mux.Handle("/api/v1/auth/refresh", &handlers.RefreshHandler{Keys: keys, Issuer: issuer})
 	mux.Handle("/api/v1/identities/me",
 		middleware.RequireAuth(keys)(
 			middleware.RequirePermission("iduna.me.read")(meH),
