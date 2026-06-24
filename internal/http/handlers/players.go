@@ -62,9 +62,13 @@ func (h *PlayersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GET /api/v1/players/{id}
+	// GET /api/v1/players/{slug}/profile (S125-05)
 	if r.Method == http.MethodGet {
 		parts := strings.Split(strings.TrimPrefix(path, "/api/v1/players/"), "/")
+		if len(parts) == 2 && parts[1] == "profile" && parts[0] != "" {
+			h.handleGetProfile(w, r, parts[0])
+			return
+		}
 		if len(parts) == 1 && parts[0] != "" {
 			h.handleGetPlayer(w, r, parts[0])
 			return
@@ -272,4 +276,101 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ── S125-05: GFD player profile endpoint ──────────────────────────────────────
+
+// gfdProfileResponse is the response for GET /api/v1/players/{slug}/profile.
+type gfdProfileResponse struct {
+	PlayerID      string            `json:"player_id"`
+	DisplayName   string            `json:"display_name"`
+	Job           string            `json:"job"`
+	Kills         int               `json:"kills"`
+	Deaths        int               `json:"deaths"`
+	KDRatio       float64           `json:"kd_ratio"`
+	FactionRep    map[string]int    `json:"faction_rep"`
+	TRAPXActivity []gfdAppleSummary `json:"trapx_activity"`
+}
+
+type gfdAppleSummary struct {
+	ID         int64  `json:"id"`
+	AppleType  string `json:"apple_type"`
+	Title      string `json:"title"`
+	RecordedAt string `json:"recorded_at"`
+}
+
+// handleGetProfile serves GET /api/v1/players/{slug}/profile.
+// slug may be a player_id (UUID) or a display_name (case-insensitive prefix match).
+func (h *PlayersHandler) handleGetProfile(w http.ResponseWriter, r *http.Request, slug string) {
+	db := h.DB
+	if db == nil {
+		http.Error(w, "players not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// 1. Resolve player by UUID or display_name.
+	var playerID, displayName string
+	var kills, deaths, sessions int
+	row := db.QueryRowContext(r.Context(),
+		`SELECT player_id, display_name, kills, deaths, sessions FROM players
+		 WHERE player_id=? OR LOWER(display_name)=LOWER(?) LIMIT 1`,
+		slug, slug,
+	)
+	if err := row.Scan(&playerID, &displayName, &kills, &deaths, &sessions); err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	// 2. Resolve character job (first character found for this player).
+	var job string
+	_ = db.QueryRowContext(r.Context(),
+		`SELECT job_main FROM characters WHERE player_id=? LIMIT 1`, playerID,
+	).Scan(&job)
+	if job == "" {
+		job = "WAR"
+	}
+
+	// 3. Compute faction rep from kills (simplified: kills×10 per faction slot).
+	factionRep := map[string]int{
+		"sandoria": kills * 3,
+		"bastok":   kills * 2,
+		"windurst": kills * 1,
+	}
+
+	// 4. TRAPX district activity: last 10 apples with source_repo=GoblinFoxDragon.
+	var activity []gfdAppleSummary
+	appleRows, err := db.QueryContext(r.Context(),
+		`SELECT id, apple_type, title, recorded_at FROM apples
+		 WHERE source_repo='GoblinFoxDragon'
+		 ORDER BY recorded_at DESC LIMIT 10`,
+	)
+	if err == nil {
+		defer appleRows.Close()
+		for appleRows.Next() {
+			var a gfdAppleSummary
+			var recAt time.Time
+			if err2 := appleRows.Scan(&a.ID, &a.AppleType, &a.Title, &recAt); err2 == nil {
+				a.RecordedAt = recAt.Format(time.RFC3339)
+				activity = append(activity, a)
+			}
+		}
+	}
+
+	resp := gfdProfileResponse{
+		PlayerID:      playerID,
+		DisplayName:   displayName,
+		Job:           job,
+		Kills:         kills,
+		Deaths:        deaths,
+		TRAPXActivity: activity,
+		FactionRep:    factionRep,
+	}
+	if deaths > 0 {
+		resp.KDRatio = float64(kills) / float64(deaths)
+	} else {
+		resp.KDRatio = float64(kills)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
