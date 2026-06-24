@@ -225,13 +225,15 @@ func main() {
 	}
 
 	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer}
+	registerH := &handlers.RegisterHandler{Keys: keys, Log: uel, Proj: userProj, Store: iamStore, Issuer: issuer}
 	usersH := &handlers.UsersHandler{Log: uel, Proj: userProj}
 
 	// OpenAPI spec — public.
 	mux.Handle("/api/v1/openapi.json", &handlers.OpenAPIHandler{})
 
-	// Local (password) auth — public.
+	// Local (password) auth + open registration — public.
 	mux.Handle("/api/v1/auth/local", localAuthH)
+	mux.Handle("/api/v1/auth/register", registerH)
 
 	// User CRUD — requires JWT.
 	usersProtected := middleware.RequireAuth(keys)(usersH)
