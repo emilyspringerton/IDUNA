@@ -232,9 +232,13 @@ func main() {
 	// OpenAPI spec — public.
 	mux.Handle("/api/v1/openapi.json", &handlers.OpenAPIHandler{})
 
-	// Local (password) auth + open registration — public.
-	mux.Handle("/api/v1/auth/local", localAuthH)
-	mux.Handle("/api/v1/auth/register", registerH)
+	// Per-IP rate limiter: 10 req/min on auth endpoints (S126-09).
+	authLimiter := middleware.NewIPRateLimiter(10)
+	authRateLimit := middleware.AuthRateLimit(authLimiter)
+
+	// Local (password) auth + open registration — public, rate-limited.
+	mux.Handle("/api/v1/auth/local", authRateLimit(localAuthH))
+	mux.Handle("/api/v1/auth/register", authRateLimit(registerH))
 
 	// User CRUD — requires JWT.
 	usersProtected := middleware.RequireAuth(keys)(usersH)
