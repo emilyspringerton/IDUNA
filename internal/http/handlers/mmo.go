@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +53,9 @@ func (h *MMOHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// World events
 	case strings.HasPrefix(path, "/api/v1/world-events"):
 		h.routeWorldEvents(w, r, path)
+	// Field office district overlay (S127-05)
+	case strings.HasPrefix(path, "/api/v1/fieldoffices"):
+		h.routeFieldOffices(w, r, path)
 	default:
 		http.NotFound(w, r)
 	}
@@ -843,6 +847,70 @@ func (h *MMOHandler) handleResolveWorldEvent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Field Office district overlay (S127-05) ───────────────────────────────────
+//
+// Routes:
+//   GET   /api/v1/fieldoffices         — list all known FO snapshots
+//   PATCH /api/v1/fieldoffices/:id     — game server pushes live state (M2M)
+//
+// State is ephemeral (in-memory); the game server patches on every Tick.
+
+// FOSnapshot is a point-in-time view of one Field Office pushed by the game server.
+type FOSnapshot struct {
+	ID         string    `json:"id"`
+	DistrictName string  `json:"district_name"`
+	Phase      string    `json:"phase"`       // "Unclaimed"|"Held"|"Contested"|"Containment"
+	HolderID   string    `json:"holder_id"`   // crew ID or ""
+	Alertness  float64   `json:"alertness"`   // 0.0–1.0
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// foStore is the shared in-memory map of FO snapshots, keyed by FO ID.
+var foStore struct {
+	mu  sync.RWMutex
+	fos map[string]FOSnapshot
+}
+
+func init() {
+	foStore.fos = make(map[string]FOSnapshot)
+}
+
+func (h *MMOHandler) routeFieldOffices(w http.ResponseWriter, r *http.Request, path string) {
+	switch r.Method {
+	case http.MethodGet:
+		// List all FO snapshots.
+		foStore.mu.RLock()
+		out := make([]FOSnapshot, 0, len(foStore.fos))
+		for _, fo := range foStore.fos {
+			out = append(out, fo)
+		}
+		foStore.mu.RUnlock()
+		writeJSON(w, http.StatusOK, map[string]interface{}{"fieldoffices": out})
+
+	case http.MethodPatch:
+		// Game server posts live FO state. Path: /api/v1/fieldoffices/:id
+		foID := strings.TrimPrefix(path, "/api/v1/fieldoffices/")
+		if foID == "" || foID == "fieldoffices" {
+			mmoWriteError(w, http.StatusBadRequest, "missing FO id")
+			return
+		}
+		var req FOSnapshot
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		req.ID = foID
+		req.UpdatedAt = time.Now().UTC()
+		foStore.mu.Lock()
+		foStore.fos[foID] = req
+		foStore.mu.Unlock()
+		writeJSON(w, http.StatusOK, req)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

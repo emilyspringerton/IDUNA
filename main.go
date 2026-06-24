@@ -299,6 +299,9 @@ func main() {
 	mux.Handle("/api/v1/guilds/", mmoH)
 	mux.Handle("/api/v1/world-events", mmoH)
 	mux.Handle("/api/v1/world-events/", mmoH)
+	// Field office district overlay (S127-05) — same M2M auth as MMO routes.
+	mux.Handle("/api/v1/fieldoffices", mmoH)
+	mux.Handle("/api/v1/fieldoffices/", mmoH)
 
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
