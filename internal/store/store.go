@@ -180,14 +180,20 @@ type IAMStore interface {
 	// ListMonitors returns all monitors for the given owner (pass "" for all).
 	ListMonitors(ctx context.Context, owner string) ([]auth.Monitor, error)
 
+	// UpdateMonitor updates name, kind, timeout, grace, and alert config by ID.
+	UpdateMonitor(ctx context.Context, m auth.Monitor) error
+
 	// RecordCheckin updates last_checkin_at, sets status=healthy, clears alerted_at.
 	RecordCheckin(ctx context.Context, slug string, now time.Time) error
 
 	// MarkMonitorAlerted sets alerted_at and status=failing on the monitor.
 	MarkMonitorAlerted(ctx context.Context, id int64, now time.Time) error
 
-	// ListOverdueMonitors returns monitors that have exceeded their timeout+grace
-	// and have not yet been alerted (alerted_at IS NULL).
+	// RecoverMonitor clears alerted_at and sets status=healthy without a check-in.
+	RecoverMonitor(ctx context.Context, id int64, now time.Time) error
+
+	// ListOverdueMonitors returns monitors that have exceeded their timeout
+	// (kind-sensitive: deadman uses no grace) and have not yet been alerted.
 	ListOverdueMonitors(ctx context.Context, now time.Time) ([]auth.Monitor, error)
 
 	// DeleteMonitor removes a monitor by ID.

@@ -27,13 +27,19 @@ func (s *Subscription) IsActive() bool {
 	return s.ExpiresAt.IsZero() || time.Now().UTC().Before(s.ExpiresAt)
 }
 
-// Monitor is a check-in (heartbeat) monitor. Services POST to its unique
-// check-in URL to confirm they are alive; if they don't within the timeout
-// window, the alerting worker fires Slack/email notifications.
+// Monitor is a check-in (heartbeat / cron / deadman) monitor. Services POST to
+// its unique check-in URL to confirm they are alive; if they don't within the
+// timeout window, the alerting worker fires Slack/email notifications.
+//
+// Kind determines alerting semantics:
+//   - heartbeat: alert if no check-in within timeout+grace (default)
+//   - cron:      same alerting; indicates a scheduled task (timeout_seconds = expected interval)
+//   - deadman:   zero-tolerance; alert immediately after timeout, grace_seconds ignored
 type Monitor struct {
 	ID                 int64      `json:"id"`
 	Name               string     `json:"name"`
 	Slug               string     `json:"slug"` // unique token in check-in URL
+	Kind               string     `json:"kind"` // heartbeat | cron | deadman
 	TimeoutSeconds     int        `json:"timeout_seconds"`
 	GraceSeconds       int        `json:"grace_seconds"`
 	Owner              string     `json:"owner"` // agent_name or user_id
@@ -46,14 +52,20 @@ type Monitor struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
-// IsOverdue returns true when the monitor has exceeded its timeout+grace window.
+// IsOverdue returns true when the monitor has exceeded its deadline.
+// Deadline is kind-sensitive:
+//   - heartbeat / cron: timeout + grace from last check-in (or creation if never checked in)
+//   - deadman:          timeout only — grace_seconds is ignored for zero-tolerance monitors
 func (m *Monitor) IsOverdue(now time.Time) bool {
-	if m.LastCheckinAt == nil {
-		// Never checked in — overdue after timeout+grace from creation.
-		deadline := m.CreatedAt.Add(time.Duration(m.TimeoutSeconds+m.GraceSeconds) * time.Second)
-		return now.After(deadline)
+	grace := m.GraceSeconds
+	if m.Kind == "deadman" {
+		grace = 0
 	}
-	deadline := m.LastCheckinAt.Add(time.Duration(m.TimeoutSeconds+m.GraceSeconds) * time.Second)
+	base := m.CreatedAt
+	if m.LastCheckinAt != nil {
+		base = *m.LastCheckinAt
+	}
+	deadline := base.Add(time.Duration(m.TimeoutSeconds+grace) * time.Second)
 	return now.After(deadline)
 }
 

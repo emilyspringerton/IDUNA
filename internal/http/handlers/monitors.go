@@ -20,11 +20,18 @@ import (
 //   POST /api/v1/monitors/checkin/:slug  — record a heartbeat check-in
 //   GET  /api/v1/monitors/checkin/:slug  — same (allows simple curl/wget probes)
 //
-// Auth-gated (monitors.read / monitors.write):
-//   GET    /api/v1/monitors          — list monitors (monitors.read)
-//   POST   /api/v1/monitors          — create monitor (monitors.write)
-//   GET    /api/v1/monitors/overdue  — list overdue monitors (monitors.read)
-//   DELETE /api/v1/monitors/:id      — delete monitor (monitors.write)
+// Granular RBAC permissions:
+//   monitors.read   — GET /monitors (list) + GET /monitors/:id
+//   monitors.create — POST /monitors (create)
+//   monitors.delete — DELETE /monitors/:id
+//   monitors.alert  — GET /monitors/overdue + POST /monitors/:id/alerted + POST /monitors/:id/recover
+//   monitors.admin  — all of the above
+//   monitors.write  — backward-compat alias: implies create+delete+alert
+//
+// Monitor kinds:
+//   heartbeat — default; alert if no check-in within timeout+grace
+//   cron      — same alerting; signals a scheduled job (timeout_seconds = expected interval)
+//   deadman   — zero-tolerance; grace_seconds ignored; alert immediately after timeout
 type MonitorsHandler struct {
 	Store store.IAMStore
 }
@@ -44,7 +51,7 @@ func (h *MonitorsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Overdue list — auth checked inside.
+	// Overdue list.
 	if path == "overdue" {
 		if r.Method == http.MethodGet {
 			h.listOverdue(w, r)
@@ -54,7 +61,7 @@ func (h *MonitorsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Single monitor by ID — path may be ":id" or ":id/alerted".
+	// Single monitor by ID — path may be ":id", ":id/alerted", or ":id/recover".
 	if path != "" {
 		parts := strings.SplitN(path, "/", 2)
 		id, err := strconv.ParseInt(parts[0], 10, 64)
@@ -62,15 +69,30 @@ func (h *MonitorsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST"})
 			return
 		}
-		if len(parts) == 2 && parts[1] == "alerted" {
-			if r.Method == http.MethodPost {
-				h.markAlerted(w, r, id)
-			} else {
+		if len(parts) == 2 {
+			switch parts[1] {
+			case "alerted":
+				if r.Method == http.MethodPost {
+					h.markAlerted(w, r, id)
+				} else {
+					http.NotFound(w, r)
+				}
+			case "recover":
+				if r.Method == http.MethodPost {
+					h.recover(w, r, id)
+				} else {
+					http.NotFound(w, r)
+				}
+			default:
 				http.NotFound(w, r)
 			}
 			return
 		}
 		switch r.Method {
+		case http.MethodGet:
+			h.getMonitor(w, r, id)
+		case http.MethodPatch:
+			h.updateMonitor(w, r, id)
 		case http.MethodDelete:
 			h.deleteMonitor(w, r, id)
 		default:
@@ -88,6 +110,22 @@ func (h *MonitorsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// monitorPerm returns true if the claims carry the named permission OR monitors.admin
+// OR monitors.write (backward-compat alias for create+delete+alert).
+func monitorPerm(claims map[string]any, perm string) bool {
+	if hasClaimPermission(claims, "monitors.admin") {
+		return true
+	}
+	if hasClaimPermission(claims, perm) {
+		return true
+	}
+	// monitors.write is a backward-compat alias that implies create+delete+alert.
+	if perm == "monitors.create" || perm == "monitors.delete" || perm == "monitors.alert" {
+		return hasClaimPermission(claims, "monitors.write")
+	}
+	return false
 }
 
 func (h *MonitorsHandler) checkin(w http.ResponseWriter, r *http.Request, slug string) {
@@ -110,6 +148,7 @@ func (h *MonitorsHandler) checkin(w http.ResponseWriter, r *http.Request, slug s
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"monitor":    m.Name,
+		"kind":       m.Kind,
 		"checked_in": now.Format(time.RFC3339),
 	})
 }
@@ -117,7 +156,7 @@ func (h *MonitorsHandler) checkin(w http.ResponseWriter, r *http.Request, slug s
 func (h *MonitorsHandler) listOverdue(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	claims := middleware.ClaimsFromContext(ctx)
-	if !hasClaimPermission(claims, "monitors.read") {
+	if !monitorPerm(claims, "monitors.alert") && !hasClaimPermission(claims, "monitors.read") {
 		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
 		return
 	}
@@ -135,7 +174,7 @@ func (h *MonitorsHandler) listOverdue(w http.ResponseWriter, r *http.Request) {
 func (h *MonitorsHandler) list(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	claims := middleware.ClaimsFromContext(ctx)
-	if !hasClaimPermission(claims, "monitors.read") {
+	if !monitorPerm(claims, "monitors.read") {
 		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
 		return
 	}
@@ -151,16 +190,36 @@ func (h *MonitorsHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"monitors": monitors})
 }
 
+func (h *MonitorsHandler) getMonitor(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+	claims := middleware.ClaimsFromContext(ctx)
+	if !monitorPerm(claims, "monitors.read") {
+		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
+		return
+	}
+	m, err := h.Store.GetMonitorByID(ctx, id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
+		return
+	}
+	if m == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "NOT_FOUND"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"monitor": m})
+}
+
 func (h *MonitorsHandler) create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	claims := middleware.ClaimsFromContext(ctx)
-	if !hasClaimPermission(claims, "monitors.write") {
+	if !monitorPerm(claims, "monitors.create") {
 		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
 		return
 	}
 
 	var body struct {
 		Name              string `json:"name"`
+		Kind              string `json:"kind"`
 		TimeoutSeconds    int    `json:"timeout_seconds"`
 		GraceSeconds      int    `json:"grace_seconds"`
 		AlertSlackChannel string `json:"alert_slack_channel"`
@@ -171,9 +230,16 @@ func (h *MonitorsHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "detail": "name required"})
+		return
+	}
+	if body.Kind == "" {
+		body.Kind = "heartbeat"
+	}
+	if body.Kind != "heartbeat" && body.Kind != "cron" && body.Kind != "deadman" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"code":   "BAD_REQUEST",
-			"detail": "name required",
+			"detail": "kind must be heartbeat, cron, or deadman",
 		})
 		return
 	}
@@ -194,6 +260,7 @@ func (h *MonitorsHandler) create(w http.ResponseWriter, r *http.Request) {
 	m := auth.Monitor{
 		Name:              body.Name,
 		Slug:              slug,
+		Kind:              body.Kind,
 		TimeoutSeconds:    body.TimeoutSeconds,
 		GraceSeconds:      body.GraceSeconds,
 		Owner:             owner,
@@ -213,11 +280,75 @@ func (h *MonitorsHandler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"monitor": m})
 }
 
-// markAlerted records that an alert has been sent for a monitor (prevents duplicate alerts).
+func (h *MonitorsHandler) updateMonitor(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+	claims := middleware.ClaimsFromContext(ctx)
+	if !monitorPerm(claims, "monitors.create") {
+		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
+		return
+	}
+
+	existing, err := h.Store.GetMonitorByID(ctx, id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
+		return
+	}
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "NOT_FOUND"})
+		return
+	}
+
+	var body struct {
+		Name              *string `json:"name"`
+		Kind              *string `json:"kind"`
+		TimeoutSeconds    *int    `json:"timeout_seconds"`
+		GraceSeconds      *int    `json:"grace_seconds"`
+		AlertSlackChannel *string `json:"alert_slack_channel"`
+		AlertEmail        *string `json:"alert_email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST"})
+		return
+	}
+
+	if body.Name != nil && *body.Name != "" {
+		existing.Name = *body.Name
+	}
+	if body.Kind != nil {
+		if *body.Kind != "heartbeat" && *body.Kind != "cron" && *body.Kind != "deadman" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"code":   "BAD_REQUEST",
+				"detail": "kind must be heartbeat, cron, or deadman",
+			})
+			return
+		}
+		existing.Kind = *body.Kind
+	}
+	if body.TimeoutSeconds != nil && *body.TimeoutSeconds > 0 {
+		existing.TimeoutSeconds = *body.TimeoutSeconds
+	}
+	if body.GraceSeconds != nil && *body.GraceSeconds >= 0 {
+		existing.GraceSeconds = *body.GraceSeconds
+	}
+	if body.AlertSlackChannel != nil {
+		existing.AlertSlackChannel = *body.AlertSlackChannel
+	}
+	if body.AlertEmail != nil {
+		existing.AlertEmail = *body.AlertEmail
+	}
+
+	if err := h.Store.UpdateMonitor(ctx, *existing); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"monitor": existing})
+}
+
+// markAlerted records that an alert has been sent (prevents duplicate alerts).
 func (h *MonitorsHandler) markAlerted(w http.ResponseWriter, r *http.Request, id int64) {
 	ctx := r.Context()
 	claims := middleware.ClaimsFromContext(ctx)
-	if !hasClaimPermission(claims, "monitors.write") {
+	if !monitorPerm(claims, "monitors.alert") {
 		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
 		return
 	}
@@ -228,10 +359,26 @@ func (h *MonitorsHandler) markAlerted(w http.ResponseWriter, r *http.Request, id
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// recover manually clears alerted_at and sets status=healthy without a check-in.
+// Used when a service recovers via a mechanism other than the check-in URL.
+func (h *MonitorsHandler) recover(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+	claims := middleware.ClaimsFromContext(ctx)
+	if !monitorPerm(claims, "monitors.alert") {
+		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
+		return
+	}
+	if err := h.Store.RecoverMonitor(ctx, id, time.Now().UTC()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "recovered": true})
+}
+
 func (h *MonitorsHandler) deleteMonitor(w http.ResponseWriter, r *http.Request, id int64) {
 	ctx := r.Context()
 	claims := middleware.ClaimsFromContext(ctx)
-	if !hasClaimPermission(claims, "monitors.write") {
+	if !monitorPerm(claims, "monitors.delete") {
 		writeJSON(w, http.StatusForbidden, map[string]any{"code": "FORBIDDEN"})
 		return
 	}

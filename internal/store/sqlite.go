@@ -1004,11 +1004,15 @@ func (s *SQLiteStore) RecordStripeEvent(ctx context.Context, eventID, eventType,
 // ── Monitors ─────────────────────────────────────────────────────────────────
 
 func (s *SQLiteStore) CreateMonitor(ctx context.Context, m auth.Monitor) (int64, error) {
+	kind := m.Kind
+	if kind == "" {
+		kind = "heartbeat"
+	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO monitors (name, slug, timeout_seconds, grace_seconds, owner,
+		INSERT INTO monitors (name, slug, kind, timeout_seconds, grace_seconds, owner,
 		                      alert_slack_channel, alert_email, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown')`,
-		m.Name, m.Slug, m.TimeoutSeconds, m.GraceSeconds, m.Owner,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unknown')`,
+		m.Name, m.Slug, kind, m.TimeoutSeconds, m.GraceSeconds, m.Owner,
 		m.AlertSlackChannel, m.AlertEmail)
 	if err != nil {
 		return 0, err
@@ -1018,7 +1022,7 @@ func (s *SQLiteStore) CreateMonitor(ctx context.Context, m auth.Monitor) (int64,
 
 func (s *SQLiteStore) GetMonitorBySlug(ctx context.Context, slug string) (*auth.Monitor, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+		`SELECT id, name, slug, kind, timeout_seconds, grace_seconds, owner,
 		        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
 		        status, created_at, updated_at
 		 FROM monitors WHERE slug = ?`, slug)
@@ -1027,7 +1031,7 @@ func (s *SQLiteStore) GetMonitorBySlug(ctx context.Context, slug string) (*auth.
 
 func (s *SQLiteStore) GetMonitorByID(ctx context.Context, id int64) (*auth.Monitor, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+		`SELECT id, name, slug, kind, timeout_seconds, grace_seconds, owner,
 		        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
 		        status, created_at, updated_at
 		 FROM monitors WHERE id = ?`, id)
@@ -1039,13 +1043,13 @@ func (s *SQLiteStore) ListMonitors(ctx context.Context, owner string) ([]auth.Mo
 	var err error
 	if owner == "" {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+			`SELECT id, name, slug, kind, timeout_seconds, grace_seconds, owner,
 			        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
 			        status, created_at, updated_at
 			 FROM monitors ORDER BY created_at DESC`)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+			`SELECT id, name, slug, kind, timeout_seconds, grace_seconds, owner,
 			        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
 			        status, created_at, updated_at
 			 FROM monitors WHERE owner = ? ORDER BY created_at DESC`, owner)
@@ -1063,6 +1067,31 @@ func (s *SQLiteStore) ListMonitors(ctx context.Context, owner string) ([]auth.Mo
 		out = append(out, *m)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQLiteStore) UpdateMonitor(ctx context.Context, m auth.Monitor) error {
+	kind := m.Kind
+	if kind == "" {
+		kind = "heartbeat"
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE monitors
+		SET name = ?, kind = ?, timeout_seconds = ?, grace_seconds = ?,
+		    alert_slack_channel = ?, alert_email = ?,
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		WHERE id = ?`,
+		m.Name, kind, m.TimeoutSeconds, m.GraceSeconds,
+		m.AlertSlackChannel, m.AlertEmail, m.ID)
+	return err
+}
+
+func (s *SQLiteStore) RecoverMonitor(ctx context.Context, id int64, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE monitors
+		SET alerted_at = NULL, status = 'healthy',
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		WHERE id = ?`, id)
+	return err
 }
 
 func (s *SQLiteStore) RecordCheckin(ctx context.Context, slug string, now time.Time) error {
@@ -1086,21 +1115,28 @@ func (s *SQLiteStore) MarkMonitorAlerted(ctx context.Context, id int64, now time
 }
 
 func (s *SQLiteStore) ListOverdueMonitors(ctx context.Context, now time.Time) ([]auth.Monitor, error) {
-	// Returns monitors where the deadline (last_checkin_at + timeout + grace OR
-	// created_at + timeout + grace if never checked in) has passed and no alert has
-	// been sent yet (alerted_at IS NULL).
+	// Deadline is kind-sensitive:
+	//   deadman: timeout_seconds only (grace ignored — zero tolerance)
+	//   others:  timeout_seconds + grace_seconds
+	// alerted_at IS NULL ensures we don't re-alert until a recovery check-in clears it.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+		`SELECT id, name, slug, kind, timeout_seconds, grace_seconds, owner,
 		        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
 		        status, created_at, updated_at
 		 FROM monitors
 		 WHERE alerted_at IS NULL
 		   AND (
 		     (last_checkin_at IS NOT NULL
-		      AND datetime(last_checkin_at, '+' || (timeout_seconds + grace_seconds) || ' seconds') < ?)
+		      AND datetime(last_checkin_at, '+' ||
+		          CASE kind WHEN 'deadman' THEN timeout_seconds
+		                    ELSE (timeout_seconds + grace_seconds) END
+		          || ' seconds') < ?)
 		     OR
 		     (last_checkin_at IS NULL
-		      AND datetime(created_at, '+' || (timeout_seconds + grace_seconds) || ' seconds') < ?)
+		      AND datetime(created_at, '+' ||
+		          CASE kind WHEN 'deadman' THEN timeout_seconds
+		                    ELSE (timeout_seconds + grace_seconds) END
+		          || ' seconds') < ?)
 		   )
 		 ORDER BY id`,
 		now.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
@@ -1133,7 +1169,7 @@ func sqliteScanMonitor(row monitorScanner) (*auth.Monitor, error) {
 	var lastCheckin, alertedAt sql.NullString
 	var createdAt, updatedAt string
 	err := row.Scan(
-		&m.ID, &m.Name, &m.Slug, &m.TimeoutSeconds, &m.GraceSeconds, &m.Owner,
+		&m.ID, &m.Name, &m.Slug, &m.Kind, &m.TimeoutSeconds, &m.GraceSeconds, &m.Owner,
 		&lastCheckin, &alertedAt, &m.AlertSlackChannel, &m.AlertEmail,
 		&m.Status, &createdAt, &updatedAt,
 	)
@@ -1142,6 +1178,9 @@ func sqliteScanMonitor(row monitorScanner) (*auth.Monitor, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if m.Kind == "" {
+		m.Kind = "heartbeat"
 	}
 	if lastCheckin.Valid && lastCheckin.String != "" {
 		t, _ := time.Parse(time.RFC3339, lastCheckin.String)

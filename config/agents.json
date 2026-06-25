@@ -14,7 +14,10 @@
         "apples.write",
         "apples.read",
         "signalapi.read",
-        "heimdal.submit"
+        "heimdal.submit",
+        "monitors.read",
+        "monitors.create",
+        "monitors.alert"
       ]
     },
     {

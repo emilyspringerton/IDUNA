@@ -32,10 +32,10 @@ func (noopMonitors) GetMonitorByID(_ context.Context, _ int64) (*auth.Monitor, e
 func (noopMonitors) ListMonitors(_ context.Context, _ string) ([]auth.Monitor, error) {
 	return nil, nil
 }
-func (noopMonitors) RecordCheckin(_ context.Context, _ string, _ time.Time) error { return nil }
-func (noopMonitors) MarkMonitorAlerted(_ context.Context, _ int64, _ time.Time) error {
-	return nil
-}
+func (noopMonitors) UpdateMonitor(_ context.Context, _ auth.Monitor) error            { return nil }
+func (noopMonitors) RecordCheckin(_ context.Context, _ string, _ time.Time) error     { return nil }
+func (noopMonitors) MarkMonitorAlerted(_ context.Context, _ int64, _ time.Time) error { return nil }
+func (noopMonitors) RecoverMonitor(_ context.Context, _ int64, _ time.Time) error     { return nil }
 func (noopMonitors) ListOverdueMonitors(_ context.Context, _ time.Time) ([]auth.Monitor, error) {
 	return nil, nil
 }

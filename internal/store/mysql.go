@@ -883,10 +883,10 @@ func (s *MySQLStore) GetMonitorByID(_ context.Context, _ int64) (*auth.Monitor, 
 func (s *MySQLStore) ListMonitors(_ context.Context, _ string) ([]auth.Monitor, error) {
 	return nil, nil
 }
-func (s *MySQLStore) RecordCheckin(_ context.Context, _ string, _ time.Time) error { return nil }
-func (s *MySQLStore) MarkMonitorAlerted(_ context.Context, _ int64, _ time.Time) error {
-	return nil
-}
+func (s *MySQLStore) UpdateMonitor(_ context.Context, _ auth.Monitor) error          { return nil }
+func (s *MySQLStore) RecordCheckin(_ context.Context, _ string, _ time.Time) error   { return nil }
+func (s *MySQLStore) MarkMonitorAlerted(_ context.Context, _ int64, _ time.Time) error { return nil }
+func (s *MySQLStore) RecoverMonitor(_ context.Context, _ int64, _ time.Time) error   { return nil }
 func (s *MySQLStore) ListOverdueMonitors(_ context.Context, _ time.Time) ([]auth.Monitor, error) {
 	return nil, nil
 }
