@@ -339,6 +339,50 @@ func (s *SQLiteStore) UpdateAgentStatus(ctx context.Context, agentID, status, op
 	return nil
 }
 
+// UpsertClusterHeartbeat upserts a cluster heartbeat using SQLite's INSERT OR REPLACE.
+func (s *SQLiteStore) UpsertClusterHeartbeat(ctx context.Context, h auth.ClusterHeartbeat) error {
+	caps := strings.Join(h.Capabilities, ",")
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO cluster_heartbeats (agent_id, cluster_id, capabilities, load_score, last_seen)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(agent_id) DO UPDATE SET
+			cluster_id   = excluded.cluster_id,
+			capabilities = excluded.capabilities,
+			load_score   = excluded.load_score,
+			last_seen    = excluded.last_seen
+	`, h.AgentID, h.ClusterID, caps, h.LoadScore, h.LastSeen.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// ListActiveClusterHeartbeats returns clusters whose last_seen is within maxAge.
+func (s *SQLiteStore) ListActiveClusterHeartbeats(ctx context.Context, maxAge time.Duration) ([]auth.ClusterHeartbeat, error) {
+	cutoff := time.Now().UTC().Add(-maxAge).Format(time.RFC3339Nano)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT agent_id, cluster_id, capabilities, load_score, last_seen
+		FROM cluster_heartbeats
+		WHERE last_seen >= ?
+		ORDER BY load_score ASC, last_seen DESC
+	`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.ClusterHeartbeat
+	for rows.Next() {
+		var h auth.ClusterHeartbeat
+		var caps, lastSeenStr string
+		if err := rows.Scan(&h.AgentID, &h.ClusterID, &caps, &h.LoadScore, &lastSeenStr); err != nil {
+			return nil, err
+		}
+		if caps != "" {
+			h.Capabilities = strings.Split(caps, ",")
+		}
+		h.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeenStr)
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLiteStore) ListIAMEvents(ctx context.Context, limit int) ([]auth.IAMEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT event_id, event_type, aggregate_type, aggregate_id,

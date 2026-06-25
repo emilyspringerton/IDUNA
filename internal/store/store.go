@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"iduna/internal/auth"
 )
@@ -54,6 +55,14 @@ type IAMStore interface {
 
 	// CreateAgent inserts a new agent and emits an AgentCreated event.
 	CreateAgent(ctx context.Context, ownerUserID, name, agentType, operatorID string) (*auth.Agent, error)
+
+	// UpsertClusterHeartbeat upserts a federated Emily cluster heartbeat record.
+	// Called by emily-agent every 60 s so IDUNA can track which clusters are alive.
+	UpsertClusterHeartbeat(ctx context.Context, h auth.ClusterHeartbeat) error
+
+	// ListActiveClusterHeartbeats returns clusters whose last_seen is within the
+	// given staleness window. Pass 5*time.Minute for normal federation queries.
+	ListActiveClusterHeartbeats(ctx context.Context, maxAge time.Duration) ([]auth.ClusterHeartbeat, error)
 
 	// UpdateAgentStatus changes an agent's status and emits an event.
 	UpdateAgentStatus(ctx context.Context, agentID, status, operatorID string) error

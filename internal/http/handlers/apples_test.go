@@ -129,6 +129,12 @@ func (s *stubApplesStore) GetUserSubscription(context.Context, string) (*auth.Su
 	return nil, nil
 }
 func (s *stubApplesStore) UpsertUserSubscription(context.Context, auth.Subscription) error { return nil }
+func (s *stubApplesStore) UpsertClusterHeartbeat(context.Context, auth.ClusterHeartbeat) error {
+	return nil
+}
+func (s *stubApplesStore) ListActiveClusterHeartbeats(context.Context, time.Duration) ([]auth.ClusterHeartbeat, error) {
+	return nil, nil
+}
 
 func makeAgentToken(t *testing.T, keys *jwt.Keys, sub string, perms []string) string {
 	t.Helper()

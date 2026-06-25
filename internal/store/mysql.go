@@ -267,6 +267,49 @@ func (s *MySQLStore) UpdateAgentStatus(ctx context.Context, agentID, status, ope
 	return nil
 }
 
+// UpsertClusterHeartbeat upserts a cluster heartbeat record (INSERT ... ON DUPLICATE KEY UPDATE).
+func (s *MySQLStore) UpsertClusterHeartbeat(ctx context.Context, h auth.ClusterHeartbeat) error {
+	caps := strings.Join(h.Capabilities, ",")
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO cluster_heartbeats (agent_id, cluster_id, capabilities, load_score, last_seen)
+		VALUES (?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			cluster_id   = VALUES(cluster_id),
+			capabilities = VALUES(capabilities),
+			load_score   = VALUES(load_score),
+			last_seen    = VALUES(last_seen)
+	`, h.AgentID, h.ClusterID, caps, h.LoadScore, h.LastSeen.UTC())
+	return err
+}
+
+// ListActiveClusterHeartbeats returns clusters whose last_seen is within maxAge.
+func (s *MySQLStore) ListActiveClusterHeartbeats(ctx context.Context, maxAge time.Duration) ([]auth.ClusterHeartbeat, error) {
+	cutoff := time.Now().UTC().Add(-maxAge)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT agent_id, cluster_id, capabilities, load_score, last_seen
+		FROM cluster_heartbeats
+		WHERE last_seen >= ?
+		ORDER BY load_score ASC, last_seen DESC
+	`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.ClusterHeartbeat
+	for rows.Next() {
+		var h auth.ClusterHeartbeat
+		var caps string
+		if err := rows.Scan(&h.AgentID, &h.ClusterID, &caps, &h.LoadScore, &h.LastSeen); err != nil {
+			return nil, err
+		}
+		if caps != "" {
+			h.Capabilities = strings.Split(caps, ",")
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // ListIAMEvents returns the most recent limit events from iam_event_stream.
 func (s *MySQLStore) ListIAMEvents(ctx context.Context, limit int) ([]auth.IAMEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `

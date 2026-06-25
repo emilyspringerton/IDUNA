@@ -54,6 +54,16 @@ type Agent struct {
 	Permissions []string
 }
 
+// ClusterHeartbeat tracks the live state of a federated Emily cluster.
+// Upserted every 60 s by emily-agent on startup and each cron cycle.
+type ClusterHeartbeat struct {
+	AgentID      string
+	ClusterID    string
+	Capabilities []string  // e.g. ["gpu", "secwatch", "prwatch"]
+	LoadScore    float64   // 0.0=idle → 1.0=saturated
+	LastSeen     time.Time
+}
+
 // Role is a named set of permissions in the RBAC system.
 type Role struct {
 	ID          string

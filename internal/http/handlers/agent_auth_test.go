@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"iduna/internal/auth"
 	"iduna/internal/auth/jwt"
@@ -98,6 +99,12 @@ func (s *stubAgentStore) GetUserSubscription(context.Context, string) (*auth.Sub
 	return nil, nil
 }
 func (s *stubAgentStore) UpsertUserSubscription(context.Context, auth.Subscription) error { return nil }
+func (s *stubAgentStore) UpsertClusterHeartbeat(context.Context, auth.ClusterHeartbeat) error {
+	return nil
+}
+func (s *stubAgentStore) ListActiveClusterHeartbeats(context.Context, time.Duration) ([]auth.ClusterHeartbeat, error) {
+	return nil, nil
+}
 
 func TestAgentAuthHandler_Success(t *testing.T) {
 	k, err := jwt.GenerateKeys()
