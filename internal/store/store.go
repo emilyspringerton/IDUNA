@@ -165,4 +165,31 @@ type IAMStore interface {
 
 	// RecordStripeEvent records a Stripe webhook event (idempotent by event ID).
 	RecordStripeEvent(ctx context.Context, eventID, eventType, userID, payload string) error
+
+	// --- Check-in monitors (heartbeat/dead-man-switch alerting) ---
+
+	// CreateMonitor inserts a new monitor and returns its ID.
+	CreateMonitor(ctx context.Context, m auth.Monitor) (int64, error)
+
+	// GetMonitorBySlug returns a monitor by its unique check-in slug.
+	GetMonitorBySlug(ctx context.Context, slug string) (*auth.Monitor, error)
+
+	// GetMonitorByID returns a monitor by its integer ID.
+	GetMonitorByID(ctx context.Context, id int64) (*auth.Monitor, error)
+
+	// ListMonitors returns all monitors for the given owner (pass "" for all).
+	ListMonitors(ctx context.Context, owner string) ([]auth.Monitor, error)
+
+	// RecordCheckin updates last_checkin_at, sets status=healthy, clears alerted_at.
+	RecordCheckin(ctx context.Context, slug string, now time.Time) error
+
+	// MarkMonitorAlerted sets alerted_at and status=failing on the monitor.
+	MarkMonitorAlerted(ctx context.Context, id int64, now time.Time) error
+
+	// ListOverdueMonitors returns monitors that have exceeded their timeout+grace
+	// and have not yet been alerted (alerted_at IS NULL).
+	ListOverdueMonitors(ctx context.Context, now time.Time) ([]auth.Monitor, error)
+
+	// DeleteMonitor removes a monitor by ID.
+	DeleteMonitor(ctx context.Context, id int64) error
 }

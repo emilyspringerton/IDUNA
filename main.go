@@ -115,6 +115,9 @@ func main() {
 	// Subscriptions (Emily+ gate) — S23-04.
 	subscriptionH := &handlers.SubscriptionHandler{Store: iamStore}
 
+	// Check-in monitors — alerting backend.
+	monitorsH := &handlers.MonitorsHandler{Store: iamStore}
+
 	// Drive API — configured via GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON + GOOGLE_DRIVE_FOLDER_ID.
 	// Starts in degraded mode (503) if env var not set; no startup failure.
 	driveH := &handlers.DriveHandler{}
@@ -174,6 +177,13 @@ func main() {
 	subsProtected := middleware.RequireAuth(keys)(subscriptionH)
 	mux.Handle("/api/v1/subscriptions", subsProtected)
 	mux.Handle("/api/v1/subscriptions/", subsProtected)
+
+	// Monitors API — check-in is public; CRUD requires auth (permission checks inside handler).
+	// Public check-in path does not go through RequireAuth middleware.
+	mux.Handle("/api/v1/monitors/checkin/", monitorsH)
+	monitorsProtected := middleware.RequireAuth(keys)(monitorsH)
+	mux.Handle("/api/v1/monitors", monitorsProtected)
+	mux.Handle("/api/v1/monitors/", monitorsProtected)
 
 	// Drive API — auth required; permission checks (drive.write / drive.read) inside handler.
 	driveProtected := middleware.RequireAuth(keys)(driveH)

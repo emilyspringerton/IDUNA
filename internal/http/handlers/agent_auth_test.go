@@ -19,6 +19,7 @@ import (
 // stubAgentStore implements the minimal subset of store.IAMStore needed by AgentAuthHandler.
 type stubAgentStore struct {
 	noopGFDTiers
+	noopMonitors
 	agents map[string]*auth.Agent // name → agent
 	errMsg string                 // non-empty → return this error from AuthenticateAgent
 }

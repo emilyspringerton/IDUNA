@@ -1001,6 +1001,161 @@ func (s *SQLiteStore) RecordStripeEvent(ctx context.Context, eventID, eventType,
 	return err
 }
 
+// ── Monitors ─────────────────────────────────────────────────────────────────
+
+func (s *SQLiteStore) CreateMonitor(ctx context.Context, m auth.Monitor) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO monitors (name, slug, timeout_seconds, grace_seconds, owner,
+		                      alert_slack_channel, alert_email, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown')`,
+		m.Name, m.Slug, m.TimeoutSeconds, m.GraceSeconds, m.Owner,
+		m.AlertSlackChannel, m.AlertEmail)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *SQLiteStore) GetMonitorBySlug(ctx context.Context, slug string) (*auth.Monitor, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+		        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
+		        status, created_at, updated_at
+		 FROM monitors WHERE slug = ?`, slug)
+	return sqliteScanMonitor(row)
+}
+
+func (s *SQLiteStore) GetMonitorByID(ctx context.Context, id int64) (*auth.Monitor, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+		        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
+		        status, created_at, updated_at
+		 FROM monitors WHERE id = ?`, id)
+	return sqliteScanMonitor(row)
+}
+
+func (s *SQLiteStore) ListMonitors(ctx context.Context, owner string) ([]auth.Monitor, error) {
+	var rows *sql.Rows
+	var err error
+	if owner == "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+			        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
+			        status, created_at, updated_at
+			 FROM monitors ORDER BY created_at DESC`)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+			        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
+			        status, created_at, updated_at
+			 FROM monitors WHERE owner = ? ORDER BY created_at DESC`, owner)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.Monitor
+	for rows.Next() {
+		m, err := sqliteScanMonitor(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *m)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) RecordCheckin(ctx context.Context, slug string, now time.Time) error {
+	ts := now.UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE monitors
+		SET last_checkin_at = ?, alerted_at = NULL, status = 'healthy',
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		WHERE slug = ?`, ts, slug)
+	return err
+}
+
+func (s *SQLiteStore) MarkMonitorAlerted(ctx context.Context, id int64, now time.Time) error {
+	ts := now.UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE monitors
+		SET alerted_at = ?, status = 'failing',
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		WHERE id = ?`, ts, id)
+	return err
+}
+
+func (s *SQLiteStore) ListOverdueMonitors(ctx context.Context, now time.Time) ([]auth.Monitor, error) {
+	// Returns monitors where the deadline (last_checkin_at + timeout + grace OR
+	// created_at + timeout + grace if never checked in) has passed and no alert has
+	// been sent yet (alerted_at IS NULL).
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, name, slug, timeout_seconds, grace_seconds, owner,
+		        last_checkin_at, alerted_at, alert_slack_channel, alert_email,
+		        status, created_at, updated_at
+		 FROM monitors
+		 WHERE alerted_at IS NULL
+		   AND (
+		     (last_checkin_at IS NOT NULL
+		      AND datetime(last_checkin_at, '+' || (timeout_seconds + grace_seconds) || ' seconds') < ?)
+		     OR
+		     (last_checkin_at IS NULL
+		      AND datetime(created_at, '+' || (timeout_seconds + grace_seconds) || ' seconds') < ?)
+		   )
+		 ORDER BY id`,
+		now.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auth.Monitor
+	for rows.Next() {
+		m, err := sqliteScanMonitor(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *m)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) DeleteMonitor(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM monitors WHERE id = ?`, id)
+	return err
+}
+
+type monitorScanner interface {
+	Scan(dest ...any) error
+}
+
+func sqliteScanMonitor(row monitorScanner) (*auth.Monitor, error) {
+	var m auth.Monitor
+	var lastCheckin, alertedAt sql.NullString
+	var createdAt, updatedAt string
+	err := row.Scan(
+		&m.ID, &m.Name, &m.Slug, &m.TimeoutSeconds, &m.GraceSeconds, &m.Owner,
+		&lastCheckin, &alertedAt, &m.AlertSlackChannel, &m.AlertEmail,
+		&m.Status, &createdAt, &updatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastCheckin.Valid && lastCheckin.String != "" {
+		t, _ := time.Parse(time.RFC3339, lastCheckin.String)
+		m.LastCheckinAt = &t
+	}
+	if alertedAt.Valid && alertedAt.String != "" {
+		t, _ := time.Parse(time.RFC3339, alertedAt.String)
+		m.AlertedAt = &t
+	}
+	m.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	m.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	return &m, nil
+}
+
 func sqliteHashAgentSecret(agentID, plaintext string) string {
 	h := sha256.New()
 	h.Write([]byte(agentID))

@@ -22,6 +22,7 @@ import (
 // stubApplesStore wraps stubAgentStore and overrides Apples methods.
 type stubApplesStore struct {
 	noopGFDTiers
+	noopMonitors
 	apples   []auth.AppleRecord
 	appendID int64
 	appendErr error

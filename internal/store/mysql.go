@@ -867,3 +867,27 @@ func (s *MySQLStore) GetGFDUserTier(_ context.Context, _ string) (*string, error
 func (s *MySQLStore) SetGFDUserTier(_ context.Context, _, _ string) error { return nil }
 
 func (s *MySQLStore) RecordStripeEvent(_ context.Context, _, _, _, _ string) error { return nil }
+
+// ── Monitors — MySQL stubs ────────────────────────────────────────────────────
+// Monitor operations target SQLite (truestore). These stubs satisfy IAMStore.
+
+func (s *MySQLStore) CreateMonitor(_ context.Context, _ auth.Monitor) (int64, error) {
+	return 0, nil
+}
+func (s *MySQLStore) GetMonitorBySlug(_ context.Context, _ string) (*auth.Monitor, error) {
+	return nil, nil
+}
+func (s *MySQLStore) GetMonitorByID(_ context.Context, _ int64) (*auth.Monitor, error) {
+	return nil, nil
+}
+func (s *MySQLStore) ListMonitors(_ context.Context, _ string) ([]auth.Monitor, error) {
+	return nil, nil
+}
+func (s *MySQLStore) RecordCheckin(_ context.Context, _ string, _ time.Time) error { return nil }
+func (s *MySQLStore) MarkMonitorAlerted(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}
+func (s *MySQLStore) ListOverdueMonitors(_ context.Context, _ time.Time) ([]auth.Monitor, error) {
+	return nil, nil
+}
+func (s *MySQLStore) DeleteMonitor(_ context.Context, _ int64) error { return nil }
