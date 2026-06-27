@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-27
+- S138-06: /api/v1/kgraph/query proxy handler (KGraphHandler, KGRAPH_URL); wired with RequireAuth
 - S137-03: research_cache table (202606270002) + /api/v1/research/cache CRUD (ResearchHandler)
 - S136-02/03: vendors + supply_orders tables (202606270001); /api/v1/supply/ CRUD handler (SupplyHandler)
 
