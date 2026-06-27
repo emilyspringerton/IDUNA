@@ -321,6 +321,10 @@ func main() {
 	researchH := middleware.RequireAuth(keys)(&handlers.ResearchHandler{DB: db})
 	mux.Handle("/api/v1/research/", researchH)
 
+	// EINHORN INDEX knowledge graph proxy (S138-06) — auth required; proxies to KGRAPH_URL.
+	kgraphH := middleware.RequireAuth(keys)(&handlers.KGraphHandler{})
+	mux.Handle("/api/v1/kgraph/", kgraphH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
