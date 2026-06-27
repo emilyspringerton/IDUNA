@@ -1,11 +1,13 @@
 package handlers
 
-// mmo.go — S75-02/03/04/05: DragonsNShit MMO API handlers.
+// mmo.go — S75-02/03/04/05 + S129-05: DragonsNShit MMO API handlers.
 //
 // Routes (all require M2M or user JWT unless noted):
 //   POST   /api/v1/characters                         — create character
 //   GET    /api/v1/characters/:id                     — fetch character
 //   PATCH  /api/v1/characters/:id/position            — update scene+pos (game server M2M)
+//   GET    /api/v1/characters/:id/inventory           — bag inventory (S129-05)
+//   GET    /api/v1/characters/:id/equipment           — equipped slots (S129-05)
 //   POST   /api/v1/items                              — craft item; provenance_chain[0] set
 //   POST   /api/v1/items/:id/transfer                 — transfer item; append provenance
 //   DELETE /api/v1/items/:id                          — soft-delete item
@@ -115,6 +117,18 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 	if r.Method == http.MethodGet && strings.HasSuffix(path, "/skills") {
 		id := extractSegment(path, "/api/v1/characters/", "/skills")
 		h.handleGetSkills(w, r, id)
+		return
+	}
+	// GET /api/v1/characters/:id/inventory
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/inventory") {
+		id := extractSegment(path, "/api/v1/characters/", "/inventory")
+		h.handleGetInventory(w, r, id)
+		return
+	}
+	// GET /api/v1/characters/:id/equipment
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/equipment") {
+		id := extractSegment(path, "/api/v1/characters/", "/equipment")
+		h.handleGetEquipment(w, r, id)
 		return
 	}
 	// GET /api/v1/characters/:id
@@ -346,6 +360,88 @@ func (h *MMOHandler) handleListCharacterItems(w http.ResponseWriter, r *http.Req
 		items = []itemRow{}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+}
+
+// handleGetInventory returns all bag slots for a character (GET /api/v1/characters/:id/inventory).
+// Response: {"bags": {"inventory": [...], "storage": [...], "temporary": [...]}, "capacity": {"inventory": N, ...}}
+func (h *MMOHandler) handleGetInventory(w http.ResponseWriter, r *http.Request, characterID string) {
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT bag, slot_index, item_id, def_id, quantity
+		 FROM character_inventory WHERE character_id=? ORDER BY bag, slot_index`, characterID)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type invSlot struct {
+		SlotIndex int    `json:"slot_index"`
+		ItemID    string `json:"item_id"`
+		DefID     int    `json:"def_id"`
+		Quantity  int    `json:"quantity"`
+	}
+	bags := map[string][]invSlot{
+		"inventory": {},
+		"storage":   {},
+		"temporary": {},
+	}
+	for rows.Next() {
+		var bag, itemID string
+		var slotIndex, defID, qty int
+		if err := rows.Scan(&bag, &slotIndex, &itemID, &defID, &qty); err != nil {
+			continue
+		}
+		bags[bag] = append(bags[bag], invSlot{slotIndex, itemID, defID, qty})
+	}
+
+	capRows, err := h.DB.QueryContext(r.Context(),
+		`SELECT bag, capacity FROM character_bag_capacity WHERE character_id=?`, characterID)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer capRows.Close()
+	capacity := map[string]int{"inventory": 30, "storage": 0, "temporary": 0}
+	for capRows.Next() {
+		var bag string
+		var cap int
+		capRows.Scan(&bag, &cap)
+		capacity[bag] = cap
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"bags": bags, "capacity": capacity})
+}
+
+// handleGetEquipment returns all equipped slots for a character (GET /api/v1/characters/:id/equipment).
+// Response: {"equipment": [{"slot": "...", "item_id": "..."|null}, ...]}
+func (h *MMOHandler) handleGetEquipment(w http.ResponseWriter, r *http.Request, characterID string) {
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT slot, COALESCE(item_id, '') FROM character_equipment WHERE character_id=? ORDER BY slot`,
+		characterID)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type eqSlot struct {
+		Slot   string  `json:"slot"`
+		ItemID *string `json:"item_id"`
+	}
+	var slots []eqSlot
+	for rows.Next() {
+		var slot, itemID string
+		rows.Scan(&slot, &itemID)
+		var itemPtr *string
+		if itemID != "" {
+			itemPtr = &itemID
+		}
+		slots = append(slots, eqSlot{slot, itemPtr})
+	}
+	if slots == nil {
+		slots = []eqSlot{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"equipment": slots})
 }
 
 // ── Items (S75-03) ────────────────────────────────────────────────────────────
