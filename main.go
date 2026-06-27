@@ -313,6 +313,10 @@ func main() {
 	mux.Handle("/api/v1/fieldoffices", mmoH)
 	mux.Handle("/api/v1/fieldoffices/", mmoH)
 
+	// Supply chain API (S136-02/03) — auth required.
+	supplyH := middleware.RequireAuth(keys)(&handlers.SupplyHandler{DB: db})
+	mux.Handle("/api/v1/supply/", supplyH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
