@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-06-27
+- S137-03: research_cache table (202606270002) + /api/v1/research/cache CRUD (ResearchHandler)
 - S136-02/03: vendors + supply_orders tables (202606270001); /api/v1/supply/ CRUD handler (SupplyHandler)
 
 - S129-05: GET /api/v1/characters/:id/inventory + /equipment endpoints; 4 tests
