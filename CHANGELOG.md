@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-06-27
+
+- S129-05: GET /api/v1/characters/:id/inventory + /equipment endpoints; 4 tests
+
+
 ## 2026-06-25
 - feat(monitors): granular RBAC (monitors.read/create/delete/alert/admin), monitor kinds (heartbeat/cron/deadman), GET/:id PATCH/:id POST/:id/recover endpoints, EMILY-PRIME gains monitors.read+create+alert — all tests pass
 - Alerting backend: check-in monitors (unique URLs, configurable timeout, site-down Slack+email alerts); monitors migration, IAMStore methods, MonitorsHandler
