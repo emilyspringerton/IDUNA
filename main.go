@@ -317,6 +317,10 @@ func main() {
 	supplyH := middleware.RequireAuth(keys)(&handlers.SupplyHandler{DB: db})
 	mux.Handle("/api/v1/supply/", supplyH)
 
+	// Research cache API (S137-03) — auth required.
+	researchH := middleware.RequireAuth(keys)(&handlers.ResearchHandler{DB: db})
+	mux.Handle("/api/v1/research/", researchH)
+
 	log.Println("iduna listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
