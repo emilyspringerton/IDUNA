@@ -1,5 +1,9 @@
 # IDUNA Changelog
 
+## 2026-07-15
+
+- fix(ops): `scripts/iduna.service` gains an `ExecStartPost` health-check loop (polls `/health` up to 30s) — `Type=simple` previously only guaranteed the process forked, not that the HTTP listener was accepting connections, so `emily-system.service`'s `After=iduna.service` ordering didn't actually mean "IDUNA is ready"
+
 ## 2026-06-27
 - S138-06: /api/v1/kgraph/query proxy handler (KGraphHandler, KGRAPH_URL); wired with RequireAuth
 - S137-03: research_cache table (202606270002) + /api/v1/research/cache CRUD (ResearchHandler)

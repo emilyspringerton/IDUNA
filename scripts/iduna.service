@@ -29,6 +29,11 @@ Type=simple
 WorkingDirectory=/home/fatbaby/IDUNA
 EnvironmentFile=-%h/.config/iduna/env
 ExecStart=%h/.local/bin/iduna
+# Gate the unit's "started" state on the HTTP listener actually accepting
+# connections, not just the process forking — Type=simple only guarantees
+# the latter. Dependent units (emily-system.service, After=iduna.service)
+# don't proceed until ExecStartPost commands finish.
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:8080/health && exit 0; sleep 1; done; echo "iduna health check failed after 30s" >&2; exit 1'
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
