@@ -100,12 +100,15 @@ var (
 	// Strip ENGINE=... table options but leave the closing ) intact.
 	reEngine = regexp.MustCompile(`(?im)\s+ENGINE\s*=\s*\S+.*$`)
 
-	// BIGINT [UNSIGNED] ... PRIMARY KEY AUTO_INCREMENT → INTEGER PRIMARY KEY AUTOINCREMENT
-	reBigintAutoIncrementPK = regexp.MustCompile(`(?i)\bBIGINT(?:\s+UNSIGNED)?\s+(?:NOT\s+NULL\s+)?(?:AUTO_INCREMENT\s+PRIMARY\s+KEY|PRIMARY\s+KEY\s+AUTO_INCREMENT)`)
+	// BIGINT|INTEGER [UNSIGNED] ... PRIMARY KEY AUTO_INCREMENT → INTEGER PRIMARY KEY AUTOINCREMENT
+	// SQLite requires AUTOINCREMENT to immediately follow PRIMARY KEY, so any
+	// ordering of NOT NULL/AUTO_INCREMENT/PRIMARY KEY around the integer type
+	// collapses to the one legal form.
+	reBigintAutoIncrementPK = regexp.MustCompile(`(?i)\b(?:BIGINT|INTEGER)(?:\s+UNSIGNED)?\s+(?:NOT\s+NULL\s+)?(?:AUTO_INCREMENT\s+PRIMARY\s+KEY|PRIMARY\s+KEY\s+AUTO_INCREMENT)`)
 
-	// BIGINT [UNSIGNED] NOT NULL AUTO_INCREMENT (without inline PRIMARY KEY — it's defined separately).
+	// BIGINT|INTEGER [UNSIGNED] NOT NULL AUTO_INCREMENT (without inline PRIMARY KEY — it's defined separately).
 	// Convert to INTEGER NOT NULL; strip AUTO_INCREMENT — SQLite rowid handles it via PRIMARY KEY clause.
-	reBigintAutoIncrementOnly = regexp.MustCompile(`(?i)\bBIGINT(?:\s+UNSIGNED)?\s+NOT\s+NULL\s+AUTO_INCREMENT\b`)
+	reBigintAutoIncrementOnly = regexp.MustCompile(`(?i)\b(?:BIGINT|INTEGER)(?:\s+UNSIGNED)?\s+NOT\s+NULL\s+AUTO_INCREMENT\b`)
 
 	// Remaining AUTO_INCREMENT → AUTOINCREMENT (shouldn't appear after the above but be safe).
 	reAutoIncrement = regexp.MustCompile(`(?i)\bAUTO_INCREMENT\b`)
