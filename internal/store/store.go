@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"iduna/internal/auth"
@@ -94,6 +95,15 @@ type IAMStore interface {
 
 	// GetApple returns a single apple by its integer ID.
 	GetApple(ctx context.Context, id int64) (*auth.AppleRecord, error)
+
+	// PatchAppleMetadata merges the given keys into an existing apple's metadata
+	// JSON (shallow merge; existing keys not present in updates are preserved,
+	// keys present in updates overwrite). Used for async post-hoc enrichment
+	// (S147-02/03: gpt2_fingerprint, model_fingerprint) — never for the apple's
+	// core fields (title/body/type), which remain append-only-in-spirit.
+	// Emits AppleEnriched to iam_event_stream. Returns sql.ErrNoRows if id
+	// doesn't exist.
+	PatchAppleMetadata(ctx context.Context, id int64, updates map[string]json.RawMessage) error
 
 	// DailyTokenStats returns per-day token usage aggregated from Apple metadata.
 	// Each entry sums json_extract(metadata, '$.tokens_used') for all Apples recorded

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"iduna/internal/auth"
@@ -18,13 +19,29 @@ import (
 )
 
 // ApplesHandler handles /api/v1/apples routes.
-// POST /api/v1/apples                  requires apples.write
-// GET  /api/v1/apples                  requires apples.read
-// GET  /api/v1/apples/{id}             requires apples.read
-// GET  /api/v1/apples/stats/daily-tokens?days=7  requires apples.read
+// POST  /api/v1/apples                  requires apples.write
+// GET   /api/v1/apples                  requires apples.read
+// GET   /api/v1/apples/{id}             requires apples.read
+// PATCH /api/v1/apples/{id}             requires apples.write; merges
+//                                        enrichableFields into metadata
+//                                        (S147 async enrichment: gpt2_fingerprint,
+//                                        model_fingerprint, astrology)
+// GET   /api/v1/apples/stats/daily-tokens?days=7  requires apples.read
 type ApplesHandler struct {
 	Store        store.IAMStore
 	ApplesGitDir string // path to APPLES git repo; if set, every new Apple is auto-synced
+
+	// gitSyncMu serializes syncAppleToGit's git commands across concurrent
+	// requests. Each Apple POST spawns syncAppleToGit as its own goroutine
+	// (fire-and-forget by design — see that func's doc comment); without this
+	// lock, two Apples landing within the same window can race `git commit`/
+	// `git push` against the same working tree, and the loser's push was
+	// rejected (non-fast-forward) with no retry — a silently dropped sync.
+	// This is a real, fixable concurrency bug regardless of how much of the
+	// historical gap it explains: 9226 of 9908 Apples were found missing from
+	// the mirror (scattered throughout the whole ID range, not one contiguous
+	// block) before a one-time backfill (APPLES commit 699bdd5, 2026-07-16).
+	gitSyncMu sync.Mutex
 }
 
 func (h *ApplesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,11 +79,79 @@ func (h *ApplesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		h.get(w, r, id)
+	case http.MethodPatch:
+		h.enrich(w, r, id)
+	default:
 		http.NotFound(w, r)
+	}
+}
+
+// enrichableFields is the closed set of metadata keys PATCH may set — async
+// post-hoc enrichment only (S147), never the apple's core content.
+var enrichableFields = map[string]bool{
+	"gpt2_fingerprint":  true,
+	"model_fingerprint": true,
+	"astrology":         true, // S147-04, unused until a data source is chosen
+}
+
+// PATCH /api/v1/apples/{id} — merge enrichment fields into metadata.
+// Body: {"gpt2_fingerprint": {...}, "model_fingerprint": "..."} — any subset
+// of enrichableFields. Requires apples.write (same permission as create;
+// enrichment is not a lesser trust tier, it's a later write to the same
+// audit-trail record).
+func (h *ApplesHandler) enrich(w http.ResponseWriter, r *http.Request, id int64) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if !hasClaimPermission(claims, "apples.write") {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"code":    "FORBIDDEN",
+			"message": "apples.write permission required",
+		})
 		return
 	}
-	h.get(w, r, id)
+
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"code":    "BAD_REQUEST",
+			"message": "invalid JSON body",
+		})
+		return
+	}
+	if len(body) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"code":    "BAD_REQUEST",
+			"message": "at least one field required",
+		})
+		return
+	}
+	for k := range body {
+		if !enrichableFields[k] {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"code":    "BAD_REQUEST",
+				"message": fmt.Sprintf("field %q is not enrichable via PATCH", k),
+			})
+			return
+		}
+	}
+
+	if err := h.Store.PatchAppleMetadata(r.Context(), id, body); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			"code":    "NOT_FOUND",
+			"message": err.Error(),
+		})
+		return
+	}
+	if h.ApplesGitDir != "" {
+		// Re-sync so the git mirror reflects the enrichment too — same file
+		// path (id+type), so this overwrites rather than duplicates.
+		if updated, err := h.Store.GetApple(r.Context(), id); err == nil {
+			go h.syncAppleToGit(*updated)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "enriched": true})
 }
 
 // POST /api/v1/apples
@@ -269,11 +354,15 @@ func (h *ApplesHandler) dailyTokenStats(w http.ResponseWriter, r *http.Request) 
 
 // syncAppleToGit writes the Apple as a JSON file to ApplesGitDir, updates MANIFEST.json,
 // commits both, and pushes. Runs as a goroutine; all failures are logged and non-fatal.
+// The git command sequence (add/commit/push) is serialized via gitSyncMu — see its doc
+// comment — since concurrent Apple creation must not race commits/pushes against the
+// same working tree.
 func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 	gitDir := h.ApplesGitDir
 	today := time.Now().UTC().Format("20060102")
 
-	// Write YYYYMMDD/NNN_type.json
+	// File write can happen before the lock — each Apple writes a distinct
+	// path, so this part is already concurrency-safe.
 	dir := filepath.Join(gitDir, today)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("[apples-git] mkdir %s: %v", dir, err)
@@ -281,6 +370,11 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 	}
 	fname := fmt.Sprintf("%d_%s.json", apple.ID, strings.ReplaceAll(apple.AppleType, "_", "-"))
 	fpath := filepath.Join(dir, fname)
+
+	var metaAny any
+	if len(apple.Metadata) > 0 && string(apple.Metadata) != "null" {
+		_ = json.Unmarshal(apple.Metadata, &metaAny)
+	}
 	record := map[string]any{
 		"id":          apple.ID,
 		"agent_id":    apple.AgentID,
@@ -289,6 +383,7 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 		"run_id":      apple.RunID,
 		"title":       apple.Title,
 		"body":        apple.Body,
+		"metadata":    metaAny,
 		"archived_at": time.Now().UTC().Format(time.RFC3339),
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
@@ -301,10 +396,14 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 		return
 	}
 
-	// Update MANIFEST.json
+	// Everything from here on touches shared state (MANIFEST.json, the git
+	// index, the branch ref) — serialize across concurrent syncAppleToGit
+	// goroutines.
+	h.gitSyncMu.Lock()
+	defer h.gitSyncMu.Unlock()
+
 	appleGitUpdateManifest(gitDir, apple, today)
 
-	// git add -A + commit + push
 	title := apple.Title
 	if len(title) > 60 {
 		title = title[:60]
@@ -326,13 +425,42 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 		log.Printf("[apples-git] git commit: %v\n%s", err, out)
 		return
 	}
-	pushCmd := exec.Command("git", "-C", gitDir, "push")
-	pushCmd.Env = gitEnv
-	if out, err := pushCmd.CombinedOutput(); err != nil {
-		log.Printf("[apples-git] git push: %v\n%s", err, out)
+
+	// Push, with one retry: rebase onto whatever landed on the remote since
+	// our last fetch (e.g. a manual push, or — before gitSyncMu existed — a
+	// racing sync) and try again once. This is the fix for the historical
+	// silent-drop failure mode: a rejected push used to just log and return.
+	if err := gitPushWithRetry(gitDir, gitEnv); err != nil {
+		log.Printf("[apples-git] git push failed after retry: %v", err)
 		return
 	}
 	log.Printf("[apples-git] synced Apple #%d → %s/%s", apple.ID, today, fname)
+}
+
+// gitPushWithRetry pushes gitDir's current branch. On rejection (most likely
+// non-fast-forward), it pulls with --rebase and retries once. Caller must
+// already hold gitSyncMu.
+func gitPushWithRetry(gitDir string, gitEnv []string) error {
+	pushCmd := exec.Command("git", "-C", gitDir, "push")
+	pushCmd.Env = gitEnv
+	if out, err := pushCmd.CombinedOutput(); err == nil {
+		return nil
+	} else {
+		log.Printf("[apples-git] git push rejected, retrying after rebase: %v\n%s", err, out)
+	}
+
+	pullCmd := exec.Command("git", "-C", gitDir, "pull", "--rebase")
+	pullCmd.Env = gitEnv
+	if out, err := pullCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pull --rebase: %w\n%s", err, out)
+	}
+
+	retryCmd := exec.Command("git", "-C", gitDir, "push")
+	retryCmd.Env = gitEnv
+	if out, err := retryCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("push retry: %w\n%s", err, out)
+	}
+	return nil
 }
 
 // appleGitUpdateManifest reads MANIFEST.json, appends the new entry, and writes it back.

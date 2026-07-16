@@ -23,10 +23,12 @@ import (
 type stubApplesStore struct {
 	noopGFDTiers
 	noopMonitors
-	apples   []auth.AppleRecord
-	appendID int64
+	apples    []auth.AppleRecord
+	appendID  int64
 	appendErr error
 	getErr    error
+	patchErr  error
+	patched   map[int64]map[string]json.RawMessage
 }
 
 func (s *stubApplesStore) AppendApple(_ context.Context, a auth.AppleRecord) (int64, error) {
@@ -67,6 +69,27 @@ func (s *stubApplesStore) GetApple(_ context.Context, id int64) (*auth.AppleReco
 		}
 	}
 	return nil, errors.New("not found")
+}
+
+func (s *stubApplesStore) PatchAppleMetadata(_ context.Context, id int64, updates map[string]json.RawMessage) error {
+	if s.patchErr != nil {
+		return s.patchErr
+	}
+	if s.patched == nil {
+		s.patched = map[int64]map[string]json.RawMessage{}
+	}
+	if s.patched[id] == nil {
+		s.patched[id] = map[string]json.RawMessage{}
+	}
+	for k, v := range updates {
+		s.patched[id][k] = v
+	}
+	for i := range s.apples {
+		if s.apples[i].ID == id {
+			return nil
+		}
+	}
+	return errors.New("not found")
 }
 
 // Unused IAMStore methods.
@@ -377,5 +400,103 @@ func TestApplesAdminPermission(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 (apples.admin should be able to list)", rr.Code)
+	}
+}
+
+func TestApplesEnrich_Success(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubApplesStore{
+		apples: []auth.AppleRecord{{ID: 5, AgentID: "a1", SourceRepo: "iduna", RunID: "r1", AppleType: "improvement", Title: "T1", RecordedAt: time.Now()}},
+	}
+	token := makeAgentToken(t, keys, "agent-1", []string{"apples.write"})
+	h := applesHandlerWithAuth(keys, store)
+
+	body, _ := json.Marshal(map[string]any{
+		"gpt2_fingerprint":  map[string]any{"tower": "NOW\nEAR\nEON"},
+		"model_fingerprint": "emily-ft (checkpoint-2026-07-16)",
+	})
+	req := httptest.NewRequest("PATCH", "/api/v1/apples/5", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := store.patched[5]["gpt2_fingerprint"]; !ok {
+		t.Error("expected gpt2_fingerprint to be patched")
+	}
+	if _, ok := store.patched[5]["model_fingerprint"]; !ok {
+		t.Error("expected model_fingerprint to be patched")
+	}
+}
+
+func TestApplesEnrich_RejectsUnknownField(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubApplesStore{apples: []auth.AppleRecord{{ID: 5, RecordedAt: time.Now()}}}
+	token := makeAgentToken(t, keys, "agent-1", []string{"apples.write"})
+	h := applesHandlerWithAuth(keys, store)
+
+	body, _ := json.Marshal(map[string]any{"title": "malicious rewrite attempt"})
+	req := httptest.NewRequest("PATCH", "/api/v1/apples/5", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (title is not enrichable)", rr.Code)
+	}
+	if len(store.patched) != 0 {
+		t.Error("expected no patch to be applied")
+	}
+}
+
+func TestApplesEnrich_MissingPermission(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubApplesStore{apples: []auth.AppleRecord{{ID: 5, RecordedAt: time.Now()}}}
+	token := makeAgentToken(t, keys, "agent-1", []string{"apples.read"}) // read only, not write
+	h := applesHandlerWithAuth(keys, store)
+
+	body, _ := json.Marshal(map[string]any{"model_fingerprint": "x"})
+	req := httptest.NewRequest("PATCH", "/api/v1/apples/5", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rr.Code)
+	}
+}
+
+func TestApplesEnrich_NotFound(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubApplesStore{patchErr: errors.New("apple 999 not found")}
+	token := makeAgentToken(t, keys, "agent-1", []string{"apples.write"})
+	h := applesHandlerWithAuth(keys, store)
+
+	body, _ := json.Marshal(map[string]any{"model_fingerprint": "x"})
+	req := httptest.NewRequest("PATCH", "/api/v1/apples/999", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rr.Code)
+	}
+}
+
+func TestApplesEnrich_EmptyBody(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubApplesStore{apples: []auth.AppleRecord{{ID: 5, RecordedAt: time.Now()}}}
+	token := makeAgentToken(t, keys, "agent-1", []string{"apples.write"})
+	h := applesHandlerWithAuth(keys, store)
+
+	req := httptest.NewRequest("PATCH", "/api/v1/apples/5", bytes.NewReader([]byte("{}")))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (empty body)", rr.Code)
 	}
 }

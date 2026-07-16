@@ -556,6 +556,61 @@ func (s *SQLiteStore) GetApple(ctx context.Context, id int64) (*auth.AppleRecord
 	return &a, nil
 }
 
+func (s *SQLiteStore) PatchAppleMetadata(ctx context.Context, id int64, updates map[string]json.RawMessage) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var raw []byte
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(metadata,'null') FROM apples WHERE id = ?`, id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("apple %d not found", id)
+		}
+		return fmt.Errorf("select metadata: %w", err)
+	}
+
+	merged := map[string]json.RawMessage{}
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &merged); err != nil {
+			return fmt.Errorf("existing metadata not a JSON object, cannot merge: %w", err)
+		}
+	}
+	for k, v := range updates {
+		merged[k] = v
+	}
+	mergedRaw, err := json.Marshal(merged)
+	if err != nil {
+		return fmt.Errorf("marshal merged metadata: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `UPDATE apples SET metadata = ? WHERE id = ?`, mergedRaw, id)
+	if err != nil {
+		return fmt.Errorf("update metadata: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("apple %d not found", id)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	keys := make([]string, 0, len(updates))
+	for k := range updates {
+		keys = append(keys, k)
+	}
+	payload, _ := json.Marshal(map[string]any{"apple_id": id, "keys": keys})
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO iam_event_stream
+		 (event_type, aggregate_type, aggregate_id, operator_id, payload, recorded_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		"AppleEnriched", "AGENT", "system", "system", payload, now,
+	)
+	if err != nil {
+		return fmt.Errorf("append iam event: %w", err)
+	}
+	return tx.Commit()
+}
+
 func (s *SQLiteStore) GetAgentPermissions(ctx context.Context, agentID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT p.name FROM permissions p
