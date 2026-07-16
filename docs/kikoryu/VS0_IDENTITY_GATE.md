@@ -9,15 +9,10 @@ the full reconciliation.*
 
 ---
 
-**⚠ PENDING RECONCILIATION — 2026-07-16, same day as this rewrite:** the founder stated
-"the primary in and out of the system will be emails — VS0 is emails," immediately after this
-document was written. Captured verbatim, not yet reconciled against the OAuth/honor-code/gamertag
-gate described below — could mean email becomes an *additional* entry channel (device-auth-bridge
-style, parallel to Google OAuth), a *replacement* primary channel, or a broader system-wide I/O
-philosophy that happens to touch VS0 specifically because it's the front door. Deliberately not
-guessed at and rewritten again here — this document was just produced by a full audit pass hours
-earlier, and a two-line aside redoing it again without clarifying scope risks a second wasted pass.
-See `EMILY/BACKLOG.md` for wherever this gets its own tracked item once scoped.
+**Resolved, 2026-07-16, same day:** the founder's "primary in and out is emails — VS0 is emails"
+turned out not to be about this document at all — clarified as Emily Prime's own operational email
+fabric (AM/PM status digests, founder-directive intake, MJOLNIR push receipts), tracked at
+`EMILY/BACKLOG.md` SECTION 149. This VS0 rewrite stands unchanged; no reconciliation needed.
 
 ---
 
