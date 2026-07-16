@@ -117,6 +117,17 @@
         "apples.read",
         "iduna.me.read"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000010",
+      "name": "NORN",
+      "type": "kernel_agent",
+      "description": "NORN — the propose→grade→gate→promote loop kernel (HQ-SPEC-PRIME-101). Files an Apple on every artifact_promoted event from any instantiation (EPS extractor, entity-graph rules, and future ones). S141-04.",
+      "permissions": [
+        "apples.write",
+        "apples.read",
+        "iduna.me.read"
+      ]
     }
   ]
 }
