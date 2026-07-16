@@ -5,6 +5,12 @@ since IDUNA's original IAM pivot (see `iam-spec.md` §1) but, until this roadmap
 own build plan. Fourteen versions (VS0–VS13) across four phases, each building stable identity
 first and authoring "reality" last.*
 
+*2026-07-16 update: a code-verified reconciliation of these fourteen specs against the running
+system now lives at `docs/VS_REALITY_AUDIT.md`, with per-spec superseding documents in
+`docs/kikoryu/` and the founder-written originals archived verbatim at
+`docs/archive/kikoryu-vs-original/`. Near-term product thrust: social tournaments platform
+(VS2, supported by VS9 + VS10).*
+
 ---
 
 ## Phase 1: Foundations of Identity and Authority (VS0 – VS2)
