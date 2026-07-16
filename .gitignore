@@ -3,7 +3,7 @@ var/
 iduna-key.json
 iduna-key*.json
 *.env
-bootstrap
+/bootstrap
 
 # Go workspace (local only)
 go.work
