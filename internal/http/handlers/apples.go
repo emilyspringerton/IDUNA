@@ -23,9 +23,11 @@ import (
 // GET   /api/v1/apples                  requires apples.read
 // GET   /api/v1/apples/{id}             requires apples.read
 // PATCH /api/v1/apples/{id}             requires apples.write; merges
-//                                        enrichableFields into metadata
-//                                        (S147 async enrichment: gpt2_fingerprint,
-//                                        model_fingerprint, astrology)
+//
+//	enrichableFields into metadata
+//	(S147 async enrichment: gpt2_fingerprint,
+//	model_fingerprint, astrology)
+//
 // GET   /api/v1/apples/stats/daily-tokens?days=7  requires apples.read
 type ApplesHandler struct {
 	Store        store.IAMStore
@@ -95,6 +97,26 @@ var enrichableFields = map[string]bool{
 	"gpt2_fingerprint":  true,
 	"model_fingerprint": true,
 	"astrology":         true, // S147-04, unused until a data source is chosen
+}
+
+// metadataHasField reports whether raw metadata JSON has a non-null value
+// for key — used by list() to expose has_gpt2_fingerprint (S147-02) so the
+// enrichment worker can find candidate Apples without an N GET-per-Apple
+// scan. A missing key and a key explicitly set to null both count as
+// "doesn't have it" — enrichment should retry both cases identically.
+func metadataHasField(raw []byte, key string) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return false
+	}
+	v, ok := m[key]
+	if !ok {
+		return false
+	}
+	return string(v) != "null"
 }
 
 // PATCH /api/v1/apples/{id} — merge enrichment fields into metadata.
@@ -256,24 +278,26 @@ func (h *ApplesHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type appleListItem struct {
-		ID         int64  `json:"id"`
-		AgentID    string `json:"agent_id"`
-		SourceRepo string `json:"source_repo"`
-		RunID      string `json:"run_id"`
-		AppleType  string `json:"apple_type"`
-		Title      string `json:"title"`
-		RecordedAt string `json:"recorded_at"`
+		ID                 int64  `json:"id"`
+		AgentID            string `json:"agent_id"`
+		SourceRepo         string `json:"source_repo"`
+		RunID              string `json:"run_id"`
+		AppleType          string `json:"apple_type"`
+		Title              string `json:"title"`
+		RecordedAt         string `json:"recorded_at"`
+		HasGpt2Fingerprint bool   `json:"has_gpt2_fingerprint"`
 	}
 	items := make([]appleListItem, 0, len(apples))
 	for _, a := range apples {
 		items = append(items, appleListItem{
-			ID:         a.ID,
-			AgentID:    a.AgentID,
-			SourceRepo: a.SourceRepo,
-			RunID:      a.RunID,
-			AppleType:  a.AppleType,
-			Title:      a.Title,
-			RecordedAt: a.RecordedAt.UTC().Format(time.RFC3339Nano),
+			ID:                 a.ID,
+			AgentID:            a.AgentID,
+			SourceRepo:         a.SourceRepo,
+			RunID:              a.RunID,
+			AppleType:          a.AppleType,
+			Title:              a.Title,
+			RecordedAt:         a.RecordedAt.UTC().Format(time.RFC3339Nano),
+			HasGpt2Fingerprint: metadataHasField(a.Metadata, "gpt2_fingerprint"),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"apples": items})

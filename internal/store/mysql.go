@@ -515,7 +515,7 @@ func (s *MySQLStore) ListApples(ctx context.Context, agentID, sourceRepo, appleT
 	if limit > 500 {
 		limit = 500
 	}
-	q := `SELECT id, agent_id, source_repo, run_id, apple_type, title, recorded_at
+	q := `SELECT id, agent_id, source_repo, run_id, apple_type, title, COALESCE(metadata,'null'), recorded_at
 	      FROM apples WHERE 1=1`
 	args := []any{}
 	if agentID != "" {
@@ -541,7 +541,7 @@ func (s *MySQLStore) ListApples(ctx context.Context, agentID, sourceRepo, appleT
 	var apples []auth.AppleRecord
 	for rows.Next() {
 		var a auth.AppleRecord
-		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &a.RecordedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &a.Metadata, &a.RecordedAt); err != nil {
 			return nil, err
 		}
 		apples = append(apples, a)

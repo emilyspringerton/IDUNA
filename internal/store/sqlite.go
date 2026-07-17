@@ -504,7 +504,7 @@ func (s *SQLiteStore) ListApples(ctx context.Context, agentID, sourceRepo, apple
 	if limit > 500 {
 		limit = 500
 	}
-	q := `SELECT id, agent_id, source_repo, run_id, apple_type, title, recorded_at
+	q := `SELECT id, agent_id, source_repo, run_id, apple_type, title, COALESCE(metadata,'null'), recorded_at
 	      FROM apples WHERE 1=1`
 	args := []any{}
 	if agentID != "" {
@@ -531,7 +531,7 @@ func (s *SQLiteStore) ListApples(ctx context.Context, agentID, sourceRepo, apple
 	for rows.Next() {
 		var a auth.AppleRecord
 		var recordedStr string
-		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &recordedStr); err != nil {
+		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &a.Metadata, &recordedStr); err != nil {
 			return nil, err
 		}
 		a.RecordedAt, _ = time.Parse(time.RFC3339Nano, recordedStr)

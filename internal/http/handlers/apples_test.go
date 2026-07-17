@@ -96,7 +96,7 @@ func (s *stubApplesStore) PatchAppleMetadata(_ context.Context, id int64, update
 func (s *stubApplesStore) GetOrCreateUserByGoogleSubject(context.Context, string, string) (*auth.User, bool, error) {
 	return nil, false, nil
 }
-func (s *stubApplesStore) GetUserByID(context.Context, string) (*auth.User, error)     { return nil, nil }
+func (s *stubApplesStore) GetUserByID(context.Context, string) (*auth.User, error) { return nil, nil }
 func (s *stubApplesStore) GetEffectivePermissions(context.Context, string) ([]string, error) {
 	return nil, nil
 }
@@ -112,7 +112,9 @@ func (s *stubApplesStore) ListAgents(context.Context) ([]auth.Agent, error)     
 func (s *stubApplesStore) CreateAgent(context.Context, string, string, string, string) (*auth.Agent, error) {
 	return nil, nil
 }
-func (s *stubApplesStore) UpdateAgentStatus(context.Context, string, string, string) error { return nil }
+func (s *stubApplesStore) UpdateAgentStatus(context.Context, string, string, string) error {
+	return nil
+}
 func (s *stubApplesStore) ListIAMEvents(context.Context, int) ([]auth.IAMEvent, error) {
 	return nil, nil
 }
@@ -138,11 +140,15 @@ func (s *stubApplesStore) GetCameraObservation(context.Context, int64) (*auth.Ca
 func (s *stubApplesStore) ListCameraObservations(context.Context, string, string, int) ([]auth.CameraObservation, error) {
 	return nil, nil
 }
-func (s *stubApplesStore) CreateSprintItem(context.Context, auth.SprintItem) (int64, error) { return 0, nil }
+func (s *stubApplesStore) CreateSprintItem(context.Context, auth.SprintItem) (int64, error) {
+	return 0, nil
+}
 func (s *stubApplesStore) UpdateSprintItem(context.Context, int64, string, string, string, int64) error {
 	return nil
 }
-func (s *stubApplesStore) GetSprintItem(context.Context, int64) (*auth.SprintItem, error) { return nil, nil }
+func (s *stubApplesStore) GetSprintItem(context.Context, int64) (*auth.SprintItem, error) {
+	return nil, nil
+}
 func (s *stubApplesStore) ListSprintItems(context.Context, string, string, int) ([]auth.SprintItem, error) {
 	return nil, nil
 }
@@ -152,7 +158,9 @@ func (s *stubApplesStore) DailyTokenStats(context.Context, int) ([]auth.DailyTok
 func (s *stubApplesStore) GetUserSubscription(context.Context, string) (*auth.Subscription, error) {
 	return nil, nil
 }
-func (s *stubApplesStore) UpsertUserSubscription(context.Context, auth.Subscription) error { return nil }
+func (s *stubApplesStore) UpsertUserSubscription(context.Context, auth.Subscription) error {
+	return nil
+}
 func (s *stubApplesStore) UpsertClusterHeartbeat(context.Context, auth.ClusterHeartbeat) error {
 	return nil
 }
@@ -322,6 +330,51 @@ func TestApplesList_FilterByRepo(t *testing.T) {
 	apples := resp["apples"].([]any)
 	if len(apples) != 1 {
 		t.Errorf("len(apples) = %d, want 1 (filtered by source_repo=iduna)", len(apples))
+	}
+}
+
+// TestApplesList_HasGpt2Fingerprint covers S147-02's list-endpoint dependency:
+// the enrichment worker needs to find candidate Apples without an N
+// GET-per-Apple scan, so list() exposes has_gpt2_fingerprint derived from
+// metadata.
+func TestApplesList_HasGpt2Fingerprint(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubApplesStore{
+		apples: []auth.AppleRecord{
+			{ID: 1, AgentID: "a1", SourceRepo: "iduna", RunID: "r1", AppleType: "improvement", Title: "has fp", RecordedAt: time.Now(), Metadata: []byte(`{"gpt2_fingerprint":{"seed":"x"}}`)},
+			{ID: 2, AgentID: "a1", SourceRepo: "iduna", RunID: "r2", AppleType: "improvement", Title: "no metadata", RecordedAt: time.Now()},
+			{ID: 3, AgentID: "a1", SourceRepo: "iduna", RunID: "r3", AppleType: "improvement", Title: "other metadata only", RecordedAt: time.Now(), Metadata: []byte(`{"model_fingerprint":"emily-ft"}`)},
+			{ID: 4, AgentID: "a1", SourceRepo: "iduna", RunID: "r4", AppleType: "improvement", Title: "explicit null", RecordedAt: time.Now(), Metadata: []byte(`{"gpt2_fingerprint":null}`)},
+		},
+	}
+	token := makeAgentToken(t, keys, "agent-1", []string{"apples.read"})
+	h := applesHandlerWithAuth(keys, store)
+
+	req := httptest.NewRequest("GET", "/api/v1/apples", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Apples []struct {
+			ID                 int64 `json:"id"`
+			HasGpt2Fingerprint bool  `json:"has_gpt2_fingerprint"`
+		} `json:"apples"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := map[int64]bool{1: true, 2: false, 3: false, 4: false}
+	if len(resp.Apples) != len(want) {
+		t.Fatalf("got %d apples, want %d", len(resp.Apples), len(want))
+	}
+	for _, a := range resp.Apples {
+		if a.HasGpt2Fingerprint != want[a.ID] {
+			t.Errorf("apple %d: has_gpt2_fingerprint = %v, want %v", a.ID, a.HasGpt2Fingerprint, want[a.ID])
+		}
 	}
 }
 
