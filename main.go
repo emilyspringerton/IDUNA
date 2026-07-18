@@ -17,6 +17,7 @@ import (
 	"iduna/internal/drive"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
+	"iduna/internal/mailinglist"
 	"iduna/internal/store"
 	"iduna/internal/userlog"
 	"iduna/internal/util"
@@ -134,6 +135,38 @@ func main() {
 		log.Printf("drive: GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON not set — drive API in degraded mode")
 	}
 
+	// Mailing-list vault — okemily.com signups, never-at-rest-unencrypted per
+	// explicit founder direction. Starts LOCKED on every process start; an
+	// operator must run cmd/mailing-list-unlock (interactive passphrase,
+	// never a flag/env var) before new signups are accepted. See
+	// internal/mailinglist package doc for the full threat-model writeup.
+	mailingListDBPath := os.Getenv("MAILING_LIST_DB_PATH")
+	if mailingListDBPath == "" {
+		mailingListDBPath = "./var/mailinglist.db"
+	}
+	mailingListStore, err := mailinglist.Open(mailingListDBPath)
+	if err != nil {
+		log.Fatalf("mailinglist: failed to open store: %v", err)
+	}
+	mailingListVault := mailinglist.NewVault()
+	var mailchimpClient *mailinglist.MailchimpClient
+	if mcKey := os.Getenv("MAILCHIMP_API_KEY"); mcKey != "" {
+		mailchimpClient = mailinglist.NewMailchimpClient(mcKey, os.Getenv("MAILCHIMP_LIST_ID"))
+		log.Printf("mailinglist: mailchimp sync configured")
+	} else {
+		log.Printf("mailinglist: MAILCHIMP_API_KEY not set — subscribers recorded in IDUNA only, no mailchimp sync")
+	}
+	mailingListH := &handlers.MailingListHandler{
+		Store:     mailingListStore,
+		Vault:     mailingListVault,
+		Mailchimp: mailchimpClient,
+		AllowOrigin: []string{
+			"https://okemily.com",
+			"https://www.okemily.com",
+		},
+	}
+	log.Printf("mailinglist: vault locked — run cmd/mailing-list-unlock to accept signups")
+
 	mux := http.NewServeMux()
 
 	// Existing device routes.
@@ -190,6 +223,14 @@ func main() {
 	mux.Handle("/api/v1/drive/upload", driveProtected)
 	mux.Handle("/api/v1/drive/files", driveProtected)
 	mux.Handle("/api/v1/drive/files/", driveProtected)
+
+	// Mailing-list — subscribe is public but rate-limited (5/min/IP, generous
+	// for a real signup form, tight against scripted abuse, enforced inside
+	// the handler itself — see MailingListHandler.Limiter); unlock/init are
+	// loopback-gated inside the handler, not by auth middleware, since
+	// there's no human JWT session for an operator running a CLI on the box.
+	mailingListH.Limiter = middleware.NewIPRateLimiter(5)
+	mailingListH.Register(mux)
 
 	// Admin login/logout — public (no auth required).
 	mux.Handle("/admin/login", adminLoginH)
