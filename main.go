@@ -387,6 +387,14 @@ func main() {
 	mux.Handle("/api/v1/auth/google/shankpit", shankpitAuthH)
 	mux.Handle("/api/v1/auth/google/shankpit/callback", shankpitAuthH)
 
+	// SHANKPIT connect-ticket minting — requires an existing IDUNA JWT
+	// (from the OAuth/email flows above); the game server verifies the
+	// resulting ticket itself via HMAC (S156-02).
+	shankpitTicketH := middleware.RequireAuth(keys)(&handlers.ShankpitTicketHandler{
+		Secret: []byte(os.Getenv("SHANKPIT_TICKET_SECRET")),
+	})
+	mux.Handle("/api/v1/shankpit/ticket", shankpitTicketH)
+
 	// DragonsNShit MMO API (S75-02/03/04/05) — auth required.
 	mmoH := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
 	mux.Handle("/api/v1/characters", mmoH)
