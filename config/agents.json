@@ -129,6 +129,15 @@
         "apples.read",
         "iduna.me.read"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000011",
+      "name": "SHANKPIT460-SERVER",
+      "type": "game_server_agent",
+      "description": "shankpit-460 game server — authenticates via POST /api/v1/auth/agent to report match results (kills/deaths per player_id) on match completion. S156-04.",
+      "permissions": [
+        "shankpit.match.write"
+      ]
     }
   ]
 }

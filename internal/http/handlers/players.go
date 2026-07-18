@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"iduna/internal/http/middleware"
+
 	"github.com/google/uuid"
 )
 
@@ -172,7 +174,29 @@ func (h *PlayersHandler) handleGetPlayer(w http.ResponseWriter, r *http.Request,
 	json.NewEncoder(w).Encode(p)
 }
 
+// shankpitMatchWritePermission gates handleSessionEnd to the shankpit-460
+// game server's own M2M agent credential — this endpoint attributes
+// kills/deaths to a player_id from a caller-supplied body with no
+// server-side verification the numbers are real, so it must only be
+// reachable by the authoritative source of match results (S156-04), not by
+// any player's own JWT (which would otherwise let a player inflate their
+// own — or anyone else's — stats with an arbitrary POST).
+const shankpitMatchWritePermission = "shankpit.match.write"
+
 func (h *PlayersHandler) handleSessionEnd(w http.ResponseWriter, r *http.Request, playerID string) {
+	perms := middleware.PermissionsFromContext(r.Context())
+	allowed := false
+	for _, p := range perms {
+		if p == shankpitMatchWritePermission {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		http.Error(w, "forbidden: requires "+shankpitMatchWritePermission, http.StatusForbidden)
+		return
+	}
+
 	var body struct {
 		Kills  int `json:"kills"`
 		Deaths int `json:"deaths"`
