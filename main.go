@@ -395,6 +395,21 @@ func main() {
 	})
 	mux.Handle("/api/v1/shankpit/ticket", shankpitTicketH)
 
+	// SHANKPIT-460 v0 matchmaking queue (S156-03) — in-memory, ephemeral by
+	// design (see handlers.ShankpitQueue doc comment). ServerAddr is the one
+	// persistent game server instance (no per-match instances in v0); no
+	// public DNS name exists yet for it (play.farthq.com is reserved but
+	// deliberately not created until SHANKPIT ships externally, per
+	// HQ-SPEC-INFRA-105), so this defaults to loopback for same-box testing.
+	shankpitServerAddr := os.Getenv("SHANKPIT_SERVER_ADDR")
+	if shankpitServerAddr == "" {
+		shankpitServerAddr = "127.0.0.1:6969"
+	}
+	shankpitQueue := handlers.NewShankpitQueue(shankpitServerAddr)
+	mux.Handle("/api/v1/shankpit/queue/join", middleware.RequireAuth(keys)(http.HandlerFunc(shankpitQueue.Join)))
+	mux.Handle("/api/v1/shankpit/queue/leave", middleware.RequireAuth(keys)(http.HandlerFunc(shankpitQueue.Leave)))
+	mux.Handle("/api/v1/shankpit/queue/status", middleware.RequireAuth(keys)(http.HandlerFunc(shankpitQueue.Status)))
+
 	// DragonsNShit MMO API (S75-02/03/04/05) — auth required.
 	mmoH := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
 	mux.Handle("/api/v1/characters", mmoH)
