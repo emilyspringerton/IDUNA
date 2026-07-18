@@ -29,8 +29,9 @@ import (
 type CheckType string
 
 const (
-	CheckHTTP    CheckType = ""         // GET CheckURL, 2xx = up
-	CheckUDPPort CheckType = "udp_port" // is anything bound to UDPPort locally?
+	CheckHTTP        CheckType = ""             // GET CheckURL, 2xx = up
+	CheckUDPPort     CheckType = "udp_port"     // is anything bound to UDPPort locally?
+	CheckSystemdUnit CheckType = "systemd_unit" // is the named user-scope unit active?
 )
 
 type Target struct {
@@ -38,16 +39,37 @@ type Target struct {
 	Label    string // public-facing label, e.g. "Trust & Identity API"
 	CheckURL string
 	Type     CheckType
-	UDPPort  int // used when Type == CheckUDPPort
+	UDPPort  int    // used when Type == CheckUDPPort
+	Unit     string // used when Type == CheckSystemdUnit, e.g. "fatbaby-secwatch.service"
 }
 
 // DefaultTargets returns the services with a real, currently-reachable
 // liveness signal, verified live 2026-07-18.
+//
+// FatBaby's headless pipeline pollers (secwatch, prwatch, prwatch-body,
+// processor, eps-reconciler) have no HTTP or UDP surface of their own — the
+// only real, honest liveness signal available for them is systemd itself,
+// since all five now run under real, currently-enabled user-scope units
+// (ops/systemd/fatbaby-*.service in PRRJECT_FATBABY).
+//
+// Deliberately NOT included, per this package's own scope discipline (see
+// package doc): entity-graph and eps-processor. Both currently run as
+// unsupervised `go run` processes — entity-graph's unit
+// (fatbaby-entity-graph.service) exists but is disabled pending its Phase 2
+// checkpoint work (EMILY/BACKLOG.md SECTION 1), and eps-processor has no
+// unit at all yet. Checking their (inactive) units would report them "down"
+// while they're actually running — the exact misrepresentation this
+// package's doc warns against. Add them once real supervision lands.
 func DefaultTargets() []Target {
 	return []Target{
 		{Name: "iduna", Label: "Trust & Identity API", CheckURL: "http://localhost:8080/health"},
 		{Name: "newssite", Label: "FatBaby News", CheckURL: "http://localhost:8082/healthz"},
 		{Name: "signalapi", Label: "FatBaby Signal API", CheckURL: "http://localhost:9091/v1/governance-signals?limit=1"},
+		{Name: "secwatch", Label: "FatBaby SEC Filing Poller", Type: CheckSystemdUnit, Unit: "fatbaby-secwatch.service"},
+		{Name: "prwatch", Label: "FatBaby PR Newswire Poller", Type: CheckSystemdUnit, Unit: "fatbaby-prwatch.service"},
+		{Name: "prwatch-body", Label: "FatBaby PR Body Fetcher", Type: CheckSystemdUnit, Unit: "fatbaby-prwatch-body.service"},
+		{Name: "processor", Label: "FatBaby Signal Processor", Type: CheckSystemdUnit, Unit: "fatbaby-processor.service"},
+		{Name: "eps-reconciler", Label: "FatBaby EPS Reconciler", Type: CheckSystemdUnit, Unit: "fatbaby-eps-reconciler.service"},
 		{Name: "shankpit460", Label: "SHANKPIT-460 Game Server", Type: CheckUDPPort, UDPPort: 6969},
 	}
 }
@@ -196,6 +218,10 @@ func (c *Checker) checkOne(ctx context.Context, t Target) (up bool, latency time
 	case CheckUDPPort:
 		start := time.Now()
 		up := UDPPortBound(t.UDPPort)
+		return up, time.Since(start)
+	case CheckSystemdUnit:
+		start := time.Now()
+		up := SystemdUnitActive(t.Unit)
 		return up, time.Since(start)
 	default:
 		return c.checkHTTP(ctx, t)
