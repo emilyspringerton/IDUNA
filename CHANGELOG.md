@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-18 (4)
+- feat(statuspage): add CheckSystemdUnit type; okemily.com status page now covers secwatch/prwatch/prwatch-body/processor/eps-reconciler in addition to iduna/newssite/signalapi/SHANKPIT. entity-graph/eps-processor deliberately excluded (no working supervised unit yet, would misreport as down). Live-verified via https://okemily.com/api/v1/status. IDUNA 3f4d33c.
 - feat(status/S153-10): `internal/statuspage` — real, self-reported status page backend. Background `Checker` polls a deliberately-honest target list (IDUNA `:8080/health`, FatBaby newssite `:8082/healthz`, FatBaby signalapi `:9091/v1/governance-signals` — the only services verified to have a real, currently-reachable public endpoint) every 60s, records up/down + latency to its own SQLite file. `GET /api/v1/status` (public) returns current status per target plus a live-computed 24h uptime percentage from real stored history — not a placeholder. Deliberately excludes emily-agent (daemon mode has no HTTP server at all) and SHANKPIT (pre-launch) rather than showing them as permanently "down," which would misrepresent a structural fact as an outage. Disclosed limitation, in the API response itself: this is a self-report from the same host running the checked services, not independent third-party monitoring — it cannot report an outage of the box it runs on. 6 new tests.
 
 ## 2026-07-18 (3)
