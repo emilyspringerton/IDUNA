@@ -126,3 +126,30 @@ func TestStore_UptimePercentRespectsWindow(t *testing.T) {
 		t.Fatalf("expected 100%% within window, got %.1f%%", pct)
 	}
 }
+
+func TestChecker_Run_DelaysFirstCheck(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer up.Close()
+
+	store, err := Open(filepath.Join(t.TempDir(), "status.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+
+	checker := NewChecker(store, []Target{{Name: "svc", Label: "x", CheckURL: up.URL}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	go checker.runDelayed(ctx, time.Hour, 500*time.Millisecond, nil)
+
+	// Context expires before the startup grace elapses — no check should
+	// have run yet, proving the delay is real, not a no-op.
+	<-ctx.Done()
+	time.Sleep(20 * time.Millisecond)
+	if _, found := store.LatestStatus("svc"); found {
+		t.Fatal("expected no check to have run before the startup grace period elapsed")
+	}
+}

@@ -140,7 +140,23 @@ func NewChecker(store *Store, targets []Target) *Checker {
 // Run polls every target every interval until ctx is done. Errors recording
 // a check are logged by the caller-supplied onError, if any — never fatal,
 // this is a monitoring loop, not a critical path.
+//
+// The first check is delayed by startupGrace rather than fired immediately:
+// this checker is started (via `go`) before IDUNA's own http.ListenAndServe
+// is actually accepting connections, so an immediate self-check races IDUNA's
+// own startup and spuriously records itself as down. Found live — the very
+// first deploy of this feature recorded IDUNA as "down" against its own
+// /health endpoint, seconds after a manual curl to the same URL succeeded.
 func (c *Checker) Run(ctx context.Context, interval time.Duration, onError func(error)) {
+	c.runDelayed(ctx, interval, 3*time.Second, onError)
+}
+
+func (c *Checker) runDelayed(ctx context.Context, interval, startupGrace time.Duration, onError func(error)) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(startupGrace):
+	}
 	c.checkAll(ctx, onError)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
