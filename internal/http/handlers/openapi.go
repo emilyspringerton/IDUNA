@@ -31,6 +31,7 @@ var idunaOpenAPISpec = map[string]any{
 		},
 	},
 	"servers": []map[string]any{
+		{"url": "https://okemily.com", "description": "Public (via okemily.com's nginx proxy)"},
 		{"url": "http://localhost:8080", "description": "Local development"},
 	},
 	"components": map[string]any{
