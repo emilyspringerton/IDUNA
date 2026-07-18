@@ -24,19 +24,31 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// CheckType selects how a Target's liveness is verified. Defaults to
+// CheckHTTP (empty string) for backward compatibility with existing targets.
+type CheckType string
+
+const (
+	CheckHTTP    CheckType = ""         // GET CheckURL, 2xx = up
+	CheckUDPPort CheckType = "udp_port" // is anything bound to UDPPort locally?
+)
+
 type Target struct {
 	Name     string // internal key, e.g. "iduna"
 	Label    string // public-facing label, e.g. "Trust & Identity API"
 	CheckURL string
+	Type     CheckType
+	UDPPort  int // used when Type == CheckUDPPort
 }
 
 // DefaultTargets returns the services with a real, currently-reachable
-// health/liveness endpoint, verified live 2026-07-18.
+// liveness signal, verified live 2026-07-18.
 func DefaultTargets() []Target {
 	return []Target{
 		{Name: "iduna", Label: "Trust & Identity API", CheckURL: "http://localhost:8080/health"},
 		{Name: "newssite", Label: "FatBaby News", CheckURL: "http://localhost:8082/healthz"},
 		{Name: "signalapi", Label: "FatBaby Signal API", CheckURL: "http://localhost:9091/v1/governance-signals?limit=1"},
+		{Name: "shankpit460", Label: "SHANKPIT-460 Game Server", Type: CheckUDPPort, UDPPort: 6969},
 	}
 }
 
@@ -180,6 +192,17 @@ func (c *Checker) checkAll(ctx context.Context, onError func(error)) {
 }
 
 func (c *Checker) checkOne(ctx context.Context, t Target) (up bool, latency time.Duration) {
+	switch t.Type {
+	case CheckUDPPort:
+		start := time.Now()
+		up := UDPPortBound(t.UDPPort)
+		return up, time.Since(start)
+	default:
+		return c.checkHTTP(ctx, t)
+	}
+}
+
+func (c *Checker) checkHTTP(ctx context.Context, t Target) (up bool, latency time.Duration) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.CheckURL, nil)
 	if err != nil {
 		return false, 0
