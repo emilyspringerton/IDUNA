@@ -78,6 +78,15 @@ var idunaOpenAPISpec = map[string]any{
 					"created_at":  map[string]any{"type": "string", "format": "date-time"},
 				},
 			},
+			"ShankpitQueueStatus": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"state":          map[string]any{"type": "string", "enum": []string{"not_queued", "queuing", "matched"}},
+					"queue_position": map[string]any{"type": "integer"},
+					"queue_size":     map[string]any{"type": "integer"},
+					"server_addr":    map[string]any{"type": "string", "description": "present only when state=matched"},
+				},
+			},
 			"DriveFile": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -397,6 +406,600 @@ var idunaOpenAPISpec = map[string]any{
 				},
 			},
 		},
+		"/api/v1/players/{id}/session": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "player_id UUID"},
+			},
+			"post": map[string]any{
+				"summary":     "Increment a player's session stats (kills/deaths)",
+				"tags":        []string{"players"},
+				"description": "Requires the shankpit.match.write permission (S156-04) — granted only to the SHANKPIT460-SERVER M2M agent, not to player JWTs, since this endpoint trusts the request body with no server-side verification the numbers are real.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"kills":  map[string]any{"type": "integer"},
+									"deaths": map[string]any{"type": "integer"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Updated", "content": map[string]any{
+						"application/json": map[string]any{"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"updated":      map[string]any{"type": "boolean"},
+								"kills_added":  map[string]any{"type": "integer"},
+								"deaths_added": map[string]any{"type": "integer"},
+							},
+						}},
+					}},
+					"403": errorResponse("Missing shankpit.match.write permission"),
+					"404": errorResponse("Player not found"),
+				},
+			},
+		},
+		// ── SHANKPIT auth (email + Google OAuth) ────────────────────────────────
+		"/api/v1/auth/email/register": map[string]any{
+			"post": map[string]any{
+				"summary":  "Register a SHANKPIT player with email + password",
+				"tags":     []string{"shankpit"},
+				"security": []map[string]any{},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"email", "password"},
+								"properties": map[string]any{
+									"email":    map[string]any{"type": "string", "format": "email"},
+									"password": map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Player created", "content": map[string]any{
+						"application/json": map[string]any{"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"player_id":    map[string]any{"type": "string"},
+								"display_name": map[string]any{"type": "string"},
+								"token":        map[string]any{"type": "string", "description": "IDUNA JWT"},
+							},
+						}},
+					}},
+					"409": errorResponse("Email already registered"),
+				},
+			},
+		},
+		"/api/v1/auth/email/login": map[string]any{
+			"post": map[string]any{
+				"summary":  "Log in a SHANKPIT player with email + password",
+				"tags":     []string{"shankpit"},
+				"security": []map[string]any{},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"email", "password"},
+								"properties": map[string]any{
+									"email":    map[string]any{"type": "string", "format": "email"},
+									"password": map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Login OK", "content": map[string]any{
+						"application/json": map[string]any{"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"player_id":    map[string]any{"type": "string"},
+								"display_name": map[string]any{"type": "string"},
+								"token":        map[string]any{"type": "string", "description": "IDUNA JWT"},
+							},
+						}},
+					}},
+					"401": errorResponse("Wrong email/password"),
+				},
+			},
+		},
+		"/api/v1/auth/google/shankpit": map[string]any{
+			"get": map[string]any{
+				"summary":     "Start SHANKPIT's Google OAuth browser flow",
+				"tags":        []string{"shankpit"},
+				"description": "Redirects to Google; on success redirects back to shankpit://auth?token=... (the callback below).",
+				"security":    []map[string]any{},
+				"responses": map[string]any{
+					"302": map[string]any{"description": "Redirect to Google's OAuth consent screen"},
+				},
+			},
+		},
+		"/api/v1/auth/google/shankpit/callback": map[string]any{
+			"get": map[string]any{
+				"summary":  "Google OAuth callback for SHANKPIT — issues an IDUNA JWT",
+				"tags":     []string{"shankpit"},
+				"security": []map[string]any{},
+				"responses": map[string]any{
+					"302": map[string]any{"description": "Redirect to shankpit://auth?token=<jwt>"},
+					"400": errorResponse("OAuth exchange failed"),
+				},
+			},
+		},
+		// ── SHANKPIT-460 connect ticket + matchmaking (S156-02/03) ──────────────
+		"/api/v1/shankpit/ticket": map[string]any{
+			"post": map[string]any{
+				"summary":     "Mint a short-lived HMAC connect ticket for the shankpit-460 game server",
+				"tags":        []string{"shankpit"},
+				"description": "The caller's JWT subject must be a player_id UUID. Ticket is a 5-minute HMAC-SHA256-signed token (player_id + expiry + truncated MAC over SHANKPIT_TICKET_SECRET) the C game server verifies locally on PACKET_CONNECT, with no crypto library and no I/O on the C side.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Ticket minted", "content": map[string]any{
+						"application/json": map[string]any{"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"ticket":     map[string]any{"type": "string", "description": "72 hex chars: 16-byte player_id + 4-byte expiry + 16-byte truncated MAC"},
+								"expires_at": map[string]any{"type": "integer", "description": "Unix timestamp"},
+								"player_id":  map[string]any{"type": "string"},
+							},
+						}},
+					}},
+					"400": errorResponse("Token subject is not a player id"),
+					"503": errorResponse("SHANKPIT_TICKET_SECRET not configured"),
+				},
+			},
+		},
+		"/api/v1/shankpit/queue/join": map[string]any{
+			"post": map[string]any{
+				"summary":     "Join the shankpit-460 v0 matchmaking queue",
+				"tags":        []string{"shankpit"},
+				"description": "In-process, ephemeral FIFO queue (S156-03). Once queuing players reach ShankpitQueueMinPlayers (2), everyone currently queuing is matched and given the one persistent game server's connect address.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Queue status", "content": jsonSchema("ShankpitQueueStatus")},
+					"400": errorResponse("Token subject is not a player id"),
+				},
+			},
+		},
+		"/api/v1/shankpit/queue/leave": map[string]any{
+			"post": map[string]any{
+				"summary":  "Leave the shankpit-460 matchmaking queue",
+				"tags":     []string{"shankpit"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Always not_queued", "content": jsonSchema("ShankpitQueueStatus")},
+				},
+			},
+		},
+		"/api/v1/shankpit/queue/status": map[string]any{
+			"get": map[string]any{
+				"summary":  "Poll the caller's current matchmaking queue status",
+				"tags":     []string{"shankpit"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Queue status", "content": jsonSchema("ShankpitQueueStatus")},
+				},
+			},
+		},
+		// ── Blog (okemily.com) ───────────────────────────────────────────────────
+		"/api/v1/blog/posts": map[string]any{
+			"get": map[string]any{
+				"summary":  "List blog posts (newest first)",
+				"tags":     []string{"blog"},
+				"security": []map[string]any{},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Post index (no body field)"},
+				},
+			},
+			"post": map[string]any{
+				"summary":     "Publish a blog post",
+				"tags":        []string{"blog"},
+				"description": "Requires blog.write. Immediately re-renders that post + the index to static HTML — publishing is live the instant the request returns.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"slug", "title", "body"},
+								"properties": map[string]any{
+									"slug":   map[string]any{"type": "string", "description": "lowercase letters/numbers/hyphens"},
+									"title":  map[string]any{"type": "string"},
+									"author": map[string]any{"type": "string", "description": "defaults to EINHORN_INDUSTRIAL"},
+									"body":   map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Published"},
+					"400": errorResponse("Invalid slug/title/body"),
+					"409": errorResponse("Slug already exists"),
+				},
+			},
+		},
+		"/api/v1/blog/posts/{slug}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "slug", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+			},
+			"get": map[string]any{
+				"summary":  "Get a single blog post with full body",
+				"tags":     []string{"blog"},
+				"security": []map[string]any{},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Post"},
+					"404": errorResponse("Not found"),
+				},
+			},
+		},
+		// ── Mailing list (okemily.com signup form) ──────────────────────────────
+		"/api/v1/mailing-list/subscribe": map[string]any{
+			"post": map[string]any{
+				"summary":     "Subscribe an email to the okemily.com mailing list",
+				"tags":        []string{"mailing-list"},
+				"description": "Public, rate-limited 5/min/IP, CORS-scoped to okemily.com. Fails closed (503) while the vault is locked (see cmd/mailing-list-unlock).",
+				"security":    []map[string]any{},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"email", "consent"},
+								"properties": map[string]any{
+									"email":   map[string]any{"type": "string", "format": "email"},
+									"consent": map[string]any{"type": "boolean"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Subscribed"},
+					"400": errorResponse("Invalid email or consent not given"),
+					"429": errorResponse("Rate limited"),
+					"503": errorResponse("Vault locked")},
+			},
+		},
+		// ── Status page ──────────────────────────────────────────────────────────
+		"/api/v1/status": map[string]any{
+			"get": map[string]any{
+				"summary":     "Public system status page",
+				"tags":        []string{"status"},
+				"description": "Self-reported from the same host running these services, not independent third-party monitoring.",
+				"security":    []map[string]any{},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Status per target + live 24h uptime percentage"},
+				},
+			},
+		},
+		// ── Check-in monitors ────────────────────────────────────────────────────
+		"/api/v1/monitors/checkin/{slug}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "slug", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+			},
+			"get": map[string]any{
+				"summary":  "Record a monitor heartbeat (GET variant, for curl/wget probes)",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Checked in"},
+					"404": errorResponse("Unknown monitor slug"),
+				},
+			},
+			"post": map[string]any{
+				"summary":  "Record a monitor heartbeat",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Checked in"},
+					"404": errorResponse("Unknown monitor slug"),
+				},
+			},
+		},
+		"/api/v1/monitors": map[string]any{
+			"get": map[string]any{
+				"summary":  "List monitors (requires monitors.read or monitors.admin)",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Monitor list"},
+				},
+			},
+			"post": map[string]any{
+				"summary":  "Create a check-in monitor (requires monitors.create or monitors.admin)",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"name"},
+								"properties": map[string]any{
+									"name":                map[string]any{"type": "string"},
+									"kind":                map[string]any{"type": "string", "enum": []string{"heartbeat", "cron", "deadman"}, "default": "heartbeat"},
+									"timeout_seconds":     map[string]any{"type": "integer", "default": 3600},
+									"grace_seconds":       map[string]any{"type": "integer", "default": 60},
+									"alert_slack_channel": map[string]any{"type": "string"},
+									"alert_email":         map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"201": map[string]any{"description": "Monitor created (includes generated slug and its own private check-in URL)"},
+					"400": errorResponse("Missing name or invalid kind"),
+				},
+			},
+		},
+		"/api/v1/monitors/overdue": map[string]any{
+			"get": map[string]any{
+				"summary":  "List monitors currently overdue (requires monitors.alert or monitors.admin)",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Overdue monitor list"},
+				},
+			},
+		},
+		"/api/v1/monitors/{id}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+			},
+			"get": map[string]any{
+				"summary":  "Get a single monitor",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Monitor"},
+					"404": errorResponse("Not found"),
+				},
+			},
+			"patch": map[string]any{
+				"summary":  "Update a monitor",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Updated monitor"},
+				},
+			},
+			"delete": map[string]any{
+				"summary":  "Delete a monitor",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"204": map[string]any{"description": "Deleted"},
+				},
+			},
+		},
+		"/api/v1/monitors/{id}/alerted": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+			},
+			"post": map[string]any{
+				"summary":  "Mark a monitor's current overdue state as alerted (suppresses re-notification)",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Marked"},
+				},
+			},
+		},
+		"/api/v1/monitors/{id}/recover": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+			},
+			"post": map[string]any{
+				"summary":  "Clear a monitor's overdue/alerted state without waiting for a real check-in",
+				"tags":     []string{"monitors"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Recovered"},
+				},
+			},
+		},
+		// ── Subscriptions (Emily+/GFD) ───────────────────────────────────────────
+		"/api/v1/subscriptions": map[string]any{
+			"post": map[string]any{
+				"summary":     "Provision or update a subscription",
+				"tags":        []string{"subscriptions"},
+				"description": "Requires subscriptions.admin.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"user_id", "plan", "status"},
+								"properties": map[string]any{
+									"user_id":    map[string]any{"type": "string"},
+									"plan":       map[string]any{"type": "string"},
+									"status":     map[string]any{"type": "string"},
+									"expires_at": map[string]any{"type": "string", "format": "date-time"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Provisioned"},
+					"403": errorResponse("Missing subscriptions.admin"),
+				},
+			},
+		},
+		"/api/v1/subscriptions/me": map[string]any{
+			"get": map[string]any{
+				"summary":  "Get the caller's own subscription status",
+				"tags":     []string{"subscriptions"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Subscription status"},
+				},
+			},
+		},
+		"/api/v1/subscriptions/tiers": map[string]any{
+			"get": map[string]any{
+				"summary":  "List available GFD subscription tiers",
+				"tags":     []string{"subscriptions"},
+				"security": []map[string]any{},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Tier list"},
+				},
+			},
+		},
+		// ── Push tokens (MJOLNIR FCM) ────────────────────────────────────────────
+		"/api/v1/push-tokens": map[string]any{
+			"post": map[string]any{
+				"summary":     "Register or update an FCM push token",
+				"tags":        []string{"push-tokens"},
+				"description": "Requires push_tokens.write.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"agent_name", "platform", "fcm_token"},
+								"properties": map[string]any{
+									"agent_name":  map[string]any{"type": "string"},
+									"platform":    map[string]any{"type": "string", "example": "android"},
+									"fcm_token":   map[string]any{"type": "string"},
+									"fingerprint": map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Token stored"},
+					"403": errorResponse("Missing push_tokens.write"),
+				},
+			},
+		},
+		"/api/v1/push-tokens/{agent}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+			},
+			"get": map[string]any{
+				"summary":     "Get the current push token for an agent",
+				"tags":        []string{"push-tokens"},
+				"description": "Requires push_tokens.read.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Token record"},
+					"403": errorResponse("Missing push_tokens.read"),
+					"404": errorResponse("No token registered for this agent"),
+				},
+			},
+		},
+		// ── Intelligence (MJOLNIR camera → Emily Prime vision) ───────────────────
+		"/api/v1/intelligence/observe": map[string]any{
+			"post": map[string]any{
+				"summary":     "Submit an image for Emily Prime vision analysis",
+				"tags":        []string{"intelligence"},
+				"description": "Requires intelligence.observe.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":       "object",
+								"required":   []string{"image_data"},
+								"properties": map[string]any{
+									"image_data": map[string]any{"type": "string", "description": "base64-encoded image"},
+									"media_type": map[string]any{"type": "string", "default": "image/jpeg"},
+									"prompt":     map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"201": map[string]any{"description": "Observation queued (status: pending)"},
+					"403": errorResponse("Missing intelligence.observe")},
+			},
+		},
+		"/api/v1/intelligence/observations": map[string]any{
+			"get": map[string]any{
+				"summary":     "List the caller's own observations",
+				"tags":        []string{"intelligence"},
+				"description": "Requires intelligence.read. Callers with apples.admin may pass ?agent_name= to see another agent's observations.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"parameters": []map[string]any{
+					{"name": "status", "in": "query", "schema": map[string]any{"type": "string"}},
+					{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "default": 50}},
+					{"name": "agent_name", "in": "query", "schema": map[string]any{"type": "string"}, "description": "requires apples.admin to use"},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Observation list"},
+				},
+			},
+		},
+		"/api/v1/intelligence/observations/{id}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+			},
+			"get": map[string]any{
+				"summary":  "Get a single observation (own, or any with apples.admin)",
+				"tags":     []string{"intelligence"},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Observation detail"},
+					"403": errorResponse("Not your observation"),
+					"404": errorResponse("Not found"),
+				},
+			},
+			"patch": map[string]any{
+				"summary":     "Update an observation's analysis/status",
+				"tags":        []string{"intelligence"},
+				"description": "Requires intelligence.observe — in practice, only Emily Prime.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"analysis": map[string]any{"type": "string"},
+									"apple_id": map[string]any{"type": "integer"},
+									"status":   map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Updated observation"},
+				},
+			},
+		},
+		// NOTE: the DragonsNShit MMO API (/api/v1/characters, /items, /guilds,
+		// /world-events, /fieldoffices) and /api/v1/supply, /api/v1/research,
+		// /api/v1/kgraph are deliberately NOT documented here yet — internal/
+		// experimental surfaces, not yet part of the public contract this
+		// playground exists for. Disclosed gap, not an oversight; see
+		// EMILY/BACKLOG.md SECTION 153 for the original stale-spec finding this
+		// pass only partially closes.
 		// ── Event stream ──────────────────────────────────────────────────────
 		"/api/v1/stream/user-events": map[string]any{
 			"get": map[string]any{
