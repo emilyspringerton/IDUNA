@@ -19,6 +19,7 @@ import (
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
+	"iduna/internal/statuspage"
 	"iduna/internal/store"
 	"iduna/internal/userlog"
 	"iduna/internal/util"
@@ -186,6 +187,26 @@ func main() {
 	}
 	blogH := &handlers.BlogHandler{Store: blogStore, Renderer: &blog.Renderer{OutputDir: blogOutputDir}}
 
+	// Status page — real health checks against the services that actually
+	// have a reachable public endpoint (see statuspage.DefaultTargets doc
+	// for why emily-agent/SHANKPIT are deliberately excluded, not shown as
+	// permanently "down"). Own SQLite file; background checker polls every
+	// 60s starting immediately at startup.
+	statusDBPath := os.Getenv("STATUS_DB_PATH")
+	if statusDBPath == "" {
+		statusDBPath = "./var/statuspage.db"
+	}
+	statusStore, err := statuspage.Open(statusDBPath)
+	if err != nil {
+		log.Fatalf("statuspage: failed to open store: %v", err)
+	}
+	statusTargets := statuspage.DefaultTargets()
+	statusChecker := statuspage.NewChecker(statusStore, statusTargets)
+	go statusChecker.Run(context.Background(), 60*time.Second, func(err error) {
+		log.Printf("[statuspage] %v", err)
+	})
+	statusH := &handlers.StatusPageHandler{Store: statusStore, Targets: statusTargets}
+
 	mux := http.NewServeMux()
 
 	// Existing device routes.
@@ -255,6 +276,8 @@ func main() {
 	// blog.write; reading is public.
 	blogCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("blog.write")(http.HandlerFunc(blogH.Create)))
 	blogH.RegisterRoutes(mux, blogCreateProtected)
+
+	mux.Handle("/api/v1/status", statusH)
 
 	// Admin login/logout — public (no auth required).
 	mux.Handle("/admin/login", adminLoginH)

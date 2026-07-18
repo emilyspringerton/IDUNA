@@ -1,0 +1,179 @@
+// Package statuspage implements a real, self-reported status page for the
+// public EINHORN_INDUSTRIAL services reachable from this box.
+//
+// Honest scope, deliberately: only services with a real, currently-reachable
+// public-facing endpoint are checked. emily-agent (daemon mode has no HTTP
+// server) and SHANKPIT (pre-launch, no public server yet) are excluded
+// rather than shown as permanently "down" — that would misrepresent a
+// structural fact (no endpoint exists) as an outage.
+//
+// Known limitation, disclosed on the page itself rather than hidden: this
+// checker runs on the same box as everything it checks. If the box itself
+// goes down, the status page goes down with it — it cannot report "the
+// whole system is down" during a real host-level outage. A page like this
+// is a self-report, not independent third-party monitoring.
+package statuspage
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"net/http"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type Target struct {
+	Name     string // internal key, e.g. "iduna"
+	Label    string // public-facing label, e.g. "Trust & Identity API"
+	CheckURL string
+}
+
+// DefaultTargets returns the services with a real, currently-reachable
+// health/liveness endpoint, verified live 2026-07-18.
+func DefaultTargets() []Target {
+	return []Target{
+		{Name: "iduna", Label: "Trust & Identity API", CheckURL: "http://localhost:8080/health"},
+		{Name: "newssite", Label: "FatBaby News", CheckURL: "http://localhost:8082/healthz"},
+		{Name: "signalapi", Label: "FatBaby Signal API", CheckURL: "http://localhost:9091/v1/governance-signals?limit=1"},
+	}
+}
+
+type Store struct {
+	db *sql.DB
+}
+
+const schema = `
+CREATE TABLE IF NOT EXISTS checks (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	target     TEXT     NOT NULL,
+	up         INTEGER  NOT NULL,
+	latency_ms INTEGER  NOT NULL,
+	checked_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_checks_target_time ON checks(target, checked_at);
+`
+
+func Open(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return nil, fmt.Errorf("open statuspage db: %w", err)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate statuspage db: %w", err)
+	}
+	return &Store{db: db}, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) record(target string, up bool, latencyMS int64) error {
+	upInt := 0
+	if up {
+		upInt = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO checks (target, up, latency_ms, checked_at) VALUES (?, ?, ?, ?)`,
+		target, upInt, latencyMS, time.Now().UTC(),
+	)
+	return err
+}
+
+// LatestStatus returns the most recent check result for a target, or
+// (false, false) if no check has ever run.
+func (s *Store) LatestStatus(target string) (up bool, found bool) {
+	var upInt int
+	err := s.db.QueryRow(
+		`SELECT up FROM checks WHERE target = ? ORDER BY checked_at DESC LIMIT 1`, target,
+	).Scan(&upInt)
+	if err != nil {
+		return false, false
+	}
+	return upInt == 1, true
+}
+
+// LatestCheckedAt returns when a target was last checked.
+func (s *Store) LatestCheckedAt(target string) (time.Time, bool) {
+	var t time.Time
+	err := s.db.QueryRow(
+		`SELECT checked_at FROM checks WHERE target = ? ORDER BY checked_at DESC LIMIT 1`, target,
+	).Scan(&t)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// UptimePercent computes real uptime over the given window from stored
+// check history — the actual "history" data source (see package doc): every
+// check ever performed is retained, so this is a live-computed percentage,
+// not a placeholder.
+func (s *Store) UptimePercent(target string, since time.Time) (pct float64, sampleCount int) {
+	var total, up int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(up), 0) FROM checks WHERE target = ? AND checked_at >= ?`,
+		target, since,
+	).Scan(&total, &up)
+	if err != nil || total == 0 {
+		return 0, 0
+	}
+	return float64(up) / float64(total) * 100.0, total
+}
+
+// Checker periodically pings every target and records the result.
+type Checker struct {
+	Store   *Store
+	Targets []Target
+	Client  *http.Client
+}
+
+func NewChecker(store *Store, targets []Target) *Checker {
+	return &Checker{
+		Store:   store,
+		Targets: targets,
+		Client:  &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+// Run polls every target every interval until ctx is done. Errors recording
+// a check are logged by the caller-supplied onError, if any — never fatal,
+// this is a monitoring loop, not a critical path.
+func (c *Checker) Run(ctx context.Context, interval time.Duration, onError func(error)) {
+	c.checkAll(ctx, onError)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.checkAll(ctx, onError)
+		}
+	}
+}
+
+func (c *Checker) checkAll(ctx context.Context, onError func(error)) {
+	for _, t := range c.Targets {
+		up, latency := c.checkOne(ctx, t)
+		if err := c.Store.record(t.Name, up, latency.Milliseconds()); err != nil && onError != nil {
+			onError(fmt.Errorf("statuspage: record %s: %w", t.Name, err))
+		}
+	}
+}
+
+func (c *Checker) checkOne(ctx context.Context, t Target) (up bool, latency time.Duration) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.CheckURL, nil)
+	if err != nil {
+		return false, 0
+	}
+	start := time.Now()
+	resp, err := c.Client.Do(req)
+	latency = time.Since(start)
+	if err != nil {
+		return false, latency
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300, latency
+}
