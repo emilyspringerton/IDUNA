@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-07-18 (8)
+- docs(openapi): `GET /api/v1/openapi.json` (backing okemily.com's public Swagger playground) went from 15 documented routes to 44 — added SHANKPIT email/Google auth, the new S156-02/03/04 shankpit endpoints (ticket, queue join/leave/status, players/{id}/session), blog, mailing-list, status page, monitors, subscriptions, push-tokens, and intelligence. Previously flagged as known-stale (SECTION 153). Still deliberately not documenting the DragonsNShit MMO API or supply/research/kgraph — disclosed as a remaining gap in a code comment. Verified live against both the local and public (okemily.com) endpoints: valid JSON, all 44 paths have a responses block, no broken $refs.
+
 ## 2026-07-18 (7)
 - feat(shankpit/S156-04): new `shankpit.match.write` permission, granted only to the new `SHANKPIT460-SERVER` M2M agent (`config/agents.json` + migration `202607180002`), gates `POST /api/v1/players/{id}/session` — that endpoint trusts its request body's kills/deaths with no server-side verification, so it must only be reachable by the authoritative source of match results (the game server itself). Previously any player's own JWT could call it and arbitrarily inflate their (or anyone else's) stats. Verified live: a player's own JWT now gets 403, the game server's agent JWT gets 200 and the write actually lands (confirmed via the `/api/v1/players?sort=kills` leaderboard).
 
