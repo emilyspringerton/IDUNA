@@ -14,6 +14,7 @@ import (
 
 	"iduna/internal/auth/device"
 	authjwt "iduna/internal/auth/jwt"
+	"iduna/internal/blog"
 	"iduna/internal/drive"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
@@ -167,6 +168,24 @@ func main() {
 	}
 	log.Printf("mailinglist: vault locked — run cmd/mailing-list-unlock to accept signups")
 
+	// Blog — static HTML, no PHP/MySQL (this box had ~400MB free RAM and a
+	// nearly-full swap when this was built; a second WordPress+MySQL stack
+	// risked the exact OOM-kill incident SECTION 152 fixed). Own SQLite file,
+	// rendered directly to /var/www/okemily/blog on every publish.
+	blogDBPath := os.Getenv("BLOG_DB_PATH")
+	if blogDBPath == "" {
+		blogDBPath = "./var/blog.db"
+	}
+	blogStore, err := blog.Open(blogDBPath)
+	if err != nil {
+		log.Fatalf("blog: failed to open store: %v", err)
+	}
+	blogOutputDir := os.Getenv("BLOG_OUTPUT_DIR")
+	if blogOutputDir == "" {
+		blogOutputDir = "/var/www/okemily/blog"
+	}
+	blogH := &handlers.BlogHandler{Store: blogStore, Renderer: &blog.Renderer{OutputDir: blogOutputDir}}
+
 	mux := http.NewServeMux()
 
 	// Existing device routes.
@@ -231,6 +250,11 @@ func main() {
 	// there's no human JWT session for an operator running a CLI on the box.
 	mailingListH.Limiter = middleware.NewIPRateLimiter(5)
 	mailingListH.Register(mux)
+
+	// Blog — posting (programmatic or manual, same endpoint) requires
+	// blog.write; reading is public.
+	blogCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("blog.write")(http.HandlerFunc(blogH.Create)))
+	blogH.RegisterRoutes(mux, blogCreateProtected)
 
 	// Admin login/logout — public (no auth required).
 	mux.Handle("/admin/login", adminLoginH)
