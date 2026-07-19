@@ -66,13 +66,12 @@ type Target struct {
 // timer is what's continuously "active" (waiting to fire), so checking the
 // service would show "down" ~99.9% of the time despite working correctly.
 //
-// Deliberately still NOT included: form4-watcher and schd13-watcher. Both
-// hang indefinitely with zero log output on a plain one-shot run (found
-// live, not assumed) -- a real bug, not just missing supervision. Starting
-// them under systemd would just loop-restart a hung process forever;
-// adding a status target for them would then honestly report "down" for
-// the wrong reason. Fix the hang first (PRRJECT_FATBABY, untracked as of
-// this writing), then add both here.
+// Correction, same day: form4-watcher and schd13-watcher were believed to
+// hang (a `timeout N ... | tail` test produced zero output) and left out.
+// A longer, unpiped run proved both work correctly -- a full 50-ticker/
+// 90-day-lookback pass just genuinely takes minutes with no per-ticker
+// progress logging, which looked identical to a hang. Logging fixed
+// (PRRJECT_FATBABY), both now supervised and included below.
 func DefaultTargets() []Target {
 	return []Target{
 		{Name: "iduna", Label: "Trust & Identity API", CheckURL: "http://localhost:8080/health"},
@@ -90,6 +89,8 @@ func DefaultTargets() []Target {
 		{Name: "guidance-watcher", Label: "FatBaby Guidance Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-guidance-watcher.service"},
 		{Name: "nt-watcher", Label: "FatBaby NT Late-Filing Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-nt-watcher.service"},
 		{Name: "earnings-calendar", Label: "FatBaby Earnings Calendar", Type: CheckSystemdUnit, Unit: "fatbaby-earnings-calendar.service"},
+		{Name: "form4-watcher", Label: "FatBaby Form 4 Insider Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-form4-watcher.service"},
+		{Name: "schd13-watcher", Label: "FatBaby 13D/13G Ownership Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-schd13-watcher.service"},
 		{Name: "shankpit460", Label: "SHANKPIT-460 Game Server", Type: CheckUDPPort, UDPPort: 6969},
 		{Name: "shankpit460-emily-bot", Label: "SHANKPIT-460 Fill Bot", Type: CheckSystemdUnit, Unit: "shankpit460-emily-bot.service"},
 		{Name: "market-data-watcher", Label: "FatBaby Market Data (Yahoo OHLCV)", Type: CheckSystemdUnit, Unit: "fatbaby-market-data-watcher.service"},
