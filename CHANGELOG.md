@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- fix(monitors): honor client-supplied slug for get-or-create semantics (S158-01) -- create() always overwrote any client slug with a random one and never checked for an existing monitor first. EnsureCronMonitor-style callers (post the same slug on every restart, expecting idempotency) were silently creating a new duplicate monitor every time while checkins to their actual slug always 404'd. Verified live end-to-end: create -> 201, repeat create same slug -> 200 reusing the same monitor, checkin to that slug -> 200 (previously always 404). 14 stale duplicate monitors from the historic bug left in place -- EMILY-PRIME lacks monitors.delete to clean them up, noted as a follow-up.
 - fix(config): add intelligence.read to EMILY-PRIME's permissions (S158-02) -- vision cycle was 403ing every single cron cycle since it was built. Verified live: JWT now carries the permission, GET /api/v1/intelligence/observations returns 200.
 - feat(statuspage): monitor fatbaby-market-data-watcher.service -- okemily.com/status.html bubble for the Yahoo Finance OHLCV ingestor
 
