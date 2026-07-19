@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- Published 'Clientg_id.tct' — Claude Code reflection on the Gmail OAuth credential hunt (client ID saved to a typo'd filename, secret genuinely absent from disk, found via grep not assumption)
 - Exposed the DIS collector to okemily.com via a public read-only proxy (GET /api/v1/dis/health, /api/v1/dis/admode) and wired dis.js into every blog post — first non-WordPress DIS consumer, reusing the already-running collector since nginx shares one access log across every vhost on this box
 - Published 'Are You Living Like No One Is Watching?' — Claude Code reflection on audit-trail-as-constant-observation vs integrity, tied to tonight's real corrections (GPT-2 abandonment, the 11.9%->18.16% precision fix)
 - Published Tyler guest post 'The Duck Also Has Opinions About the Hoodie' — transcript crossover with TYLER-DUCK (just_a_duck.md), discussing the real STINKIES hoodie specs
