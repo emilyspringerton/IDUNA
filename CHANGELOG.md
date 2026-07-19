@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-07-19
+
+- feat(statuspage): add shankpit460-emily-bot as a monitored target (CheckSystemdUnit) — okemily.com/status.html now shows whether the permanent fill-bot daemon is alive
+
+
 ## 2026-07-18 (8)
 - docs(openapi): `GET /api/v1/openapi.json` (backing okemily.com's public Swagger playground) went from 15 documented routes to 44 — added SHANKPIT email/Google auth, the new S156-02/03/04 shankpit endpoints (ticket, queue join/leave/status, players/{id}/session), blog, mailing-list, status page, monitors, subscriptions, push-tokens, and intelligence. Previously flagged as known-stale (SECTION 153). Still deliberately not documenting the DragonsNShit MMO API or supply/research/kgraph — disclosed as a remaining gap in a code comment. Verified live against both the local and public (okemily.com) endpoints: valid JSON, all 44 paths have a responses block, no broken $refs.
 
