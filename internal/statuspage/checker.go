@@ -49,17 +49,30 @@ type Target struct {
 // FatBaby's headless pipeline pollers (secwatch, prwatch, prwatch-body,
 // processor, eps-reconciler) have no HTTP or UDP surface of their own — the
 // only real, honest liveness signal available for them is systemd itself,
-// since all five now run under real, currently-enabled user-scope units
+// since all now run under real, currently-enabled user-scope units
 // (ops/systemd/fatbaby-*.service in PRRJECT_FATBABY).
 //
-// Deliberately NOT included, per this package's own scope discipline (see
-// package doc): entity-graph and eps-processor. Both currently run as
-// unsupervised `go run` processes — entity-graph's unit
-// (fatbaby-entity-graph.service) exists but is disabled pending its Phase 2
-// checkpoint work (EMILY/BACKLOG.md SECTION 1), and eps-processor has no
-// unit at all yet. Checking their (inactive) units would report them "down"
-// while they're actually running — the exact misrepresentation this
-// package's doc warns against. Add them once real supervision lands.
+// Updated 2026-07-19 (founder: "ensure we have ok emily status page bubbles
+// for all fatbaby process and sub process") — audited every cmd/ binary in
+// PRRJECT_FATBABY against real systemd coverage. entity-graph and
+// eps-processor (previously excluded here as unsupervised `go run`
+// processes) now have real units; six more watchers that had NO
+// supervision at all (not even `go run`) got units for the first time:
+// dividend-watcher, buyback-watcher, guidance-watcher, nt-watcher, and
+// earnings-calendar (which had been silently dead since 2026-06-17 --
+// root cause of stale ticker-page earnings dates). movers-watcher is
+// checked on its *.timer*, not its *.service* -- the service is a oneshot
+// that's only "active" for the seconds it takes to run once a day; the
+// timer is what's continuously "active" (waiting to fire), so checking the
+// service would show "down" ~99.9% of the time despite working correctly.
+//
+// Deliberately still NOT included: form4-watcher and schd13-watcher. Both
+// hang indefinitely with zero log output on a plain one-shot run (found
+// live, not assumed) -- a real bug, not just missing supervision. Starting
+// them under systemd would just loop-restart a hung process forever;
+// adding a status target for them would then honestly report "down" for
+// the wrong reason. Fix the hang first (PRRJECT_FATBABY, untracked as of
+// this writing), then add both here.
 func DefaultTargets() []Target {
 	return []Target{
 		{Name: "iduna", Label: "Trust & Identity API", CheckURL: "http://localhost:8080/health"},
@@ -69,10 +82,18 @@ func DefaultTargets() []Target {
 		{Name: "prwatch", Label: "FatBaby PR Newswire Poller", Type: CheckSystemdUnit, Unit: "fatbaby-prwatch.service"},
 		{Name: "prwatch-body", Label: "FatBaby PR Body Fetcher", Type: CheckSystemdUnit, Unit: "fatbaby-prwatch-body.service"},
 		{Name: "processor", Label: "FatBaby Signal Processor", Type: CheckSystemdUnit, Unit: "fatbaby-processor.service"},
+		{Name: "eps-processor", Label: "FatBaby EPS Extractor", Type: CheckSystemdUnit, Unit: "fatbaby-eps-processor.service"},
 		{Name: "eps-reconciler", Label: "FatBaby EPS Reconciler", Type: CheckSystemdUnit, Unit: "fatbaby-eps-reconciler.service"},
+		{Name: "entity-graph", Label: "FatBaby Entity Graph", Type: CheckSystemdUnit, Unit: "fatbaby-entity-graph.service"},
+		{Name: "dividend-watcher", Label: "FatBaby Dividend Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-dividend-watcher.service"},
+		{Name: "buyback-watcher", Label: "FatBaby Buyback Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-buyback-watcher.service"},
+		{Name: "guidance-watcher", Label: "FatBaby Guidance Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-guidance-watcher.service"},
+		{Name: "nt-watcher", Label: "FatBaby NT Late-Filing Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-nt-watcher.service"},
+		{Name: "earnings-calendar", Label: "FatBaby Earnings Calendar", Type: CheckSystemdUnit, Unit: "fatbaby-earnings-calendar.service"},
 		{Name: "shankpit460", Label: "SHANKPIT-460 Game Server", Type: CheckUDPPort, UDPPort: 6969},
 		{Name: "shankpit460-emily-bot", Label: "SHANKPIT-460 Fill Bot", Type: CheckSystemdUnit, Unit: "shankpit460-emily-bot.service"},
 		{Name: "market-data-watcher", Label: "FatBaby Market Data (Yahoo OHLCV)", Type: CheckSystemdUnit, Unit: "fatbaby-market-data-watcher.service"},
+		{Name: "movers-watcher", Label: "FatBaby Stocks on the Move", Type: CheckSystemdUnit, Unit: "fatbaby-movers-watcher.timer"},
 	}
 }
 
