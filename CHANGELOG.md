@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- fix(config): add intelligence.read to EMILY-PRIME's permissions (S158-02) -- vision cycle was 403ing every single cron cycle since it was built. Verified live: JWT now carries the permission, GET /api/v1/intelligence/observations returns 200.
 - feat(statuspage): monitor fatbaby-market-data-watcher.service -- okemily.com/status.html bubble for the Yahoo Finance OHLCV ingestor
 
 - feat(statuspage): add shankpit460-emily-bot as a monitored target (CheckSystemdUnit) — okemily.com/status.html now shows whether the permanent fill-bot daemon is alive
