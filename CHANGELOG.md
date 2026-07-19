@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- Status page expanded from 11 to 19 monitored FatBaby processes -- added entity-graph, eps-processor, dividend-watcher, buyback-watcher, guidance-watcher, nt-watcher, earnings-calendar, movers-watcher. Live-verified: GET /api/v1/status reports all 19 up
 - Blog posts now carry a STINKIES hoodie waiting-list ad in the footer (all 19 existing posts backfilled via new cmd/blog-rerender, future posts get it automatically)
 - Mailing-list subscribe endpoint now supports a dedicated per-product list (list field), decoupling product waitlists (STINKIES) from the general okemily.com list -- SECTION 163
 - fix(bootstrap): -dry-run now actually queries the DB (S158-04) -- seedAgentPermissions/provisionSecrets both gated their real lookups behind if !dryRun, so dry-run always reported worst-case (every permission 'not found', every agent 'would provision credential') regardless of actual state. Fixed: reads always run, only the writes are gated. 5 new tests against an in-memory SQLite DB. Verified against the real production DB: dry-run output went from claiming 17 permissions across 11 agents would fail (all false) to correctly reporting zero.
