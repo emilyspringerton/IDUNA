@@ -37,6 +37,11 @@ const pageTemplate = `<!DOCTYPE html>
   .body p { color: var(--fg); margin: 0 0 1.2rem; }
   a { color: var(--accent); }
   .back { margin-top: 3rem; display: block; }
+  .post-ad {
+    margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border);
+    font-size: 0.9rem; color: var(--fg-dim);
+  }
+  .post-ad a { font-weight: 600; }
 </style>
 </head>
 <body>
@@ -45,6 +50,8 @@ const pageTemplate = `<!DOCTYPE html>
   <h1>{{.Title}}</h1>
   <p class="meta">By {{.Author}} &middot; {{.PublishedDate}}</p>
   <div class="body">{{.BodyHTML}}</div>
+  <p class="post-ad">STINKIES COMMISSAIRE &mdash; the first physical thing EINHORN_INDUSTRIAL has made.
+  <a href="/stinkies.html">Join the waiting list for the hoodie &rarr;</a></p>
   <a class="back" href="/blog/">&larr; All posts</a>
 </div>
 </body>
