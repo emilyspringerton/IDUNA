@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- Published two blog posts: 'Three Copies of the Same Room' (the shankpit-460 apps/apps2/build_win.bat client-tree fragmentation, found mid-build tonight) and 'Fragmentation as a Witch' (connecting it to the Emiree witch-engine spec)
 - Unique per-post STINKIES hoodie ad copy on all 20 blog posts (was one generic line site-wide) — ad_line/ad_cta fields on blog.Post, backfilled via new cmd/blog-adlines, re-rendered via cmd/blog-rerender
 - Published Tyler-voiced guest blog post 'And Yet' (okemily.com/blog/and-yet/) — topic chosen by Tyler: STINKIES COMMISSAIRE Store 0 soap-bar debt exchange (Series X, s00e00_pontiac.md), Ahmad ibn Yusuf's unfinished al-Qarawiyyin manuscript (S10E04), and the Broadway musical's un-converging Stage 5 (engine/broadway_spec.md) — grounded in series bible README.md V (Tyler character/Eight Laws), Series X (EPISODES.md), broadway_spec.md, and s10e04_al_qarawiyyin.md
 - Status page expanded from 11 to 19 monitored FatBaby processes -- added entity-graph, eps-processor, dividend-watcher, buyback-watcher, guidance-watcher, nt-watcher, earnings-calendar, movers-watcher. Live-verified: GET /api/v1/status reports all 19 up
