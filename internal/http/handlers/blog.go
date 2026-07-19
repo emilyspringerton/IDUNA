@@ -40,6 +40,7 @@ type createPostRequest struct {
 	Body   string `json:"body"`
 	AdLine string `json:"ad_line"` // optional; falls back to a default STINKIES line if empty
 	AdCTA  string `json:"ad_cta"`  // optional; falls back to a default CTA if empty
+	AdHref string `json:"ad_href"` // optional; falls back to /stinkies.html if empty
 }
 
 // Create handles POST /api/v1/blog/posts — exported so main.go can wrap it
@@ -75,6 +76,7 @@ func (h *BlogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Body:        req.Body,
 		AdLine:      strings.TrimSpace(req.AdLine),
 		AdCTA:       strings.TrimSpace(req.AdCTA),
+		AdHref:      strings.TrimSpace(req.AdHref),
 		PublishedAt: time.Now().UTC(),
 	}
 	id, err := h.Store.Create(post)

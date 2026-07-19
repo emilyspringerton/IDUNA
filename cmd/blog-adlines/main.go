@@ -93,7 +93,7 @@ func main() {
 	defer store.Close()
 
 	for _, e := range entries {
-		if err := store.UpdateAdLine(e.slug, e.adLine, e.adCTA); err != nil {
+		if err := store.UpdateAdLine(e.slug, e.adLine, e.adCTA, ""); err != nil {
 			log.Fatalf("update %s: %v", e.slug, err)
 		}
 		log.Printf("updated %s", e.slug)

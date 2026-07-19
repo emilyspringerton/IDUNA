@@ -171,7 +171,8 @@ func main() {
 		// Mailchimp's dashboard and sets the env var — signups still record
 		// fine in IDUNA's own store either way (see mailinglist.go).
 		MailchimpLists: map[string]string{
-			"stinkies": os.Getenv("MAILCHIMP_STINKIES_LIST_ID"),
+			"stinkies":   os.Getenv("MAILCHIMP_STINKIES_LIST_ID"),
+			"freehoodie": os.Getenv("MAILCHIMP_FREEHOODIE_LIST_ID"),
 		},
 	}
 	log.Printf("mailinglist: vault locked — run cmd/mailing-list-unlock to accept signups")

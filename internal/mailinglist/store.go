@@ -126,3 +126,13 @@ func (s *Store) MarkMailchimpSynced(id int64) error {
 	_, err := s.db.Exec(`UPDATE subscribers SET mailchimp_synced = 1 WHERE id = ?`, id)
 	return err
 }
+
+// CountBySource returns how many subscribers exist for a given source tag
+// (e.g. "freehoodie", "stinkies"). Reads only the plaintext source column —
+// never touches email_ciphertext, works even while the vault is locked, and
+// is safe to expose publicly (a count reveals no PII).
+func (s *Store) CountBySource(source string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM subscribers WHERE source = ?`, source).Scan(&n)
+	return n, err
+}

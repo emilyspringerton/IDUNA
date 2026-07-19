@@ -28,6 +28,7 @@ type Post struct {
 	Body        string // plain text; render.go does minimal paragraph formatting
 	AdLine      string // per-post STINKIES hoodie ad flavor text; falls back to a default if empty
 	AdCTA       string // per-post link text for the ad, e.g. "Join the waiting list →"; falls back if empty
+	AdHref      string // per-post ad link target, e.g. "/free-hoodie.html"; falls back to "/stinkies.html" if empty
 	PublishedAt time.Time
 	CreatedAt   time.Time
 }
@@ -82,6 +83,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := addColumnIfMissing(db, "ad_href", `ALTER TABLE posts ADD COLUMN ad_href TEXT NOT NULL DEFAULT ''`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 
@@ -94,8 +99,8 @@ func (s *Store) Create(p Post) (int64, error) {
 		p.PublishedAt = time.Now().UTC()
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO posts (slug, title, author, body, ad_line, ad_cta, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.Slug, p.Title, p.Author, p.Body, p.AdLine, p.AdCTA, p.PublishedAt,
+		`INSERT INTO posts (slug, title, author, body, ad_line, ad_cta, ad_href, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Slug, p.Title, p.Author, p.Body, p.AdLine, p.AdCTA, p.AdHref, p.PublishedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -105,7 +110,7 @@ func (s *Store) Create(p Post) (int64, error) {
 
 // List returns all posts, most recent first.
 func (s *Store) List() ([]Post, error) {
-	rows, err := s.db.Query(`SELECT id, slug, title, author, body, ad_line, ad_cta, published_at, created_at FROM posts ORDER BY published_at DESC`)
+	rows, err := s.db.Query(`SELECT id, slug, title, author, body, ad_line, ad_cta, ad_href, published_at, created_at FROM posts ORDER BY published_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +119,7 @@ func (s *Store) List() ([]Post, error) {
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Title, &p.Author, &p.Body, &p.AdLine, &p.AdCTA, &p.PublishedAt, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Title, &p.Author, &p.Body, &p.AdLine, &p.AdCTA, &p.AdHref, &p.PublishedAt, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		posts = append(posts, p)
@@ -126,15 +131,16 @@ func (s *Store) List() ([]Post, error) {
 func (s *Store) GetBySlug(slug string) (Post, error) {
 	var p Post
 	err := s.db.QueryRow(
-		`SELECT id, slug, title, author, body, ad_line, ad_cta, published_at, created_at FROM posts WHERE slug = ?`, slug,
-	).Scan(&p.ID, &p.Slug, &p.Title, &p.Author, &p.Body, &p.AdLine, &p.AdCTA, &p.PublishedAt, &p.CreatedAt)
+		`SELECT id, slug, title, author, body, ad_line, ad_cta, ad_href, published_at, created_at FROM posts WHERE slug = ?`, slug,
+	).Scan(&p.ID, &p.Slug, &p.Title, &p.Author, &p.Body, &p.AdLine, &p.AdCTA, &p.AdHref, &p.PublishedAt, &p.CreatedAt)
 	return p, err
 }
 
-// Update sets ad_line/ad_cta for an existing post by slug. Used by the
-// one-off backfill for already-published posts (see cmd/blog-adlines) — the
-// public API has no post-edit endpoint, this is intentionally narrow.
-func (s *Store) UpdateAdLine(slug, adLine, adCTA string) error {
-	_, err := s.db.Exec(`UPDATE posts SET ad_line = ?, ad_cta = ? WHERE slug = ?`, adLine, adCTA, slug)
+// UpdateAdLine sets ad_line/ad_cta/ad_href for an existing post by slug.
+// Used by the one-off backfill for already-published posts (see
+// cmd/blog-adlines) — the public API has no post-edit endpoint, this is
+// intentionally narrow.
+func (s *Store) UpdateAdLine(slug, adLine, adCTA, adHref string) error {
+	_, err := s.db.Exec(`UPDATE posts SET ad_line = ?, ad_cta = ?, ad_href = ? WHERE slug = ?`, adLine, adCTA, adHref, slug)
 	return err
 }

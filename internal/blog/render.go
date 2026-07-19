@@ -50,7 +50,7 @@ const pageTemplate = `<!DOCTYPE html>
   <h1>{{.Title}}</h1>
   <p class="meta">By {{.Author}} &middot; {{.PublishedDate}}</p>
   <div class="body">{{.BodyHTML}}</div>
-  <p class="post-ad">{{.AdLine}} <a href="/stinkies.html">{{.AdCTA}}</a></p>
+  <p class="post-ad">{{.AdLine}} <a href="{{.AdHref}}">{{.AdCTA}}</a></p>
   <a class="back" href="/blog/">&larr; All posts</a>
 </div>
 </body>
@@ -101,6 +101,7 @@ type postView struct {
 	BodyHTML      template.HTML
 	AdLine        string
 	AdCTA         string
+	AdHref        string
 }
 
 // Default ad copy for posts that don't set their own (e.g. published before
@@ -109,6 +110,7 @@ type postView struct {
 const (
 	defaultAdLine = "STINKIES COMMISSAIRE — the first physical thing EINHORN_INDUSTRIAL has made."
 	defaultAdCTA  = "Join the waiting list for the hoodie →"
+	defaultAdHref = "/stinkies.html"
 )
 
 type indexView struct {
@@ -138,12 +140,15 @@ func toParagraphs(body string) template.HTML {
 }
 
 func toView(p Post) postView {
-	adLine, adCTA := p.AdLine, p.AdCTA
+	adLine, adCTA, adHref := p.AdLine, p.AdCTA, p.AdHref
 	if adLine == "" {
 		adLine = defaultAdLine
 	}
 	if adCTA == "" {
 		adCTA = defaultAdCTA
+	}
+	if adHref == "" {
+		adHref = defaultAdHref
 	}
 	return postView{
 		Slug:          p.Slug,
@@ -153,6 +158,7 @@ func toView(p Post) postView {
 		BodyHTML:      toParagraphs(p.Body),
 		AdLine:        adLine,
 		AdCTA:         adCTA,
+		AdHref:        adHref,
 	}
 }
 

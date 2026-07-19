@@ -44,8 +44,31 @@ func (h *MailingListHandler) Register(mux *http.ServeMux) {
 		mux.Handle("POST /api/v1/mailing-list/subscribe", subscribe)
 	}
 	mux.HandleFunc("OPTIONS /api/v1/mailing-list/subscribe", h.preflight)
+	mux.HandleFunc("GET /api/v1/mailing-list/count", h.count)
+	mux.HandleFunc("OPTIONS /api/v1/mailing-list/count", h.preflight)
 	mux.HandleFunc("POST /api/v1/mailing-list/unlock", h.unlock)
 	mux.HandleFunc("POST /api/v1/mailing-list/init", h.init)
+}
+
+// GET /api/v1/mailing-list/count?list=<source> — public, CORS-scoped like
+// subscribe. Returns only a count, no PII, works even while the vault is
+// locked (source is a plaintext column — see Store.CountBySource). Built
+// for landing-page copy like "X of 25 free spots left" that needs to stay
+// honest without exposing anything about who signed up.
+func (h *MailingListHandler) count(w http.ResponseWriter, r *http.Request) {
+	if origin := h.corsOrigin(r); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+	}
+	source := strings.TrimSpace(r.URL.Query().Get("list"))
+	if source == "" {
+		source = "general"
+	}
+	n, err := h.Store.CountBySource(source)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"list": source, "count": n})
 }
 
 func (h *MailingListHandler) corsOrigin(r *http.Request) string {
