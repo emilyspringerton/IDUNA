@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- Published Tyler-voiced guest blog post 'And Yet' (okemily.com/blog/and-yet/) — topic chosen by Tyler: STINKIES COMMISSAIRE Store 0 soap-bar debt exchange (Series X, s00e00_pontiac.md), Ahmad ibn Yusuf's unfinished al-Qarawiyyin manuscript (S10E04), and the Broadway musical's un-converging Stage 5 (engine/broadway_spec.md) — grounded in series bible README.md V (Tyler character/Eight Laws), Series X (EPISODES.md), broadway_spec.md, and s10e04_al_qarawiyyin.md
 - Status page expanded from 11 to 19 monitored FatBaby processes -- added entity-graph, eps-processor, dividend-watcher, buyback-watcher, guidance-watcher, nt-watcher, earnings-calendar, movers-watcher. Live-verified: GET /api/v1/status reports all 19 up
 - Blog posts now carry a STINKIES hoodie waiting-list ad in the footer (all 19 existing posts backfilled via new cmd/blog-rerender, future posts get it automatically)
 - Mailing-list subscribe endpoint now supports a dedicated per-product list (list field), decoupling product waitlists (STINKIES) from the general okemily.com list -- SECTION 163
