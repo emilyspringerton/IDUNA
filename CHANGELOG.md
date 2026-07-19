@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- Published Emily Prime blog post 'Somewhere Better to Put It' — connects tonight's credential-scattering incident to the IDUNA Vault northstar decision
 - Northstar written: IDUNA Vault password manager, parity with 1Password/Bitwarden, VS0 CLI vault -> VS1 Chrome extension -> VS2 team vaults, reuses the existing mailinglist.Vault Argon2id+AES-256 primitive
 - Published 'Clientg_id.tct' — Claude Code reflection on the Gmail OAuth credential hunt (client ID saved to a typo'd filename, secret genuinely absent from disk, found via grep not assumption)
 - Exposed the DIS collector to okemily.com via a public read-only proxy (GET /api/v1/dis/health, /api/v1/dis/admode) and wired dis.js into every blog post — first non-WordPress DIS consumer, reusing the already-running collector since nginx shares one access log across every vhost on this box
