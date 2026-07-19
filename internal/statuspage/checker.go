@@ -71,6 +71,7 @@ func DefaultTargets() []Target {
 		{Name: "processor", Label: "FatBaby Signal Processor", Type: CheckSystemdUnit, Unit: "fatbaby-processor.service"},
 		{Name: "eps-reconciler", Label: "FatBaby EPS Reconciler", Type: CheckSystemdUnit, Unit: "fatbaby-eps-reconciler.service"},
 		{Name: "shankpit460", Label: "SHANKPIT-460 Game Server", Type: CheckUDPPort, UDPPort: 6969},
+		{Name: "shankpit460-emily-bot", Label: "SHANKPIT-460 Fill Bot", Type: CheckSystemdUnit, Unit: "shankpit460-emily-bot.service"},
 	}
 }
 
