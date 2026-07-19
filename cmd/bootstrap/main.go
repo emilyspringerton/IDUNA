@@ -341,24 +341,26 @@ func loadAgentsConfig(path string) (*agentsConfig, error) {
 // ── Permission seeding ────────────────────────────────────────────────────────
 
 func seedAgentPermissions(ctx context.Context, db *sql.DB, cfg *agentsConfig, dryRun bool, logger *log.Logger) error {
-	// Build permission name → ID map from DB.
+	// Build permission name → ID map from DB. This read always runs, dry-run
+	// or not — a dry-run that skips its own lookups can only ever report
+	// worst-case ("not found") regardless of real state, which is worse
+	// than useless: it's actively misleading. Only the writes below are
+	// gated behind dryRun.
 	permMap := map[string]string{}
-	if !dryRun {
-		rows, err := db.QueryContext(ctx, `SELECT id, name FROM permissions`)
-		if err != nil {
-			return fmt.Errorf("load permissions: %w", err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, name string
-			if err := rows.Scan(&id, &name); err != nil {
-				return err
-			}
-			permMap[name] = id
-		}
-		if err := rows.Err(); err != nil {
+	rows, err := db.QueryContext(ctx, `SELECT id, name FROM permissions`)
+	if err != nil {
+		return fmt.Errorf("load permissions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
 			return err
 		}
+		permMap[name] = id
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 
 	for _, a := range cfg.Agents {
@@ -407,21 +409,23 @@ func provisionSecrets(ctx context.Context, db *sql.DB, cfg *agentsConfig, rotate
 	var secrets []agentSecret
 
 	for _, a := range cfg.Agents {
-		// Check whether agent already has a credential.
-		hasCredential := false
-		if !dryRun {
-			var hash sql.NullString
-			err := db.QueryRowContext(ctx,
-				`SELECT api_key_hash FROM agents WHERE id = ?`, a.ID).Scan(&hash)
-			if err == sql.ErrNoRows {
-				logger.Printf("  ✗ %s (ID %s) not found in agents table — did migrations run?", a.Name, a.ID)
-				continue
-			}
-			if err != nil {
-				return nil, fmt.Errorf("check credential for %s: %w", a.Name, err)
-			}
-			hasCredential = hash.Valid && hash.String != ""
+		// Check whether agent already has a credential. This read always
+		// runs, dry-run or not -- same reasoning as seedAgentPermissions
+		// above: a dry-run that never checks real state can only report
+		// worst-case ("would provision") for every agent regardless of
+		// whether one's already there, which risks talking someone into an
+		// unnecessary -rotate that would invalidate a real, in-use secret.
+		var hash sql.NullString
+		err := db.QueryRowContext(ctx,
+			`SELECT api_key_hash FROM agents WHERE id = ?`, a.ID).Scan(&hash)
+		if err == sql.ErrNoRows {
+			logger.Printf("  ✗ %s (ID %s) not found in agents table — did migrations run?", a.Name, a.ID)
+			continue
 		}
+		if err != nil {
+			return nil, fmt.Errorf("check credential for %s: %w", a.Name, err)
+		}
+		hasCredential := hash.Valid && hash.String != ""
 
 		if hasCredential && !rotate {
 			logger.Printf("  ✓ %s — credential already provisioned (pass -rotate to regenerate)", a.Name)
@@ -442,10 +446,10 @@ func provisionSecrets(ctx context.Context, db *sql.DB, cfg *agentsConfig, rotate
 			continue
 		}
 
-		hash := hashSecret(a.ID, plaintext)
+		secretHash := hashSecret(a.ID, plaintext)
 		_, err = db.ExecContext(ctx,
 			`UPDATE agents SET api_key_hash = ?, updated_at = ? WHERE id = ?`,
-			hash, time.Now().UTC(), a.ID)
+			secretHash, time.Now().UTC(), a.ID)
 		if err != nil {
 			return nil, fmt.Errorf("store credential for %s: %w", a.Name, err)
 		}
