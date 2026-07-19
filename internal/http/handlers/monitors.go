@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,10 @@ import (
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
 )
+
+// monitorSlugRe matches a caller-supplied slug for get-or-create semantics
+// in create() below — same shape convention as blog.go's slugRe.
+var monitorSlugRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // MonitorsHandler handles check-in monitor routes.
 //
@@ -219,6 +224,7 @@ func (h *MonitorsHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		Name              string `json:"name"`
+		Slug              string `json:"slug"`
 		Kind              string `json:"kind"`
 		TimeoutSeconds    int    `json:"timeout_seconds"`
 		GraceSeconds      int    `json:"grace_seconds"`
@@ -250,10 +256,37 @@ func (h *MonitorsHandler) create(w http.ResponseWriter, r *http.Request) {
 		body.GraceSeconds = 60
 	}
 
-	slug, err := generateMonitorSlug()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
-		return
+	// A caller-supplied slug means "get or create" — return the existing
+	// monitor if one already has this slug, instead of creating a
+	// duplicate. Without this, EnsureCronMonitor-style callers (post the
+	// same slug on every process startup, expecting idempotency) silently
+	// accumulated a new monitor with a random slug on every restart, while
+	// checkins posted to the slug they actually asked for 404'd forever
+	// because no monitor ever had it.
+	slug := strings.ToLower(strings.TrimSpace(body.Slug))
+	if slug != "" {
+		if !monitorSlugRe.MatchString(slug) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"code": "BAD_REQUEST", "detail": "slug must be lowercase letters/numbers/hyphens",
+			})
+			return
+		}
+		existing, err := h.Store.GetMonitorBySlug(ctx, slug)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
+			return
+		}
+		if existing != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"monitor": existing})
+			return
+		}
+	} else {
+		var err error
+		slug, err = generateMonitorSlug()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
+			return
+		}
 	}
 
 	owner := middleware.SubjectFromContext(ctx)
@@ -269,6 +302,15 @@ func (h *MonitorsHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.Store.CreateMonitor(ctx, m)
 	if err != nil {
+		// Race: another request created a monitor with this slug between
+		// our lookup and this insert (the DB's UNIQUE constraint on slug
+		// is the backstop). Re-fetch and return it rather than a bare 500.
+		if slug != "" {
+			if existing, gerr := h.Store.GetMonitorBySlug(ctx, slug); gerr == nil && existing != nil {
+				writeJSON(w, http.StatusOK, map[string]any{"monitor": existing})
+				return
+			}
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL"})
 		return
 	}
