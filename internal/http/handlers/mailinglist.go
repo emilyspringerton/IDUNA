@@ -29,6 +29,11 @@ type MailingListHandler struct {
 	Mailchimp   *mailinglist.MailchimpClient
 	AllowOrigin []string // exact-match allowlist, e.g. "https://okemily.com"
 	Limiter     *middleware.IPRateLimiter
+	// MailchimpLists maps a subscribeRequest.List value to a dedicated
+	// Mailchimp audience ID, for signups that must stay off the general
+	// list (e.g. a single-product waitlist). Unset or unrecognized List
+	// values fall back to Mailchimp's default ListID. See SECTION 163.
+	MailchimpLists map[string]string
 }
 
 func (h *MailingListHandler) Register(mux *http.ServeMux) {
@@ -65,6 +70,10 @@ func (h *MailingListHandler) preflight(w http.ResponseWriter, r *http.Request) {
 type subscribeRequest struct {
 	Email   string `json:"email"`
 	Consent bool   `json:"consent"`
+	// List optionally names a dedicated signup list distinct from the
+	// general okemily.com mailing list (e.g. "stinkies" for the VS0 hoodie
+	// waitlist) — see MailingListHandler.MailchimpLists.
+	List string `json:"list"`
 }
 
 // POST /api/v1/mailing-list/subscribe — public, rate-limited (see main.go
@@ -106,7 +115,12 @@ func (h *MailingListHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.Store.AddSubscriber(ciphertext, nonce, CurrentConsentVersion)
+	source := strings.TrimSpace(req.List)
+	if source == "" {
+		source = "general"
+	}
+
+	id, err := h.Store.AddSubscriber(ciphertext, nonce, CurrentConsentVersion, source)
 	if err != nil {
 		log.Printf("[mailinglist] store failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
@@ -116,9 +130,22 @@ func (h *MailingListHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 	// Best-effort Mailchimp sync using the plaintext already in hand from
 	// this request — never decrypted back out of storage for this. Failure
 	// here does not fail the request; IDUNA's own store already has it.
+	// Dedicated-list signups (source != "general") sync to their own
+	// audience when one is configured; falls back to the default list
+	// (still tagged by `source` in IDUNA's own store either way) so a
+	// signup never silently goes nowhere just because a product-specific
+	// Mailchimp audience hasn't been created yet.
 	if h.Mailchimp != nil {
-		if err := h.Mailchimp.Subscribe(email); err != nil {
-			log.Printf("[mailinglist] mailchimp sync failed for subscriber id=%d: %v", id, err)
+		targetList := h.Mailchimp.ListID
+		if source != "general" {
+			if listID, ok := h.MailchimpLists[source]; ok && listID != "" {
+				targetList = listID
+			} else {
+				log.Printf("[mailinglist] no dedicated mailchimp list configured for source=%q — syncing to default list instead", source)
+			}
+		}
+		if err := h.Mailchimp.SubscribeToList(email, targetList); err != nil {
+			log.Printf("[mailinglist] mailchimp sync failed for subscriber id=%d source=%q: %v", id, source, err)
 		} else if err := h.Store.MarkMailchimpSynced(id); err != nil {
 			log.Printf("[mailinglist] failed to mark synced id=%d: %v", id, err)
 		}

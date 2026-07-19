@@ -663,6 +663,7 @@ var idunaOpenAPISpec = map[string]any{
 								"properties": map[string]any{
 									"email":   map[string]any{"type": "string", "format": "email"},
 									"consent": map[string]any{"type": "boolean"},
+									"list":    map[string]any{"type": "string", "description": "Optional dedicated signup list (e.g. \"stinkies\"). Omit for the general okemily.com list."},
 								},
 							},
 						},

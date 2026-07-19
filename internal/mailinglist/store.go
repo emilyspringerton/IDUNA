@@ -3,6 +3,7 @@ package mailinglist
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -48,6 +49,16 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate mailinglist db: %w", err)
 	}
+	// Added 2026-07-19 (SECTION 163): tags which signup source/list a
+	// subscriber came from (e.g. "stinkies" vs "general"). ALTER TABLE ADD
+	// COLUMN on a pre-existing db from before this date will hit here once;
+	// "duplicate column" is the expected, ignorable outcome after that.
+	if _, err := db.Exec(`ALTER TABLE subscribers ADD COLUMN source TEXT NOT NULL DEFAULT 'general'`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate mailinglist db (add source column): %w", err)
+		}
+	}
 	return &Store{db: db}, nil
 }
 
@@ -92,11 +103,16 @@ func (s *Store) VaultMeta() (salt, canaryCiphertext, canaryNonce []byte, err err
 // exact privacy-policy/consent-copy revision the subscriber agreed to (see
 // OKEMILY/privacy.html) — required for GDPR accountability (being able to
 // prove what someone actually consented to, not just that they clicked
-// something at some point).
-func (s *Store) AddSubscriber(emailCiphertext, emailNonce []byte, consentVersion string) (int64, error) {
+// something at some point). source tags which signup list/product this came
+// from (e.g. "stinkies", "general") — internal bookkeeping only, distinct
+// from which Mailchimp audience the subscriber gets synced to.
+func (s *Store) AddSubscriber(emailCiphertext, emailNonce []byte, consentVersion, source string) (int64, error) {
+	if source == "" {
+		source = "general"
+	}
 	res, err := s.db.Exec(
-		`INSERT INTO subscribers (email_ciphertext, email_nonce, consent_version, consented_at) VALUES (?, ?, ?, ?)`,
-		emailCiphertext, emailNonce, consentVersion, time.Now().UTC(),
+		`INSERT INTO subscribers (email_ciphertext, email_nonce, consent_version, consented_at, source) VALUES (?, ?, ?, ?, ?)`,
+		emailCiphertext, emailNonce, consentVersion, time.Now().UTC(), source,
 	)
 	if err != nil {
 		return 0, err

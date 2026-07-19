@@ -38,14 +38,25 @@ func (c *MailchimpClient) datacenter() string {
 	return parts[len(parts)-1]
 }
 
-// Subscribe upserts a member with status_if_new "pending" — Mailchimp's own
-// double opt-in: the subscriber must click the confirmation email Mailchimp
-// sends before they're actually subscribed. This is the founder-approved
-// proof-of-consent mechanism (see EMILY/BACKLOG.md SECTION 152/153) — do not
-// change status_if_new to "subscribed" without revisiting that decision.
+// Subscribe upserts a member into the client's default ListID. Equivalent to
+// SubscribeToList(email, c.ListID) — see that doc for the opt-in contract.
 func (c *MailchimpClient) Subscribe(email string) error {
-	if c.APIKey == "" || c.ListID == "" {
-		return fmt.Errorf("mailchimp not configured (MAILCHIMP_API_KEY/MAILCHIMP_LIST_ID unset)")
+	return c.SubscribeToList(email, c.ListID)
+}
+
+// SubscribeToList upserts a member into a specific Mailchimp audience with
+// status_if_new "pending" — Mailchimp's own double opt-in: the subscriber
+// must click the confirmation email Mailchimp sends before they're actually
+// subscribed. This is the founder-approved proof-of-consent mechanism (see
+// EMILY/BACKLOG.md SECTION 152/153) — do not change status_if_new to
+// "subscribed" without revisiting that decision.
+//
+// listID lets callers target an audience other than the client's default
+// (e.g. a product-specific waitlist kept separate from the general
+// okemily.com list) — see EMILY/BACKLOG.md SECTION 163.
+func (c *MailchimpClient) SubscribeToList(email, listID string) error {
+	if c.APIKey == "" || listID == "" {
+		return fmt.Errorf("mailchimp not configured (MAILCHIMP_API_KEY or list ID unset)")
 	}
 	dc := c.datacenter()
 	if dc == "" {
@@ -64,7 +75,7 @@ func (c *MailchimpClient) Subscribe(email string) error {
 		return err
 	}
 
-	url := fmt.Sprintf("https://%s.api.mailchimp.com/3.0/lists/%s/members/%s", dc, c.ListID, subscriberHash)
+	url := fmt.Sprintf("https://%s.api.mailchimp.com/3.0/lists/%s/members/%s", dc, listID, subscriberHash)
 	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
 	if err != nil {
 		return err

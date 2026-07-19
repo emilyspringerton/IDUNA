@@ -108,11 +108,53 @@ func TestStore_AddSubscriberAndMarkSynced(t *testing.T) {
 	}
 	defer s.Close()
 
-	id, err := s.AddSubscriber([]byte("ciphertext"), []byte("nonce"), "v1")
+	id, err := s.AddSubscriber([]byte("ciphertext"), []byte("nonce"), "v1", "general")
 	if err != nil {
 		t.Fatalf("AddSubscriber: %v", err)
 	}
 	if err := s.MarkMailchimpSynced(id); err != nil {
 		t.Fatalf("MarkMailchimpSynced: %v", err)
+	}
+}
+
+func TestStore_AddSubscriber_SourceDefaultsToGeneral(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	id, err := s.AddSubscriber([]byte("ciphertext"), []byte("nonce"), "v1", "")
+	if err != nil {
+		t.Fatalf("AddSubscriber: %v", err)
+	}
+	var source string
+	if err := s.db.QueryRow(`SELECT source FROM subscribers WHERE id = ?`, id).Scan(&source); err != nil {
+		t.Fatalf("query source: %v", err)
+	}
+	if source != "general" {
+		t.Errorf("source = %q, want %q", source, "general")
+	}
+}
+
+func TestStore_AddSubscriber_CustomSource(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	id, err := s.AddSubscriber([]byte("ciphertext"), []byte("nonce"), "v1", "stinkies")
+	if err != nil {
+		t.Fatalf("AddSubscriber: %v", err)
+	}
+	var source string
+	if err := s.db.QueryRow(`SELECT source FROM subscribers WHERE id = ?`, id).Scan(&source); err != nil {
+		t.Fatalf("query source: %v", err)
+	}
+	if source != "stinkies" {
+		t.Errorf("source = %q, want %q", source, "stinkies")
 	}
 }
