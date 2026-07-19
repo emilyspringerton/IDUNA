@@ -18,7 +18,8 @@
         "monitors.read",
         "monitors.create",
         "monitors.alert",
-        "blog.write"
+        "blog.write",
+        "intelligence.read"
       ]
     },
     {
