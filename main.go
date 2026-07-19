@@ -177,6 +177,22 @@ func main() {
 	}
 	log.Printf("mailinglist: vault locked — run cmd/mailing-list-unlock to accept signups")
 
+	// DIS (Digital Immune System) proxy — first consumer of the collector
+	// outside WordPress/EDIS. nginx on this box shares one access log across
+	// every vhost, so the already-running edis-dis collector already sees
+	// okemily.com's traffic; this just exposes it to okemily's static pages.
+	disCollectorURL := os.Getenv("DIS_COLLECTOR_URL")
+	if disCollectorURL == "" {
+		disCollectorURL = "http://127.0.0.1:9099"
+	}
+	disH := &handlers.DISHandler{
+		CollectorURL: disCollectorURL,
+		AllowOrigin: []string{
+			"https://okemily.com",
+			"https://www.okemily.com",
+		},
+	}
+
 	// Blog — static HTML, no PHP/MySQL (this box had ~400MB free RAM and a
 	// nearly-full swap when this was built; a second WordPress+MySQL stack
 	// risked the exact OOM-kill incident SECTION 152 fixed). Own SQLite file,
@@ -279,6 +295,7 @@ func main() {
 	// there's no human JWT session for an operator running a CLI on the box.
 	mailingListH.Limiter = middleware.NewIPRateLimiter(5)
 	mailingListH.Register(mux)
+	disH.Register(mux)
 
 	// Blog — posting (programmatic or manual, same endpoint) requires
 	// blog.write; reading is public.

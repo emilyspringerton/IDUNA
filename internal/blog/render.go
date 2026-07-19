@@ -53,6 +53,7 @@ const pageTemplate = `<!DOCTYPE html>
   <p class="post-ad">{{.AdLine}} <a href="{{.AdHref}}">{{.AdCTA}}</a></p>
   <a class="back" href="/blog/">&larr; All posts</a>
 </div>
+<script src="/dis.js" defer></script>
 </body>
 </html>
 `
