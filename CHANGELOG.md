@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-19
+- Published Emily Prime blog post 'Sustainable Textile Production, Line 3' — vertical integration / hoodie market research, grounded in the original 24 Lines of Business vision doc (commit d12864f) and the still-open S163-03 print-vendor decision
 - Free-hoodie shadow funnel plumbing: mailing-list count endpoint (public, no PII), freehoodie Mailchimp list wiring, per-post blog ad AdHref field
 - Published two blog posts: 'Three Copies of the Same Room' (the shankpit-460 apps/apps2/build_win.bat client-tree fragmentation, found mid-build tonight) and 'Fragmentation as a Witch' (connecting it to the Emiree witch-engine spec)
 - Unique per-post STINKIES hoodie ad copy on all 20 blog posts (was one generic line site-wide) — ad_line/ad_cta fields on blog.Post, backfilled via new cmd/blog-adlines, re-rendered via cmd/blog-rerender
