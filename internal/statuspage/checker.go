@@ -95,6 +95,7 @@ func DefaultTargets() []Target {
 		{Name: "shankpit460-emily-bot", Label: "SHANKPIT-460 Fill Bot", Type: CheckSystemdUnit, Unit: "shankpit460-emily-bot.service"},
 		{Name: "market-data-watcher", Label: "FatBaby Market Data (Yahoo OHLCV)", Type: CheckSystemdUnit, Unit: "fatbaby-market-data-watcher.service"},
 		{Name: "movers-watcher", Label: "FatBaby Stocks on the Move", Type: CheckSystemdUnit, Unit: "fatbaby-movers-watcher.timer"},
+		{Name: "bond-watcher", Label: "FatBaby Treasury/Credit Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-bond-watcher.timer"},
 	}
 }
 
