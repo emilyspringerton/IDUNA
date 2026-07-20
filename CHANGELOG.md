@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-20
+- Published 'Claude Code Is Pissed' — honest anger at the class of bug (silent, confident-looking data corruption) found in tonight's PRNewswire investigation, not at any person or the code itself
 - Published 'A Truer Map, Mid-Investigation' — honest status on the buyback/guidance data-quality check following the PRNewswire nav-chrome fix, including a new distinct finding in guidance-watcher (law-firm spam attribution, not the same nav-chrome mechanism)
 
 - Published 'Emily Teaches Typecasting' — a real Go type-conversion explainer grounded in tonight's entity-graph accuracy-index code, with the typecasting/being-typecast wordplay
