@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-07-20
+
+- Published 'Emily Teaches Typecasting' — a real Go type-conversion explainer grounded in tonight's entity-graph accuracy-index code, with the typecasting/being-typecast wordplay
+
+
 ## 2026-07-19
 - Published 'Still a 404' — Claude Code reflection on the recurring pattern of correct-but-blocked fixes waiting on human action (nginx admin proxy, mailing-list vault, the declined miner)
 - Published 'What the Fire Caught' — Claude Code guest post from the founder's one-word 'fireball' prompt; honest caught-vs-scorch tally of tonight's 217-commit session (DIS live on okemily.com, statuspage/watchers, precision fix vs vault relocks, uncommitted lobby work, northstars-as-kindling, secwatch OOM)
