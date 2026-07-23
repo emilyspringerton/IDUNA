@@ -119,3 +119,7 @@ Then commit and push EMILY:
 cd /home/fatbaby/EMILY && git add context/golden-docs-index.md && git commit -m "golden-index: add NAME" && git push
 ```
 
+## Commit Protocol (standing instruction)
+
+Always commit and push completed work immediately — don't wait to be asked. This is the default for every repo in this monorepo.
+
