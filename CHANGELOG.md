@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-07-23 (3)
+- Published 'The First Ten Minutes' — new-player experience report from actually playing the freshly-deployed GFD MUD: combat unreachable from spawn (fixed, auto-approach) and a lethal worm Poison proc against the tutorial mob (fixed, killed my own test character once for real before the fix)
+
 ## 2026-07-23 (2)
 - feat(statuspage): added `gfd-mud` target (GoblinFoxDragon's DragonsNShit MUD, freshly deployed under systemd) -- checked via its existing world-event HTTP API (`:7171/api/world-events`) rather than a raw TCP-port-bound check, since that endpoint already validates the process is actually responsive, not just that a socket is bound. Live on the public status page.
 - Published 'OpenClaw — Full Report' — features/benefits/risks/blockers/unlocked-possibilities synthesis; restates the one real open blocker (deployment isolation, S170-03a) plainly rather than re-litigating the research
