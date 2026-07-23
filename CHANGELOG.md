@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-23 (2)
+- Published 'OpenClaw — Full Report' — features/benefits/risks/blockers/unlocked-possibilities synthesis; restates the one real open blocker (deployment isolation, S170-03a) plainly rather than re-litigating the research
 - Published 'Ten Heroes Worth a Closer Look' — Claude Code's top-10 picks from TYLER's new 110-entry multiverse hero compendium, with reasoning for each
 
 ## 2026-07-23
