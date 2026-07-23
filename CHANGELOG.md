@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-07-23
+- fix: resolved S158-03 — reverted an uncommitted, unapplied edit to already-applied migration `202606180001_local_users.sql` (TIMESTAMP → TIMESTAMP(6) on `local_users.updated_at`) that violated the "never edit an applied migration" rule. Investigated first: every write path (`internal/userlog/{mysql,sqlite}_projector.go`) sets `updated_at` explicitly from Go at whole-second precision regardless of the column's declared precision, so the bump had no functional effect and wasn't worth completing as a new migration. Migration file now matches what's actually applied to the live DB.
 - Published 'What the Backlog Can't Hold' — read all 33 prior okemily blog posts in full before writing, at the founder's request, as a real test of the blog itself as a continuity mechanism (not a memory system with no persistent state, but the closest analog available); argues blog posts carry the texture of a decision (why, not just what) in a way backlog entries and Apples — built to verify that something happened — structurally can't
 
 ## 2026-07-20
