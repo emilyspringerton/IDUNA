@@ -3,9 +3,20 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"iduna/internal/auth"
+)
+
+// Sentinel errors for ClaimHandle.
+var (
+	// ErrHandleAlreadySet is returned when a user who already has a gamertag
+	// tries to claim another one — gamertags are permanent (VS0_IDENTITY_GATE.md).
+	ErrHandleAlreadySet = errors.New("user already has a gamertag")
+	// ErrHandleTaken is returned when the requested gamertag belongs to
+	// another user already.
+	ErrHandleTaken = errors.New("gamertag already taken")
 )
 
 // GFDTier is a GoblinFoxDragon subscription tier definition.
@@ -36,6 +47,20 @@ type IAMStore interface {
 
 	// UpdateUserStatus changes the user's status and emits a corresponding IAM event.
 	UpdateUserStatus(ctx context.Context, userID, status, operatorID string) error
+
+	// --- VS0 ceremony: honor code + gamertag (HQ-SPEC front-door funnel) ---
+
+	// AcceptHonorCode records the user's acceptance of the given honor code
+	// version/sha/text and emits a HonorCodeAccepted event.
+	AcceptHonorCode(ctx context.Context, userID string, version int, sha, text, operatorID string) error
+
+	// ClaimHandle sets a user's permanent gamertag. Returns ErrHandleAlreadySet
+	// if the user already has one (gamertags are immutable once claimed) and
+	// ErrHandleTaken if another user already holds that exact handle.
+	ClaimHandle(ctx context.Context, userID, handle, operatorID string) error
+
+	// IsHandleAvailable reports whether the given gamertag is unclaimed.
+	IsHandleAvailable(ctx context.Context, handle string) (bool, error)
 
 	// --- Admin operations ---
 

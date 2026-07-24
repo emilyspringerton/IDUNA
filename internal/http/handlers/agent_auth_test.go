@@ -61,6 +61,11 @@ func (s *stubAgentStore) GrantAgentPermission(context.Context, string, string, s
 func (s *stubAgentStore) RevokeAgentPermission(context.Context, string, string, string) error {
 	return nil
 }
+func (s *stubAgentStore) AcceptHonorCode(context.Context, string, int, string, string, string) error {
+	return nil
+}
+func (s *stubAgentStore) ClaimHandle(context.Context, string, string, string) error { return nil }
+func (s *stubAgentStore) IsHandleAvailable(context.Context, string) (bool, error)   { return true, nil }
 func (s *stubAgentStore) UpdateAgentStatus(context.Context, string, string, string) error { return nil }
 func (s *stubAgentStore) ListIAMEvents(context.Context, int) ([]auth.IAMEvent, error)     { return nil, nil }
 func (s *stubAgentStore) SetAgentCredential(context.Context, string, string, string) error {

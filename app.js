@@ -144,6 +144,7 @@ async function bootstrap() {
 
   const url = new URL(window.location.href);
   const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
   const oauthError = url.searchParams.get("error");
 
   if (oauthError) {
@@ -158,11 +159,12 @@ async function bootstrap() {
       const redirectUri = `${url.origin}${url.pathname}`;
       const out = await api("/auth/google/callback", {
         method: "POST",
-        body: { code, redirect_uri: redirectUri },
+        body: { code, redirect_uri: redirectUri, state },
       });
       if (out && out.token) setToken(out.token);
 
       url.searchParams.delete("code");
+      url.searchParams.delete("state");
       window.history.replaceState({}, document.title, url.toString());
 
       await routeAfterAuth(out);

@@ -220,6 +220,58 @@ func (s *SQLiteStore) UpdateUserStatus(ctx context.Context, userID, status, oper
 	return nil
 }
 
+func (s *SQLiteStore) AcceptHonorCode(ctx context.Context, userID string, version int, sha, text, operatorID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET honor_accepted_current=1, honor_code_sha=?, honor_code_version=?, honor_code_text=?, updated_at=? WHERE id=?`,
+		sha, version, text, time.Now().UTC().Format(time.RFC3339Nano), userID,
+	)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]any{"version": version, "sha256": sha})
+	_ = s.AppendIAMEvent(ctx, "HonorCodeAccepted", "USER", userID, operatorID, payload)
+	return nil
+}
+
+func (s *SQLiteStore) ClaimHandle(ctx context.Context, userID, handle, operatorID string) error {
+	var existing string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(gamertag,'') FROM users WHERE id=?`, userID).Scan(&existing)
+	if err != nil {
+		return err
+	}
+	if existing != "" {
+		return ErrHandleAlreadySet
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE users SET gamertag=?, updated_at=? WHERE id=?`,
+		handle, time.Now().UTC().Format(time.RFC3339Nano), userID,
+	)
+	if err != nil {
+		if sqliteIsUniqueConstraintErr(err) {
+			return ErrHandleTaken
+		}
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"handle": handle})
+	_ = s.AppendIAMEvent(ctx, "GamertagClaimed", "USER", userID, operatorID, payload)
+	return nil
+}
+
+func (s *SQLiteStore) IsHandleAvailable(ctx context.Context, handle string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE gamertag=?`, handle).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+// sqliteIsUniqueConstraintErr reports whether err is a SQLite UNIQUE
+// constraint violation (modernc.org/sqlite error text).
+func sqliteIsUniqueConstraintErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
 func (s *SQLiteStore) ListUsers(ctx context.Context, limit int) ([]auth.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(email,''), COALESCE(gamertag,''), status,

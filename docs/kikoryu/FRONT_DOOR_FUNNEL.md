@@ -353,6 +353,55 @@ Steps 1–4 require no nginx/DNS change and can land immediately. Steps 5–6
 are the literal unblock for `EMILY/BACKLOG.md` S23-01b and should be
 sequenced together. Step 7 is cleanup and can land whenever.
 
+**2026-07-24 — steps 1 and 5 landed, step 6 partially queued:**
+
+- **Step 1 done.** `CreateAgent` now inserts `PENDING`; `GrantAgentPermission`/
+  `RevokeAgentPermission` store methods added with a `maybeActivateAgent`
+  helper (PENDING→ACTIVE once both a credential and a permission exist); Back
+  Office UI shows credential/permission state with inline grant/revoke forms
+  and a one-time secret reveal at `POST /admin/agents/{id}/secret`. IDUNA
+  `b1b913b`. Found and fixed a real, unrelated bug along the way: the
+  MySQL→SQLite migration translator didn't handle bare `TIMESTAMP`/`ON UPDATE
+  CURRENT_TIMESTAMP` (no `(6)`), silently breaking any from-scratch SQLite
+  bootstrap since the S158-03 revert put `202606180001_local_users.sql` back
+  to that form.
+- **Step 5 done, and it was bigger than "stale bindings."** Investigating
+  `app.js`'s calls turned up more than a wrong path: there was **no server-
+  side write path anywhere** for honor-code acceptance or gamertag claiming —
+  `internal/auth/device/service.go` only ever *checked*
+  `HonorAccepted`/`Handle`, nothing ever set them. Built: `internal/honorcode`
+  (the first actual source of truth for THE_HONOR_CODE text/version/sha,
+  previously only a client-side fallback baked into `app.js`), new store
+  methods `AcceptHonorCode`/`ClaimHandle`/`IsHandleAvailable`, and
+  `internal/http/handlers/web_ceremony.go` registering exactly the six
+  endpoints `app.js` already called (`/auth/google/start`,
+  `/auth/google/callback`, `/me`, `/honor-code/accept`, `/gamertag/check`,
+  `/me/handle`) — matching its existing request/response contract rather than
+  rewriting a frontend that was already well-designed. Added the one thing
+  `app.js` was missing for this to be safe: CSRF `state` round-tripping
+  (server sets an HttpOnly cookie in `/auth/google/start`, `app.js` now reads
+  `state` back off the OAuth redirect and forwards it to
+  `/auth/google/callback`, one small `app.js` patch). Gamertags are permanent
+  once claimed (`ErrHandleAlreadySet`), per §2.1/carried-forward-unchanged.
+- **Step 6 partially queued, not landed — two independent blockers, only one
+  of which is sudo.** The nginx path-split (`/api/v1/`,
+  `/.well-known/jwks.json`, `/auth/`, `/me`, `/me/handle`,
+  `/honor-code/accept`, `/gamertag/check`, `/device`, `/admin/`, all proxied
+  to `127.0.0.1:8080`, above the WordPress catch-all) is drafted and
+  syntax-verified at `ops/nginx/edis-with-iduna-front-door.conf`, queued at
+  `sudo-queue/07-iduna-front-door-nginx.sh` — this box has no passwordless
+  sudo, so it needs the founder to run it. Once applied, the new ceremony
+  endpoints become reachable at `https://iduna.farthq.com/auth/google/start`
+  etc. and curl-testable. **The `gate.farthq.com` subdomain itself is not
+  part of that script and remains fully unstarted** — it needs a real DNS
+  record, and `SECTION 151` (FATES DNS-as-code, the only path to touching
+  `farthq.com` at all) is entirely `[ ]`, blocked on a Cloudflare API token
+  sitting in the S151-01 human unblock queue. Net effect right now: the
+  ceremony's *backend* is real and testable via the API once the nginx script
+  runs, but the *browser page* (index.html/app.js — the actual honor-code/
+  gamertag UI) still has no public URL to load from until DNS exists. That
+  gap is honest and tracked, not silently left implicit.
+
 ## 8. Explicit non-scope
 
 - Tournament attestation schema itself (age/jurisdiction fields, exact

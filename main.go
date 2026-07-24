@@ -96,6 +96,14 @@ func main() {
 		Store:          iamStore,
 		Issuer:         issuer,
 	}
+	webCeremonyH := &handlers.WebCeremonyHandler{
+		GoogleClientID:     googleClientID,
+		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		RedirectURI:        getenv("CEREMONY_OAUTH_REDIRECT_URI", baseURL+"/"),
+		Keys:               keys,
+		Store:              iamStore,
+		Issuer:             issuer,
+	}
 	agentAuthH := &handlers.AgentAuthHandler{
 		Keys:   keys,
 		Store:  iamStore,
@@ -235,6 +243,14 @@ func main() {
 
 	// Existing device routes.
 	deviceH.Register(mux)
+
+	// VS0 web ceremony (app.js's actual contract — see docs/kikoryu/VS0_IDENTITY_GATE.md
+	// "known divergence #2": these paths were called by the frontend since it was
+	// written but never registered anywhere).
+	webCeremonyH.Register(mux)
+	mux.Handle("/me", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleMe)))
+	mux.Handle("/honor-code/accept", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleHonorAccept)))
+	mux.Handle("/me/handle", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleMeHandle)))
 
 	// New IAM routes.
 	mux.Handle("/api/v1/auth/google", googleAuthH)

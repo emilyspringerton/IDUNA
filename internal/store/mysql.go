@@ -144,6 +144,58 @@ func (s *MySQLStore) UpdateUserStatus(ctx context.Context, userID, status, opera
 	return nil
 }
 
+func (s *MySQLStore) AcceptHonorCode(ctx context.Context, userID string, version int, sha, text, operatorID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET honor_accepted_current=1, honor_code_sha=?, honor_code_version=?, honor_code_text=?, updated_at=NOW(6) WHERE id=?`,
+		sha, version, text, userID,
+	)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]any{"version": version, "sha256": sha})
+	_ = s.AppendIAMEvent(ctx, "HonorCodeAccepted", "USER", userID, operatorID, payload)
+	return nil
+}
+
+func (s *MySQLStore) ClaimHandle(ctx context.Context, userID, handle, operatorID string) error {
+	var existing string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(gamertag,'') FROM users WHERE id=?`, userID).Scan(&existing)
+	if err != nil {
+		return err
+	}
+	if existing != "" {
+		return ErrHandleAlreadySet
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE users SET gamertag=?, updated_at=NOW(6) WHERE id=?`,
+		handle, userID,
+	)
+	if err != nil {
+		if mysqlIsDuplicateKeyErr(err) {
+			return ErrHandleTaken
+		}
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"handle": handle})
+	_ = s.AppendIAMEvent(ctx, "GamertagClaimed", "USER", userID, operatorID, payload)
+	return nil
+}
+
+func (s *MySQLStore) IsHandleAvailable(ctx context.Context, handle string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE gamertag=?`, handle).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+// mysqlIsDuplicateKeyErr reports whether err is a MySQL duplicate-key
+// violation (error 1062), without importing the mysql driver package here.
+func mysqlIsDuplicateKeyErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Error 1062")
+}
+
 // --- Admin operations ---
 
 // ListUsers returns up to limit users ordered by created_at desc.

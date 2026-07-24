@@ -118,6 +118,11 @@ func (s *stubApplesStore) GrantAgentPermission(context.Context, string, string, 
 func (s *stubApplesStore) RevokeAgentPermission(context.Context, string, string, string) error {
 	return nil
 }
+func (s *stubApplesStore) AcceptHonorCode(context.Context, string, int, string, string, string) error {
+	return nil
+}
+func (s *stubApplesStore) ClaimHandle(context.Context, string, string, string) error { return nil }
+func (s *stubApplesStore) IsHandleAvailable(context.Context, string) (bool, error)   { return true, nil }
 func (s *stubApplesStore) UpdateAgentStatus(context.Context, string, string, string) error {
 	return nil
 }
