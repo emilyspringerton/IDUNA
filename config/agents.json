@@ -139,6 +139,16 @@
       "permissions": [
         "shankpit.match.write"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000012",
+      "name": "REDGARDEN-BOTS",
+      "type": "game_bot_agent",
+      "description": "REDGARDEN headless bots — authenticates via POST /api/v1/auth/agent, registers a real player_id per bot (POST /api/v1/players/register), mints a real connect ticket for it (POST /api/v1/redgarden/ticket), and reports match win/loss results (POST /api/v1/redgarden/game-result). WOTAN player-identity work, S170-26/41.",
+      "permissions": [
+        "redgarden.ticket.mint",
+        "redgarden.match.write"
+      ]
     }
   ]
 }

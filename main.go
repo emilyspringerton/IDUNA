@@ -420,6 +420,28 @@ func main() {
 	})
 	mux.Handle("/api/v1/shankpit/ticket", shankpitTicketH)
 
+	// WOTAN for REDGARDEN (NORTHSTAR §12 Phase A/F, S170-26/41): REDGARDEN
+	// bots have no OAuth login, so unlike shankpit's ticket handler (which
+	// mints for the caller's own player_id, from a real human's JWT), this
+	// mints on behalf of a player_id in the request body, restricted to the
+	// REDGARDEN-BOTS M2M agent via redgarden.ticket.mint — see
+	// redgarden_ticket.go's doc comment for the full trust model.
+	redgardenTicketH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("redgarden.ticket.mint")(&handlers.RedgardenTicketHandler{
+			DB:     db,
+			Secret: []byte(os.Getenv("REDGARDEN_TICKET_SECRET")),
+		}),
+	)
+	mux.Handle("/api/v1/redgarden/ticket", redgardenTicketH)
+
+	redgardenResultH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("redgarden.match.write")(&handlers.RedgardenGameResultHandler{DB: db}),
+	)
+	mux.Handle("/api/v1/redgarden/game-result", redgardenResultH)
+
+	// Public leaderboard read — same trust level as GET /api/v1/players/{id}.
+	mux.Handle("/api/v1/redgarden/leaderboard", &handlers.RedgardenLeaderboardHandler{DB: db})
+
 	// SHANKPIT-460 v0 matchmaking queue (S156-03) — in-memory, ephemeral by
 	// design (see handlers.ShankpitQueue doc comment). ServerAddr is the one
 	// persistent game server instance (no per-match instances in v0); no
