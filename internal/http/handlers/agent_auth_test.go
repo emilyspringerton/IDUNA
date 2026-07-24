@@ -55,6 +55,12 @@ func (s *stubAgentStore) ListAgents(context.Context) ([]auth.Agent, error)      
 func (s *stubAgentStore) CreateAgent(context.Context, string, string, string, string) (*auth.Agent, error) {
 	return nil, nil
 }
+func (s *stubAgentStore) GrantAgentPermission(context.Context, string, string, string) error {
+	return nil
+}
+func (s *stubAgentStore) RevokeAgentPermission(context.Context, string, string, string) error {
+	return nil
+}
 func (s *stubAgentStore) UpdateAgentStatus(context.Context, string, string, string) error { return nil }
 func (s *stubAgentStore) ListIAMEvents(context.Context, int) ([]auth.IAMEvent, error)     { return nil, nil }
 func (s *stubAgentStore) SetAgentCredential(context.Context, string, string, string) error {

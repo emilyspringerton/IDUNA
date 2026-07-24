@@ -112,6 +112,12 @@ func (s *stubApplesStore) ListAgents(context.Context) ([]auth.Agent, error)     
 func (s *stubApplesStore) CreateAgent(context.Context, string, string, string, string) (*auth.Agent, error) {
 	return nil, nil
 }
+func (s *stubApplesStore) GrantAgentPermission(context.Context, string, string, string) error {
+	return nil
+}
+func (s *stubApplesStore) RevokeAgentPermission(context.Context, string, string, string) error {
+	return nil
+}
 func (s *stubApplesStore) UpdateAgentStatus(context.Context, string, string, string) error {
 	return nil
 }

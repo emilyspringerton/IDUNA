@@ -52,6 +52,10 @@ type Agent struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	Permissions []string
+	// HasCredential is true once SetAgentCredential has been called at least
+	// once (api_key_hash is non-empty). Populated by ListAgents for the Back
+	// Office console; not persisted on the struct itself.
+	HasCredential bool
 }
 
 // ClusterHeartbeat tracks the live state of a federated Emily cluster.

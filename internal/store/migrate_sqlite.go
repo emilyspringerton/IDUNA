@@ -25,6 +25,11 @@ import (
 //     (foreign keys are enforced in application logic; SQLite requires PRAGMA
 //     foreign_keys=ON per-connection which adds coupling we don't need here)
 // 11. Trailing commas before closing paren left by removed lines are cleaned up
+// 12. ALTER TABLE ... MODIFY COLUMN ... is dropped entirely (not valid SQLite
+//     syntax; SQLite columns are untyped after ENUM→TEXT translation, so
+//     widening a MySQL ENUM's allowed values needs no SQLite-side change)
+// 13. Bare TIMESTAMP / ON UPDATE CURRENT_TIMESTAMP (no (6) precision) get the
+//     same treatment as rules 4 and 6 -- some migrations omit the precision
 func mysqlToSQLite(sql string) string {
 	// Split into statements and translate each independently.
 	stmts := splitStatements(sql)
@@ -40,6 +45,13 @@ func mysqlToSQLite(sql string) string {
 }
 
 func translateStatement(s string) string {
+	// ALTER TABLE ... MODIFY COLUMN ... has no SQLite equivalent and isn't
+	// needed there: ENUM columns already translated to untyped TEXT, so
+	// widening the MySQL-side allowed value set is a no-op for SQLite.
+	if reAlterModifyColumn.MatchString(s) {
+		return ""
+	}
+
 	// Backtick identifiers → unquoted (SQLite is happy with unquoted or double-quoted).
 	s = reBacktick.ReplaceAllString(s, "")
 
@@ -69,8 +81,19 @@ func translateStatement(s string) string {
 	// ON UPDATE must be removed BEFORE the bare CURRENT_TIMESTAMP(6) rule strips the (6).
 	s = reOnUpdateTS.ReplaceAllString(s, "")
 
+	// Bare ON UPDATE CURRENT_TIMESTAMP (no (6) precision) has no SQLite
+	// equivalent either -- same removal, for migrations that used bare
+	// TIMESTAMP instead of TIMESTAMP(6). Must also run before reTimestampBare
+	// below turns the remaining bare TIMESTAMP token into TEXT.
+	s = reOnUpdateTSBare.ReplaceAllString(s, "")
+
 	// DEFAULT CURRENT_TIMESTAMP(6) → DEFAULT CURRENT_TIMESTAMP
 	s = reDefaultCurrentTS6.ReplaceAllString(s, "DEFAULT CURRENT_TIMESTAMP")
+
+	// Bare TIMESTAMP (no (6) precision) → TEXT. Must run after reTimestamp6
+	// so it only catches genuinely bare occurrences (TIMESTAMP(6) is already
+	// gone by this point).
+	s = reTimestampBare.ReplaceAllString(s, "TEXT")
 
 	// CURRENT_TIMESTAMP(6) anywhere else (e.g. in VALUES) → CURRENT_TIMESTAMP
 	s = reTimestamp6Bare.ReplaceAllString(s, "CURRENT_TIMESTAMP")
@@ -118,6 +141,9 @@ var (
 	// CURRENT_TIMESTAMP(6) used as a bare value expression (e.g. in INSERT VALUES).
 	reTimestamp6Bare    = regexp.MustCompile(`(?i)\bCURRENT_TIMESTAMP\(6\)`)
 	reOnUpdateTS        = regexp.MustCompile(`(?i)\s*ON\s+UPDATE\s+CURRENT_TIMESTAMP\(6\)`)
+	// Bare variants (no (6) precision) of the same two patterns.
+	reOnUpdateTSBare = regexp.MustCompile(`(?i)\s*ON\s+UPDATE\s+CURRENT_TIMESTAMP\b`)
+	reTimestampBare  = regexp.MustCompile(`(?i)\bTIMESTAMP\b`)
 	reEnum              = regexp.MustCompile(`(?i)\bENUM\([^)]+\)`)
 	reTinyint1          = regexp.MustCompile(`(?i)\bTINYINT\(1\)`)
 
@@ -128,6 +154,8 @@ var (
 	reBacktick = regexp.MustCompile("`")
 
 	reConstraintFK = regexp.MustCompile(`(?i)^\s*CONSTRAINT\s+\S+\s+FOREIGN\s+KEY\b.*$`)
+
+	reAlterModifyColumn = regexp.MustCompile(`(?im)^\s*ALTER\s+TABLE\s+\S+\s+MODIFY\s+COLUMN\b`)
 
 	// MySQL inline KEY / INDEX / UNIQUE KEY / INDEX definitions inside CREATE TABLE.
 	// SQLite does not support inline index definitions; strip them.

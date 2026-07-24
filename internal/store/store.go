@@ -54,8 +54,20 @@ type IAMStore interface {
 	// ListAgents returns all agents ordered by created_at desc.
 	ListAgents(ctx context.Context) ([]auth.Agent, error)
 
-	// CreateAgent inserts a new agent and emits an AgentCreated event.
+	// CreateAgent inserts a new agent with status=PENDING and emits an
+	// AgentCreated event. It stays PENDING (inert: cannot authenticate, holds
+	// no capabilities) until GrantAgentPermission and SetAgentCredential have
+	// both been called at least once, at which point it flips to ACTIVE.
 	CreateAgent(ctx context.Context, ownerUserID, name, agentType, operatorID string) (*auth.Agent, error)
+
+	// GrantAgentPermission grants a named permission to an agent, emitting an
+	// AgentPermissionGranted event. If the agent is PENDING and now has both a
+	// credential and at least one permission, it flips to ACTIVE.
+	GrantAgentPermission(ctx context.Context, agentID, permissionName, operatorID string) error
+
+	// RevokeAgentPermission removes a named permission from an agent, emitting
+	// an AgentPermissionRevoked event.
+	RevokeAgentPermission(ctx context.Context, agentID, permissionName, operatorID string) error
 
 	// UpsertClusterHeartbeat upserts a federated Emily cluster heartbeat record.
 	// Called by emily-agent every 60 s so IDUNA can track which clusters are alive.

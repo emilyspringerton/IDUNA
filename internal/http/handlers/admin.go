@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -187,21 +189,71 @@ func (h *AdminHandler) agentAction(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	operatorID := middleware.SubjectFromContext(ctx)
 
-	var status string
 	switch action {
 	case "suspend":
-		status = "SUSPENDED"
+		if err := h.Store.UpdateAgentStatus(ctx, agentID, "SUSPENDED", operatorID); err != nil {
+			http.Error(w, "operation failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	case "activate":
-		status = "ACTIVE"
+		if err := h.Store.UpdateAgentStatus(ctx, agentID, "ACTIVE", operatorID); err != nil {
+			http.Error(w, "operation failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	case "permissions":
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		permName := strings.TrimSpace(r.FormValue("permission_name"))
+		verb := r.FormValue("verb") // "grant" or "revoke"
+		if permName == "" {
+			http.Error(w, "permission_name required", http.StatusBadRequest)
+			return
+		}
+		var opErr error
+		if verb == "revoke" {
+			opErr = h.Store.RevokeAgentPermission(ctx, agentID, permName, operatorID)
+		} else {
+			opErr = h.Store.GrantAgentPermission(ctx, agentID, permName, operatorID)
+		}
+		if opErr != nil {
+			http.Error(w, "operation failed: "+opErr.Error(), http.StatusInternalServerError)
+			return
+		}
+	case "secret":
+		plaintext, err := generateAgentSecret(32)
+		if err != nil {
+			http.Error(w, "failed to generate secret: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := h.Store.SetAgentCredential(ctx, agentID, plaintext, operatorID); err != nil {
+			http.Error(w, "failed to set credential: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// One-time reveal: this plaintext is never retrievable again after this
+		// response (only the bcrypt/SHA-256 hash is persisted).
+		renderHTML(w, adminAgentSecretTmpl, map[string]any{
+			"Title":     "Agent Credential",
+			"AgentID":   agentID,
+			"Plaintext": plaintext,
+		})
+		return
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
 	}
-	if err := h.Store.UpdateAgentStatus(ctx, agentID, status, operatorID); err != nil {
-		http.Error(w, "operation failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	http.Redirect(w, r, "/admin/agents", http.StatusSeeOther)
+}
+
+// generateAgentSecret returns a cryptographically random hex string of
+// byteLen bytes, mirroring cmd/bootstrap's generateSecret.
+func generateAgentSecret(byteLen int) (string, error) {
+	b := make([]byte, byteLen)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // --- audit ---
@@ -385,6 +437,9 @@ func mustParseTmpl(name, body string) *template.Template {
 			}
 			return strings.Join(u.Roles, ", ")
 		},
+		"join": func(items []string, sep string) string {
+			return strings.Join(items, sep)
+		},
 	}).Parse(adminBase + body))
 }
 
@@ -510,12 +565,14 @@ var adminAgentsTmpl = mustParseTmpl("agents", `
 
 {{if .Agents}}
 <table>
-<tr><th>Name</th><th>Type</th><th>Status</th><th>Owner</th><th>Created</th><th>Actions</th></tr>
+<tr><th>Name</th><th>Type</th><th>Status</th><th>Credential</th><th>Permissions</th><th>Owner</th><th>Created</th><th>Actions</th></tr>
 {{range .Agents}}
 <tr>
   <td>{{.Name}}</td>
   <td class="meta">{{if .Type}}{{.Type}}{{else}}—{{end}}</td>
   <td>{{statusBadge .Status}}</td>
+  <td class="meta">{{if .HasCredential}}set{{else}}—{{end}}</td>
+  <td class="meta">{{if .Permissions}}{{join .Permissions ", "}}{{else}}—{{end}}</td>
   <td class="meta">{{.OwnerUserID}}</td>
   <td class="meta">{{fmtTime .CreatedAt}}</td>
   <td>
@@ -528,6 +585,27 @@ var adminAgentsTmpl = mustParseTmpl("agents", `
       <button type="submit">Activate</button>
     </form>
     {{end}}
+    &nbsp;
+    <form class="inline" method="POST" action="/admin/agents/{{.ID}}/permissions">
+      <input type="hidden" name="verb" value="grant">
+      <input type="text" name="permission_name" placeholder="domain.action" style="width:130px;font-size:11px;padding:2px">
+      <input type="submit" value="+ Perm">
+    </form>
+    {{if .Permissions}}
+    <form class="inline" method="POST" action="/admin/agents/{{.ID}}/permissions">
+      <input type="hidden" name="verb" value="revoke">
+      <select name="permission_name" style="font-size:11px;padding:2px">
+        {{range .Permissions}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+      <input type="submit" value="− Perm">
+    </form>
+    {{end}}
+    &nbsp;
+    {{if not .HasCredential}}
+    <form class="inline" method="POST" action="/admin/agents/{{.ID}}/secret">
+      <button type="submit">Generate Secret</button>
+    </form>
+    {{end}}
   </td>
 </tr>
 {{end}}
@@ -535,6 +613,21 @@ var adminAgentsTmpl = mustParseTmpl("agents", `
 {{else}}
 <p class="empty">No agents registered yet. Use the form above to register your first agent.</p>
 {{end}}
+<p class="meta">New agents start <span class="badge badge-pending">PENDING</span> — inert, no credential, no capabilities.
+They flip to <span class="badge badge-active">ACTIVE</span> automatically once both a secret and at least one
+permission exist.</p>
+{{end}}`)
+
+var adminAgentSecretTmpl = mustParseTmpl("agent-secret", `
+{{define "body"}}
+<h1>Agent Credential Generated</h1>
+<div class="section-card">
+<p style="margin-bottom:12px"><strong>This secret is shown once and is not recoverable.</strong> Copy it now
+and store it wherever the agent reads its credential from (e.g. an env file or secrets manager).</p>
+<pre style="font-size:13px">{{.Plaintext}}</pre>
+<p class="meta" style="margin-top:12px">Agent ID: {{.AgentID}}</p>
+</div>
+<a href="/admin/agents">← Back to Agent Registry</a>
 {{end}}`)
 
 var adminAuditTmpl = mustParseTmpl("audit", `

@@ -206,7 +206,7 @@ func (s *MySQLStore) ListRoles(ctx context.Context) ([]auth.Role, error) {
 // ListAgents returns all agents ordered by created_at desc.
 func (s *MySQLStore) ListAgents(ctx context.Context) ([]auth.Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, owner_user_id, name, type, status, created_at, updated_at
+		SELECT id, owner_user_id, name, type, status, created_at, updated_at, COALESCE(api_key_hash,'')
 		FROM agents ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -215,12 +215,24 @@ func (s *MySQLStore) ListAgents(ctx context.Context) ([]auth.Agent, error) {
 	var agents []auth.Agent
 	for rows.Next() {
 		var a auth.Agent
-		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Type, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		var apiKeyHash string
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Type, &a.Status, &a.CreatedAt, &a.UpdatedAt, &apiKeyHash); err != nil {
 			return nil, err
 		}
+		a.HasCredential = apiKeyHash != ""
 		agents = append(agents, a)
 	}
-	return agents, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range agents {
+		perms, err := s.GetAgentPermissions(ctx, agents[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		agents[i].Permissions = perms
+	}
+	return agents, nil
 }
 
 // CreateAgent inserts a new agent and emits an AgentCreated event.
@@ -232,7 +244,7 @@ func (s *MySQLStore) CreateAgent(ctx context.Context, ownerUserID, name, agentTy
 	now := time.Now().UTC()
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO agents (id, owner_user_id, name, type, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+		 VALUES (?, ?, ?, ?, 'PENDING', ?, ?)`,
 		id, ownerUserID, name, agentType, now, now,
 	)
 	if err != nil {
@@ -245,10 +257,84 @@ func (s *MySQLStore) CreateAgent(ctx context.Context, ownerUserID, name, agentTy
 		OwnerUserID: ownerUserID,
 		Name:        name,
 		Type:        agentType,
-		Status:      "ACTIVE",
+		Status:      "PENDING",
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil
+}
+
+// maybeActivateAgent flips a PENDING agent to ACTIVE once it has both a
+// credential (api_key_hash set) and at least one granted permission. No-op
+// for agents in any other status (already ACTIVE, SUSPENDED, etc).
+func (s *MySQLStore) maybeActivateAgent(ctx context.Context, agentID, operatorID string) error {
+	var status string
+	var apiKeyHash string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT status, COALESCE(api_key_hash,'') FROM agents WHERE id=?`, agentID).Scan(&status, &apiKeyHash)
+	if err != nil {
+		return err
+	}
+	if status != "PENDING" || apiKeyHash == "" {
+		return nil
+	}
+	var permCount int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM agent_permissions WHERE agent_id=?`, agentID).Scan(&permCount); err != nil {
+		return err
+	}
+	if permCount == 0 {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE agents SET status='ACTIVE', updated_at=? WHERE id=?`, time.Now().UTC(), agentID)
+	if err != nil {
+		return err
+	}
+	_ = s.AppendIAMEvent(ctx, "AgentActivated", "AGENT", agentID, operatorID, nil)
+	return nil
+}
+
+// GrantAgentPermission grants a named permission to an agent, emitting an
+// AgentPermissionGranted event, then activates the agent if it now qualifies.
+func (s *MySQLStore) GrantAgentPermission(ctx context.Context, agentID, permissionName, operatorID string) error {
+	var permID string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM permissions WHERE name=?`, permissionName).Scan(&permID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("permission %q not found", permissionName)
+		}
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO agent_permissions (agent_id, permission_id, granted_at) VALUES (?, ?, ?)`,
+		agentID, permID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"permission": permissionName})
+	_ = s.AppendIAMEvent(ctx, "AgentPermissionGranted", "AGENT", agentID, operatorID, payload)
+	return s.maybeActivateAgent(ctx, agentID, operatorID)
+}
+
+// RevokeAgentPermission removes a named permission from an agent, emitting an
+// AgentPermissionRevoked event.
+func (s *MySQLStore) RevokeAgentPermission(ctx context.Context, agentID, permissionName, operatorID string) error {
+	var permID string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM permissions WHERE name=?`, permissionName).Scan(&permID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("permission %q not found", permissionName)
+		}
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM agent_permissions WHERE agent_id=? AND permission_id=?`, agentID, permID)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"permission": permissionName})
+	_ = s.AppendIAMEvent(ctx, "AgentPermissionRevoked", "AGENT", agentID, operatorID, payload)
+	return nil
 }
 
 // UpdateAgentStatus changes an agent's status and emits an event.
@@ -420,7 +506,7 @@ func (s *MySQLStore) SetAgentCredential(ctx context.Context, agentID, plaintextS
 	}
 	payload, _ := json.Marshal(map[string]string{"agent_id": agentID})
 	_ = s.AppendIAMEvent(ctx, "AgentCredentialSet", "AGENT", agentID, operatorID, payload)
-	return nil
+	return s.maybeActivateAgent(ctx, agentID, operatorID)
 }
 
 // AuthenticateAgent verifies agent name + secret and returns the agent with
