@@ -678,6 +678,7 @@ var adminApplesTmpl = mustParseTmpl("apples", `
       <option value="incident"{{if eq .AppleType "incident"}} selected{{end}}>incident</option>
       <option value="release"{{if eq .AppleType "release"}} selected{{end}}>release</option>
       <option value="audit"{{if eq .AppleType "audit"}} selected{{end}}>audit</option>
+      <option value="conversation"{{if eq .AppleType "conversation"}} selected{{end}}>conversation</option>
     </select>
   </div>
   <div><input type="submit" value="Filter"></div>
