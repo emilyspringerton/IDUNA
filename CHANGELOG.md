@@ -1,5 +1,29 @@
 # IDUNA Changelog
 
+## 2026-07-25 (3)
+- feat(vault): IDUNA Vault VS0 — founder-only password manager (S170-03b, per
+  `docs/NORTHSTAR_PASSWORD_MANAGER.md`). New `internal/vault` package (SQLite store, own file
+  `var/vault.db`, same isolation convention as the mailing-list vault) + `internal/http/handlers/
+  vault.go` (init/unlock/lock/status + full item CRUD, every endpoint loopback-only — no session-
+  token auth flow exists yet, that's VS1's Chrome-extension phase per the northstar's own §5).
+  Reuses `internal/mailinglist.Vault` directly for the actual crypto (Argon2id + AES-256-GCM, key
+  held only in server memory after unlock) rather than duplicating it — the northstar's own
+  instruction ("reuse the primitive, don't reinvent it") turned out to be exact: the mailing-list
+  vault already IS per-item encryption keyed off one shared master key, which is precisely the
+  shape a password manager needs. Five item types (login/note/api_key/totp/document), fields
+  stored as one flexible JSON blob per item so name isn't a plaintext column either — a locked
+  vault should reveal nothing, not even item names. New `emily vault init|unlock|lock|status|
+  add|get|list|delete` CLI (emily.cli). Verified end-to-end against a real running instance on a
+  throwaway port before touching production: init, wrong-passphrase rejection, unlock, add
+  (login+note), list, get (found+404), delete, lock, re-unlock with data surviving the lock
+  cycle — all real HTTP round-trips through real encrypt/decrypt, not mocked. `go test ./IDUNA/...`
+  green including new `internal/vault` package tests. Rebuilt and restarted the live
+  `iduna.service` — this re-locks the mailing-list vault too, an already-known, already-documented
+  operational cost of any IDUNA restart (see the northstar's own §4/§6), not new here; a human
+  needs to re-run `mailing-list-unlock` at their convenience. The live vault itself is
+  deliberately left uninitialized — `emily vault init` sets a real master passphrase that must be
+  human-memorized, never chosen or known by an agent.
+
 ## 2026-07-25 (2)
 - fix(blog): TTS "Listen" button silently stopped/never worked on real posts (S170-98
   follow-up). Founder: "play button exists on blog but does not work." Root cause: a

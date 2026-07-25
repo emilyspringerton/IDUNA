@@ -23,6 +23,7 @@ import (
 	"iduna/internal/store"
 	"iduna/internal/userlog"
 	"iduna/internal/util"
+	"iduna/internal/vault"
 )
 
 func main() {
@@ -185,6 +186,26 @@ func main() {
 	}
 	log.Printf("mailinglist: vault locked — run cmd/mailing-list-unlock to accept signups")
 
+	// IDUNA Vault — founder-only password manager (S170-03b, VS0 per
+	// docs/NORTHSTAR_PASSWORD_MANAGER.md). Same never-at-rest-unencrypted
+	// posture as the mailing list, own SQLite file, own lock -- reuses
+	// mailinglist.Vault's crypto primitive directly rather than duplicating
+	// it (see internal/vault package doc for the reuse rationale). Starts
+	// LOCKED; an operator runs `emily vault unlock` after every restart.
+	vaultDBPath := os.Getenv("VAULT_DB_PATH")
+	if vaultDBPath == "" {
+		vaultDBPath = "./var/vault.db"
+	}
+	vaultStore, err := vault.Open(vaultDBPath)
+	if err != nil {
+		log.Fatalf("vault: failed to open store: %v", err)
+	}
+	vaultH := &handlers.VaultHandler{
+		Store: vaultStore,
+		Vault: mailinglist.NewVault(),
+	}
+	log.Printf("vault: locked — run `emily vault unlock` to access items")
+
 	// DIS (Digital Immune System) proxy — first consumer of the collector
 	// outside WordPress/EDIS. nginx on this box shares one access log across
 	// every vhost, so the already-running edis-dis collector already sees
@@ -312,6 +333,10 @@ func main() {
 	mailingListH.Limiter = middleware.NewIPRateLimiter(5)
 	mailingListH.Register(mux)
 	disH.Register(mux)
+
+	// Vault — every endpoint loopback-gated inside the handler itself, same
+	// convention as mailing-list unlock/init (see VaultHandler doc comment).
+	vaultH.Register(mux)
 
 	// Blog — posting (programmatic or manual, same endpoint) requires
 	// blog.write; reading is public.
