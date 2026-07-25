@@ -72,6 +72,11 @@ type Target struct {
 // 90-day-lookback pass just genuinely takes minutes with no per-ticker
 // progress logging, which looked identical to a hang. Logging fixed
 // (PRRJECT_FATBABY), both now supervised and included below.
+//
+// 2026-07-25 (founder: "redgarden services need okemily status page"): added
+// REDGARDEN's three live systemd --user units (matchmaker-bots, matchmaker-
+// players, bot-pool) as CheckSystemdUnit targets, same convention as
+// shankpit460-emily-bot.service above -- no HTTP/UDP surface of their own.
 func DefaultTargets() []Target {
 	return []Target{
 		{Name: "iduna", Label: "Trust & Identity API", CheckURL: "http://localhost:8080/health"},
@@ -97,6 +102,9 @@ func DefaultTargets() []Target {
 		{Name: "market-data-watcher", Label: "FatBaby Market Data (Yahoo OHLCV)", Type: CheckSystemdUnit, Unit: "fatbaby-market-data-watcher.service"},
 		{Name: "movers-watcher", Label: "FatBaby Stocks on the Move", Type: CheckSystemdUnit, Unit: "fatbaby-movers-watcher.timer"},
 		{Name: "bond-watcher", Label: "FatBaby Treasury/Credit Watcher", Type: CheckSystemdUnit, Unit: "fatbaby-bond-watcher.timer"},
+		{Name: "redgarden-matchmaker-bots", Label: "Knights of the Void — Bot Pool Matchmaker (10v10)", Type: CheckSystemdUnit, Unit: "redgarden-matchmaker-bots.service"},
+		{Name: "redgarden-matchmaker-players", Label: "Knights of the Void — Player Matchmaker (1v1)", Type: CheckSystemdUnit, Unit: "redgarden-matchmaker-players.service"},
+		{Name: "redgarden-bot-pool", Label: "Knights of the Void — Persistent Bot Pool", Type: CheckSystemdUnit, Unit: "redgarden-bot-pool.service"},
 	}
 }
 

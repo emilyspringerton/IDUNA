@@ -1,5 +1,15 @@
 # IDUNA Changelog
 
+## 2026-07-25 (4)
+- feat(statuspage): add REDGARDEN's three live systemd units to the okemily.com status page.
+  Founder, real-time: "redgarden services need okemily status page." `redgarden-matchmaker-bots`
+  (10v10), `redgarden-matchmaker-players` (1v1), `redgarden-bot-pool` (persistent 19-bot pool)
+  added as `CheckSystemdUnit` targets in `internal/statuspage/checker.go`'s `DefaultTargets()`,
+  same convention already used for `shankpit460-emily-bot.service` (no HTTP/UDP surface of their
+  own). `status.html` needed no changes — it's fully data-driven off `GET /api/v1/status`. Live-
+  verified: all three report `up: true` within one poll cycle after restart, visible at
+  `okemily.com/status.html` and through the existing `/api/` proxy.
+
 ## 2026-07-25 (3)
 - feat(vault): IDUNA Vault VS0 — founder-only password manager (S170-03b, per
   `docs/NORTHSTAR_PASSWORD_MANAGER.md`). New `internal/vault` package (SQLite store, own file
