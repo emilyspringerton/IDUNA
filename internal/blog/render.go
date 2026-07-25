@@ -70,15 +70,32 @@ const pageTemplate = `<!DOCTYPE html>
   if (!("speechSynthesis" in window)) { btn.disabled = true; btn.textContent = "Listen (unsupported)"; return; }
   var synth = window.speechSynthesis;
   var utter = null;
+  var keepAlive = null;
   function setState(state, label) { btn.setAttribute("data-state", state); btn.innerHTML = label; }
+  function stop() {
+    if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
+    synth.cancel();
+    setState("idle", "&#9654; Listen");
+  }
   btn.addEventListener("click", function () {
-    if (synth.speaking) { synth.cancel(); setState("idle", "&#9654; Listen"); return; }
+    if (synth.speaking || synth.pending) { stop(); return; }
+    // Chrome has a long-documented bug where speechSynthesis silently stops
+    // any utterance running past ~15s unless kept alive with a periodic
+    // pause/resume -- exactly the length of a real blog post. cancel()
+    // first too: Chrome can leave the synth in a stuck state from a prior
+    // page's utterance, silently swallowing the next speak() call.
+    synth.cancel();
     var text = document.getElementById("post-body").innerText;
     utter = new SpeechSynthesisUtterance(text);
-    utter.onend = function () { setState("idle", "&#9654; Listen"); };
-    utter.onerror = function () { setState("idle", "&#9654; Listen"); };
+    utter.onend = stop;
+    utter.onerror = stop;
     synth.speak(utter);
     setState("playing", "&#9632; Stop");
+    keepAlive = setInterval(function () {
+      if (!synth.speaking) { clearInterval(keepAlive); keepAlive = null; return; }
+      synth.pause();
+      synth.resume();
+    }, 10000);
   });
 })();
 </script>

@@ -1,5 +1,16 @@
 # IDUNA Changelog
 
+## 2026-07-25 (2)
+- fix(blog): TTS "Listen" button silently stopped/never worked on real posts (S170-98
+  follow-up). Founder: "play button exists on blog but does not work." Root cause: a
+  long-documented Chrome bug that silently stops any `speechSynthesis` utterance running past
+  ~15 seconds -- exactly the length of a real blog post, unlike the short strings this normally
+  gets tested with. Fixed with the standard workaround: a `pause()`/`resume()` keep-alive every
+  10s while speaking, plus an unconditional `synth.cancel()` before each fresh `speak()` (Chrome
+  can also leave the synth stuck from a prior page's utterance, silently swallowing the next
+  call). Rebuilt, re-rendered all posts via `cmd/blog-rerender`, restarted the live
+  `iduna.service`, verified the fix is actually being served.
+
 ## 2026-07-25 (1)
 - feat(blog): TTS "Listen" button on every post (S170-98). Founder: "add a tts play button to the
   top of okemily blog posts." Zero new dependencies -- uses the browser's native
