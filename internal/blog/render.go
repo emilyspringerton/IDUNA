@@ -42,6 +42,15 @@ const pageTemplate = `<!DOCTYPE html>
     font-size: 0.9rem; color: var(--fg-dim);
   }
   .post-ad a { font-weight: 600; }
+  .tts-btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 2rem; padding: 0.5rem 0.9rem;
+    background: var(--bg-card); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 999px; font-size: 0.85rem; cursor: pointer;
+  }
+  .tts-btn:hover { border-color: var(--accent); }
+  .tts-btn[data-state="playing"] { color: var(--accent); border-color: var(--accent); }
+  .tts-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -49,11 +58,30 @@ const pageTemplate = `<!DOCTYPE html>
   <div class="wordmark"><a href="/">EINHORN_INDUSTRIAL</a> / Blog</div>
   <h1>{{.Title}}</h1>
   <p class="meta">By {{.Author}} &middot; {{.PublishedDate}}</p>
-  <div class="body">{{.BodyHTML}}</div>
+  <button class="tts-btn" id="tts-btn" data-state="idle" type="button">&#9654; Listen</button>
+  <div class="body" id="post-body">{{.BodyHTML}}</div>
   <p class="post-ad">{{.AdLine}} <a href="{{.AdHref}}">{{.AdCTA}}</a></p>
   <a class="back" href="/blog/">&larr; All posts</a>
 </div>
 <script src="/dis.js" defer></script>
+<script>
+(function () {
+  var btn = document.getElementById("tts-btn");
+  if (!("speechSynthesis" in window)) { btn.disabled = true; btn.textContent = "Listen (unsupported)"; return; }
+  var synth = window.speechSynthesis;
+  var utter = null;
+  function setState(state, label) { btn.setAttribute("data-state", state); btn.innerHTML = label; }
+  btn.addEventListener("click", function () {
+    if (synth.speaking) { synth.cancel(); setState("idle", "&#9654; Listen"); return; }
+    var text = document.getElementById("post-body").innerText;
+    utter = new SpeechSynthesisUtterance(text);
+    utter.onend = function () { setState("idle", "&#9654; Listen"); };
+    utter.onerror = function () { setState("idle", "&#9654; Listen"); };
+    synth.speak(utter);
+    setState("playing", "&#9632; Stop");
+  });
+})();
+</script>
 </body>
 </html>
 `

@@ -1,5 +1,14 @@
 # IDUNA Changelog
 
+## 2026-07-25 (1)
+- feat(blog): TTS "Listen" button on every post (S170-98). Founder: "add a tts play button to the
+  top of okemily blog posts." Zero new dependencies -- uses the browser's native
+  `window.speechSynthesis` API, reading `#post-body`'s text aloud, toggling to a "Stop" state
+  while speaking. Degrades gracefully (disabled button, "unsupported" label) on browsers without
+  the API. Added to `internal/blog/render.go`'s `pageTemplate` (the static-HTML generator, not a
+  live per-request template), then ran `cmd/blog-rerender` to backfill all 70 existing posts, not
+  just future ones.
+
 ## 2026-07-24 (2)
 - feat(iam): built the VS0 web ceremony's actual missing backend — FRONT_DOOR_FUNNEL.md §7 step 5. Investigating `app.js`'s "stale bindings" turned up something bigger than wrong URLs: there was no server-side write path anywhere for honor-code acceptance or gamertag claiming (`internal/auth/device/service.go` only ever checked `HonorAccepted`/`Handle`, nothing ever set them). Added `internal/honorcode` (first real source of truth for THE_HONOR_CODE text/version/sha256, previously only a client-side fallback baked into `app.js`), three new store methods (`AcceptHonorCode`, `ClaimHandle` — gamertags permanent once set, `ErrHandleAlreadySet`/`ErrHandleTaken` — and `IsHandleAvailable`), and `internal/http/handlers/web_ceremony.go` registering the exact six bare endpoints `app.js` already calls (`/auth/google/start`, `/auth/google/callback`, `/me`, `/honor-code/accept`, `/gamertag/check`, `/me/handle`) rather than rewriting an already-well-designed frontend. Added the one thing `app.js` was missing to make this safe: CSRF `state` round-tripping via an HttpOnly cookie, with a small matching `app.js` patch (capture `state` off the OAuth redirect, forward it on callback). 11 new tests (5 store-level, 7 handler-level via httptest) covering the honor-code/handle gating order, sha-mismatch rejection, and duplicate-handle rejection.
 - ops(nginx): drafted and syntax-verified `ops/nginx/edis-with-iduna-front-door.conf` (the four-plus location blocks from `ops/nginx-front-door-snippet.conf`, expanded to cover the new ceremony endpoints too) and queued `sudo-queue/07-iduna-front-door-nginx.sh` — this box has no passwordless sudo, so applying it needs the founder. The `gate.farthq.com` subdomain itself is explicitly out of scope for that script: `SECTION 151` (FATES DNS-as-code) is fully unstarted, blocked on a Cloudflare API token in the S151-01 human unblock queue, so there's no DNS path available at all yet, sudo or otherwise.
