@@ -1,5 +1,21 @@
 # IDUNA Changelog
 
+## 2026-07-29
+- feat(redgarden): hero-level win-rate tracking (`redgarden_hero_stats`). Founder: "can we start
+  crunching the data on the heroes that are the strongest?" -> "ok i want to start tracking it
+  on okemily.com." REDGARDEN's own local match logs could compute this offline
+  (`scripts/hero_stats.py`), but a real public page needs a real, durable, always-on source —
+  same "player_game_stats vs. shankpit's own kills/deaths columns" genre-shape reasoning the
+  202607240002 migration's own comment already gives, applied one level up: hero_id numbering is
+  entirely REDGARDEN's own roster, so this table is REDGARDEN-specific by construction, no
+  separate `game` column needed. New migration `202607290001_redgarden_hero_stats.sql` (one row
+  per hero_id, aggregate wins/losses/matches_played across every player, not per-account). New
+  `POST /api/v1/redgarden/hero-result` (requires `redgarden.match.write`, same permission
+  `game-result` already uses — both are "the game server reporting its own authoritative
+  outcome," just two different aggregates over the same fact) and public `GET
+  /api/v1/redgarden/hero-leaderboard?min-games=N` (win rate computed at read time, not stored,
+  so it can't drift out of sync with wins/losses). 6 new tests. Full suite green.
+
 ## 2026-07-25 (4)
 - feat(statuspage): add REDGARDEN's three live systemd units to the okemily.com status page.
   Founder, real-time: "redgarden services need okemily status page." `redgarden-matchmaker-bots`

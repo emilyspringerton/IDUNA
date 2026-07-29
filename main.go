@@ -483,6 +483,15 @@ func main() {
 	// Public leaderboard read — same trust level as GET /api/v1/players/{id}.
 	mux.Handle("/api/v1/redgarden/leaderboard", &handlers.RedgardenLeaderboardHandler{DB: db})
 
+	redgardenHeroResultH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("redgarden.match.write")(&handlers.RedgardenHeroResultHandler{DB: db}),
+	)
+	mux.Handle("/api/v1/redgarden/hero-result", redgardenHeroResultH)
+
+	// Public hero leaderboard read — "which heroes are strongest," same trust level as the
+	// player leaderboard above.
+	mux.Handle("/api/v1/redgarden/hero-leaderboard", &handlers.RedgardenHeroLeaderboardHandler{DB: db})
+
 	// SHANKPIT-460 v0 matchmaking queue (S156-03) — in-memory, ephemeral by
 	// design (see handlers.ShankpitQueue doc comment). ServerAddr is the one
 	// persistent game server instance (no per-match instances in v0); no

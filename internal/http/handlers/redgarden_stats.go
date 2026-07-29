@@ -156,6 +156,157 @@ func (h *RedgardenLeaderboardHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 	_ = json.NewEncoder(w).Encode(map[string]any{"game": "redgarden", "leaderboard": entries})
 }
 
+// RedgardenHeroResultHandler writes REDGARDEN hero-level match outcomes to
+// redgarden_hero_stats (202607290001 migration) -- a cross-player aggregate
+// ("how often does anyone playing this hero win"), separate from
+// player_game_stats above, which is keyed by player_id, not hero_id. Same
+// trust model as RedgardenGameResultHandler: the request body is trusted
+// with no server-side verification beyond the permission check, same
+// redgarden.match.write permission (not a new, separate one -- both are
+// "the game server reporting its own authoritative match outcome," just
+// two different aggregates over the same underlying fact).
+//
+//	POST /api/v1/redgarden/hero-result   (requires redgarden.match.write)
+//	  body: {"hero_id": 5, "result": "win"|"loss"}
+//	  -> {"updated": true, "wins": N, "losses": N, "matches_played": N}
+type RedgardenHeroResultHandler struct {
+	DB *sql.DB
+}
+
+func (h *RedgardenHeroResultHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		HeroID int    `json:"hero_id"`
+		Result string `json:"result"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	// 0..63 is a generous ceiling against packages/simulation/arena_game.h's real
+	// ARENA_HERO_COUNT (28 as of this writing) -- not imported directly (this is a different
+	// repo/language with no C header access, same "duplicated by hand" reasoning
+	// apps/arena_bot/src/main.c's own ARENA_HERO_COUNT copy already documents for itself), a
+	// deliberately loose bound so a future roster growth doesn't need an IDUNA redeploy just to
+	// keep accepting valid hero_ids.
+	if body.HeroID < 0 || body.HeroID > 63 {
+		http.Error(w, "hero_id out of range", http.StatusBadRequest)
+		return
+	}
+	var win, loss int
+	switch body.Result {
+	case "win":
+		win = 1
+	case "loss":
+		loss = 1
+	default:
+		http.Error(w, `result must be "win" or "loss"`, http.StatusBadRequest)
+		return
+	}
+
+	if h.DB == nil {
+		http.Error(w, "stats not available", http.StatusServiceUnavailable)
+		return
+	}
+	_, err := h.DB.ExecContext(r.Context(), `
+		INSERT INTO redgarden_hero_stats (hero_id, wins, losses, matches_played, last_played_at)
+		VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+		ON CONFLICT(hero_id) DO UPDATE SET
+			wins = wins + excluded.wins,
+			losses = losses + excluded.losses,
+			matches_played = matches_played + 1,
+			last_played_at = CURRENT_TIMESTAMP
+	`, body.HeroID, win, loss)
+	if err != nil {
+		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var wins, losses, matches int
+	err = h.DB.QueryRowContext(r.Context(),
+		`SELECT wins, losses, matches_played FROM redgarden_hero_stats WHERE hero_id = ?`,
+		body.HeroID,
+	).Scan(&wins, &losses, &matches)
+	if err != nil {
+		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"updated":        true,
+		"wins":           wins,
+		"losses":         losses,
+		"matches_played": matches,
+	})
+}
+
+// RedgardenHeroLeaderboardHandler reads every hero's aggregate stats, sorted by win rate --
+// the "which heroes are strongest" surface the founder asked for directly, meant for the public
+// okemily.com page (wotan.okemily.com), same public-no-permission trust level as
+// RedgardenLeaderboardHandler above. Win rate is computed here, not stored, so it's always
+// consistent with the current wins/losses rather than a second value that could drift out of
+// sync with them.
+//
+//	GET /api/v1/redgarden/hero-leaderboard?min-games=N
+type RedgardenHeroLeaderboardHandler struct {
+	DB *sql.DB
+}
+
+func (h *RedgardenHeroLeaderboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	minGames := 0
+	if g := r.URL.Query().Get("min-games"); g != "" {
+		if n, err := parsePositiveInt(g); err == nil {
+			minGames = n
+		}
+	}
+	if h.DB == nil {
+		http.Error(w, "stats not available", http.StatusServiceUnavailable)
+		return
+	}
+	rows, err := h.DB.QueryContext(r.Context(), `
+		SELECT hero_id, wins, losses, matches_played
+		FROM redgarden_hero_stats
+		WHERE matches_played >= ?
+		ORDER BY (CAST(wins AS REAL) / matches_played) DESC, matches_played DESC
+	`, minGames)
+	if err != nil {
+		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type entry struct {
+		HeroID        int     `json:"hero_id"`
+		Wins          int     `json:"wins"`
+		Losses        int     `json:"losses"`
+		MatchesPlayed int     `json:"matches_played"`
+		WinRate       float64 `json:"win_rate"`
+	}
+	entries := []entry{}
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.HeroID, &e.Wins, &e.Losses, &e.MatchesPlayed); err != nil {
+			http.Error(w, "db scan error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if e.MatchesPlayed > 0 {
+			e.WinRate = float64(e.Wins) / float64(e.MatchesPlayed)
+		}
+		entries = append(entries, e)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"game": "redgarden", "heroes": entries})
+}
+
 func parsePositiveInt(s string) (int, error) {
 	n := 0
 	for _, c := range s {
