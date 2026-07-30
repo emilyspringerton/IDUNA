@@ -1,5 +1,22 @@
 # IDUNA Changelog
 
+## 2026-07-30
+- feat(redgarden): live-match spectator endpoint. Founder: "i want to watch the match on my
+  phone web view" -> "live text dashboard." A fourth REDGARDEN aggregate alongside game-result/
+  hero-result/leaderboard, but deliberately NOT database-backed: this is ephemeral "what's
+  happening right now" state (phase, resource race, node ownership, tower HP, per-hero HP/K/D/
+  Flow), not a durable stat, so an in-memory mutex-protected holder is the honestly correct shape
+  rather than churning SQLite every few seconds for data nobody needs to keep. New `POST
+  /api/v1/redgarden/live-match` (requires `redgarden.match.write`, same permission every other
+  REDGARDEN write handler uses -- the authoritative game server reporting its own state, a third
+  aggregate over the same fact) stores only the latest snapshot; public `GET
+  /api/v1/redgarden/live-match/latest` serves it back, reporting `{"live":false}` if nothing's
+  been posted in the last 30s (a stale snapshot from an ended/crashed match reads identically to
+  a real live one otherwise). Only one match runs at a time under the current bot-pool
+  architecture (a single 20-slot lobby), so "the latest reported match" is unambiguous. Verified
+  live end to end: `apps/arena_server` now posts every 3s while `ARENA_PHASE_LIVE`, confirmed via
+  direct curl against both localhost and the public okemily.com `/api/` proxy.
+
 ## 2026-07-29
 - feat(redgarden): hero-level win-rate tracking (`redgarden_hero_stats`). Founder: "can we start
   crunching the data on the heroes that are the strongest?" -> "ok i want to start tracking it

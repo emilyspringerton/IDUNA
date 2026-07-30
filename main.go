@@ -492,6 +492,15 @@ func main() {
 	// player leaderboard above.
 	mux.Handle("/api/v1/redgarden/hero-leaderboard", &handlers.RedgardenHeroLeaderboardHandler{DB: db})
 
+	// Live match spectator state (2026-07-30, founder: "i want to watch the match on my phone
+	// web view") — same redgarden.match.write trust as the write handlers above; the GET side is
+	// public, same trust level as the leaderboards.
+	redgardenLiveMatchWriteH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("redgarden.match.write")(&handlers.RedgardenLiveMatchHandler{}),
+	)
+	mux.Handle("/api/v1/redgarden/live-match", redgardenLiveMatchWriteH)
+	mux.Handle("/api/v1/redgarden/live-match/latest", &handlers.RedgardenLiveMatchGetHandler{})
+
 	// SHANKPIT-460 v0 matchmaking queue (S156-03) — in-memory, ephemeral by
 	// design (see handlers.ShankpitQueue doc comment). ServerAddr is the one
 	// persistent game server instance (no per-match instances in v0); no

@@ -3,7 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -305,6 +308,91 @@ func (h *RedgardenHeroLeaderboardHandler) ServeHTTP(w http.ResponseWriter, r *ht
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"game": "redgarden", "heroes": entries})
+}
+
+// Live match state (2026-07-30, founder: "i want to watch the match on my phone web view").
+// Deliberately NOT database-backed, unlike every other REDGARDEN stat above -- this is a single
+// piece of ephemeral "what's happening right now" state, not a durable per-hero/per-player
+// aggregate, so an in-memory holder (mutex-protected, one process-wide value) is the honestly
+// correct shape rather than churning SQLite with a write every few seconds for data nobody needs
+// to keep. Only one REDGARDEN match runs at a time under the current bot-pool architecture (a
+// single 20-slot lobby), so "the latest reported match" is unambiguous -- a genuinely concurrent-
+// matches future would need this to become keyed by match/port, not scoped here.
+var redgardenLiveMatch struct {
+	mu        sync.Mutex
+	payload   json.RawMessage
+	updatedAt time.Time
+}
+
+// redgardenLiveMatchStaleAfter: if arena_server hasn't reported in this long, treat it as "no
+// live match" rather than serving a frozen, increasingly-wrong snapshot of a match that already
+// ended (or a server that crashed) -- a stale-but-present payload would otherwise look identical
+// to a real live one to anything polling this endpoint.
+const redgardenLiveMatchStaleAfter = 30 * time.Second
+
+// RedgardenLiveMatchHandler receives a periodic (every few seconds, from apps/arena_server's own
+// main tick loop while ARENA_PHASE_LIVE) snapshot of the current match -- phase, resources,
+// nodes, towers, and per-hero HP/K/D/Flow -- and holds only the most recent one. Same trust model
+// as every other REDGARDEN write handler in this file: the body is trusted with no server-side
+// shape validation beyond "is it valid JSON," gated on the same redgarden.match.write permission
+// game-result/hero-result already require, since this is the same authoritative game server
+// reporting its own state, just a third aggregate over it.
+//
+//	POST /api/v1/redgarden/live-match   (requires redgarden.match.write)
+//	  body: arbitrary JSON object (arena_server's own live-state shape) -> {"stored": true}
+type RedgardenLiveMatchHandler struct{}
+
+func (h *RedgardenLiveMatchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	if !json.Valid(body) {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	redgardenLiveMatch.mu.Lock()
+	redgardenLiveMatch.payload = json.RawMessage(body)
+	redgardenLiveMatch.updatedAt = time.Now()
+	redgardenLiveMatch.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"stored": true})
+}
+
+// RedgardenLiveMatchGetHandler serves the most recently reported live-match snapshot -- the
+// actual spectator-dashboard surface, meant for a simple polling web page (okemily.com). Public,
+// same trust level as the other REDGARDEN leaderboard reads above -- there's nothing here a
+// spectator shouldn't already see by watching the match itself.
+//
+//	GET /api/v1/redgarden/live-match  -> {"live": false} or {"live": true, "updated_at": ..., "match": {...}}
+type RedgardenLiveMatchGetHandler struct{}
+
+func (h *RedgardenLiveMatchGetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	redgardenLiveMatch.mu.Lock()
+	payload := redgardenLiveMatch.payload
+	updatedAt := redgardenLiveMatch.updatedAt
+	redgardenLiveMatch.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	if payload == nil || time.Since(updatedAt) > redgardenLiveMatchStaleAfter {
+		_ = json.NewEncoder(w).Encode(map[string]any{"live": false})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"live":       true,
+		"updated_at": updatedAt.UTC().Format(time.RFC3339),
+		"match":      payload,
+	})
 }
 
 func parsePositiveInt(s string) (int, error) {
