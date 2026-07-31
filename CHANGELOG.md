@@ -1,5 +1,15 @@
 # IDUNA Changelog
 
+## 2026-07-31 (2)
+- feat(redgarden): `POST /api/v1/redgarden/self-ticket` -- closes `REDGARDEN_GUI_NORTHSTAR.md`'s
+  own named gap ("No GUI login path exists yet end-to-end"). Same "mint for the caller's own JWT
+  subject" trust model as `ShankpitTicketHandler`, deliberately separate from
+  `RedgardenPlayerTicketHandler` (mints on behalf of a request-body player_id, restricted to the
+  DRAGONSNSHIT-MUD agent) so that handler's own blast-radius guarantee stays untouched. REDGARDEN
+  `apps/arena`'s new login screen calls this directly after `/api/v1/auth/email/login`. 404 if
+  the authenticated player has no registered DragonsNShit character yet. 6 new tests. `main.go`,
+  `internal/http/handlers/redgarden_self_ticket.go`.
+
 ## 2026-07-31
 - feat(mmo): `GET /api/v1/characters/by-player/:player_id` -- REDGARDEN_GUI_NORTHSTAR.md
   Milestone 4 (reward-credit hook). Resolves a WOTAN player_id to its DragonsNShit character, if
