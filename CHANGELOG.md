@@ -1,6 +1,23 @@
 # IDUNA Changelog
 
 ## 2026-07-31
+- feat(redgarden): `POST /api/v1/redgarden/player-ticket` -- REDGARDEN_GUI_NORTHSTAR.md
+  Milestone 3 (Battlegrounds entry point). Mints a real REDGARDEN connect ticket for a real
+  DragonsNShit character's own `player_id`, the non-bot counterpart to the existing
+  `redgarden.ticket.mint`/`RedgardenTicketHandler` (which is deliberately scoped to
+  `redgarden_bot`-provider players only and stays untouched). New
+  `redgarden.player-ticket.mint` permission, checked the opposite way: the player_id must have
+  a real `characters` row instead of a `redgarden_bot`-provider `players` row, so neither
+  permission can satisfy the other's trust model even if one agent's secret leaked. New
+  `DRAGONSNSHIT-MUD` M2M agent (`config/agents.json`, migration
+  `202607310001_dragonsnshit_mud_agent.sql`), provisioned live via `cmd/bootstrap` against the
+  running SQLite truestore (idempotent, existing agents untouched -- verified live: new agent
+  logs in via `/api/v1/auth/agent` against the running server with no restart needed). 5 new
+  tests (`internal/http/handlers/redgarden_player_ticket_test.go`). Real, related, honest gap
+  found while wiring this: GoblinFoxDragon's own `apps2/mud` was calling `CreateCharacter` with
+  `conn.RemoteAddr().String()` (a TCP socket address) as `player_id` -- not a valid UUID, not
+  stable across reconnects, and this ticket endpoint's own `uuid.Parse` would reject it outright.
+  Fixed on the GoblinFoxDragon side (see that repo's own CHANGELOG), not here.
 - feat(mmo): `PATCH /api/v1/characters/:id/gold/credit` -- the symmetric counterpart
   `handleDeductGold` never had. GoblinFoxDragon's own `docs2/DRAGONSNSHIT_TWO_BACKENDS_AUDIT.md`
   (EMILY/BACKLOG.md "unify the backends" item) traced a real gap to here: neither `apps2/mud`'s

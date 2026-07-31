@@ -149,6 +149,15 @@
         "redgarden.ticket.mint",
         "redgarden.match.write"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000013",
+      "name": "DRAGONSNSHIT-MUD",
+      "type": "game_server_agent",
+      "description": "GoblinFoxDragon apps2/mud (DragonsNShit telnet MUD) — authenticates via POST /api/v1/auth/agent to mint a real REDGARDEN connect ticket on behalf of a real DragonsNShit character's own player_id (POST /api/v1/redgarden/player-ticket) when a player uses the Battlegrounds entry point. Deliberately separate from redgarden.ticket.mint (REDGARDEN-BOTS, headless-bot-only) — see redgarden_player_ticket.go's own doc comment for the trust model. REDGARDEN_GUI_NORTHSTAR.md Milestone 3, 2026-07-31.",
+      "permissions": [
+        "redgarden.player-ticket.mint"
+      ]
     }
   ]
 }

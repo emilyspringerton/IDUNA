@@ -475,6 +475,19 @@ func main() {
 	)
 	mux.Handle("/api/v1/redgarden/ticket", redgardenTicketH)
 
+	// REDGARDEN_GUI_NORTHSTAR.md Milestone 3 (2026-07-31): the real, non-bot counterpart to the
+	// handler just above — mints on behalf of a real DragonsNShit character's own player_id
+	// (GoblinFoxDragon/apps2/mud's `battlegrounds` command), gated behind a separate permission
+	// so redgarden.ticket.mint's own bot-only blast-radius guarantee is untouched. See
+	// redgarden_player_ticket.go's own doc comment for the full trust model.
+	redgardenPlayerTicketH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("redgarden.player-ticket.mint")(&handlers.RedgardenPlayerTicketHandler{
+			DB:     db,
+			Secret: []byte(os.Getenv("REDGARDEN_TICKET_SECRET")),
+		}),
+	)
+	mux.Handle("/api/v1/redgarden/player-ticket", redgardenPlayerTicketH)
+
 	redgardenResultH := middleware.RequireAuth(keys)(
 		middleware.RequirePermission("redgarden.match.write")(&handlers.RedgardenGameResultHandler{DB: db}),
 	)
