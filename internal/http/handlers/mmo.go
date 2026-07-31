@@ -6,6 +6,8 @@ package handlers
 //   POST   /api/v1/characters                         — create character
 //   GET    /api/v1/characters/:id                     — fetch character
 //   PATCH  /api/v1/characters/:id/position            — update scene+pos (game server M2M)
+//   PATCH  /api/v1/characters/:id/gold                — deduct gold (409 if insufficient)
+//   PATCH  /api/v1/characters/:id/gold/credit          — credit gold, bounded per call (2026-07-31)
 //   GET    /api/v1/characters/:id/inventory           — bag inventory (S129-05)
 //   GET    /api/v1/characters/:id/equipment           — equipped slots (S129-05)
 //   POST   /api/v1/items                              — craft item; provenance_chain[0] set
@@ -99,6 +101,17 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/gold") {
 		id := extractSegment(path, "/api/v1/characters/", "/gold")
 		h.handleDeductGold(w, r, id)
+		return
+	}
+	// PATCH /api/v1/characters/:id/gold/credit (2026-07-31, GoblinFoxDragon
+	// EMILY/BACKLOG.md "unify the backends" follow-up): the deduct-only endpoint above has no
+	// symmetric way to grant gold, which is why neither apps2/mud's nor apps2/server-go's own
+	// gold-earning paths (quest rewards, item sales, future Battleground reward-crediting per
+	// GoblinFoxDragon/docs2/REDGARDEN_GUI_NORTHSTAR.md's own Milestone 4) can ever persist an
+	// increase.
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/gold/credit") {
+		id := extractSegment(path, "/api/v1/characters/", "/gold/credit")
+		h.handleCreditGold(w, r, id)
 		return
 	}
 	// GET /api/v1/characters/:id/items
@@ -263,6 +276,51 @@ func (h *MMOHandler) handleDeductGold(w http.ResponseWriter, r *http.Request, id
 		} else {
 			mmoWriteError(w, http.StatusConflict, "insufficient gold balance")
 		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// maxGoldCreditPerCall bounds a single credit-gold call. Unlike handleDeductGold (bounded
+// naturally by the character's own existing balance -- you can never spend more than you have),
+// a credit endpoint has no such natural ceiling, so a single malformed or malicious call could
+// otherwise mint an unbounded amount. 10,000 is a soft, generous sanity bound (20x a fresh
+// character's starting 500-gold balance per apps2/mud's own real starting value) -- real
+// economy-wide rate limiting or per-source auditing is a separate, larger concern not solved by
+// this one constant.
+const maxGoldCreditPerCall = 10000
+
+// handleCreditGold atomically adds gold to a character's balance -- the symmetric counterpart
+// handleDeductGold above never had. Payload: {"credit": N}.
+func (h *MMOHandler) handleCreditGold(w http.ResponseWriter, r *http.Request, id string) {
+	var req struct {
+		Credit int `json:"credit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Credit <= 0 {
+		mmoWriteError(w, http.StatusBadRequest, "credit must be positive")
+		return
+	}
+	if req.Credit > maxGoldCreditPerCall {
+		mmoWriteError(w, http.StatusBadRequest, "credit exceeds per-call maximum")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE characters SET gold_balance = gold_balance + ?, updated_at = ?
+		 WHERE character_id = ?`,
+		req.Credit, now, id,
+	)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		mmoWriteError(w, http.StatusNotFound, "character not found")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -553,7 +611,7 @@ func (h *MMOHandler) handleGetItem(w http.ResponseWriter, r *http.Request, id st
 		"item_id": itemID, "owner_character_id": ownerID, "item_type": itemType,
 		"name": name, "item_level": il, "quantity": qty,
 		"provenance_chain": json.RawMessage(chain),
-		"created_at": createdAt, "updated_at": updatedAt,
+		"created_at":       createdAt, "updated_at": updatedAt,
 	}
 	if destroyedAt != "" {
 		resp["destroyed_at"] = destroyedAt
@@ -815,8 +873,8 @@ type createWorldEventRequest struct {
 }
 
 type patchWorldEventRequest struct {
-	Phase         string `json:"phase"`
-	LeyIntegrity  int    `json:"ley_integrity"`
+	Phase        string `json:"phase"`
+	LeyIntegrity int    `json:"ley_integrity"`
 }
 
 type resolveWorldEventRequest struct {
@@ -955,12 +1013,12 @@ func (h *MMOHandler) handleResolveWorldEvent(w http.ResponseWriter, r *http.Requ
 
 // FOSnapshot is a point-in-time view of one Field Office pushed by the game server.
 type FOSnapshot struct {
-	ID         string    `json:"id"`
-	DistrictName string  `json:"district_name"`
-	Phase      string    `json:"phase"`       // "Unclaimed"|"Held"|"Contested"|"Containment"
-	HolderID   string    `json:"holder_id"`   // crew ID or ""
-	Alertness  float64   `json:"alertness"`   // 0.0–1.0
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	DistrictName string    `json:"district_name"`
+	Phase        string    `json:"phase"`     // "Unclaimed"|"Held"|"Contested"|"Containment"
+	HolderID     string    `json:"holder_id"` // crew ID or ""
+	Alertness    float64   `json:"alertness"` // 0.0–1.0
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // foStore is the shared in-memory map of FO snapshots, keyed by FO ID.

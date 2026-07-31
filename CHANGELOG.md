@@ -1,5 +1,21 @@
 # IDUNA Changelog
 
+## 2026-07-31
+- feat(mmo): `PATCH /api/v1/characters/:id/gold/credit` -- the symmetric counterpart
+  `handleDeductGold` never had. GoblinFoxDragon's own `docs2/DRAGONSNSHIT_TWO_BACKENDS_AUDIT.md`
+  (EMILY/BACKLOG.md "unify the backends" item) traced a real gap to here: neither `apps2/mud`'s
+  disconnect-time gold sync nor any future `apps2/server-go` reward-crediting (REDGARDEN
+  Battlegrounds, per `GoblinFoxDragon/docs2/REDGARDEN_GUI_NORTHSTAR.md`'s own Milestone 4) can
+  ever persist a gold *increase*, because this API had no way to grant gold at all -- only
+  deduct. New `handleCreditGold`, same atomic-update shape as `handleDeductGold`, bounded by a
+  new `maxGoldCreditPerCall` (10,000 -- a soft sanity cap; unlike deduction, which is naturally
+  bounded by a character's own existing balance, a credit endpoint has no natural ceiling, so an
+  unbounded one risks a single malformed/malicious call minting currency). 5 new tests
+  (`internal/http/handlers/mmo_gold_test.go`): success case, rejects non-positive, rejects
+  over-cap (balance verified unchanged), unknown character 404, and a regression guard
+  confirming the new route doesn't shadow the existing deduct route. `go build ./...`/`go test
+  ./...` clean.
+
 ## 2026-07-30
 - feat(redgarden): live-match spectator endpoint. Founder: "i want to watch the match on my
   phone web view" -> "live text dashboard." A fourth REDGARDEN aggregate alongside game-result/
