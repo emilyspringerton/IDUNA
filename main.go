@@ -488,6 +488,16 @@ func main() {
 	)
 	mux.Handle("/api/v1/redgarden/player-ticket", redgardenPlayerTicketH)
 
+	// REDGARDEN_GUI_NORTHSTAR.md's "no GUI login path" gap, closed: apps/arena's own login
+	// screen calls /api/v1/auth/email/login for a player JWT, then this endpoint (same
+	// "mint for the caller's own JWT subject" trust model as shankpitTicketH above) instead of
+	// going through apps2/mud's telnet `battlegrounds` command.
+	redgardenSelfTicketH := middleware.RequireAuth(keys)(&handlers.RedgardenSelfTicketHandler{
+		DB:     db,
+		Secret: []byte(os.Getenv("REDGARDEN_TICKET_SECRET")),
+	})
+	mux.Handle("/api/v1/redgarden/self-ticket", redgardenSelfTicketH)
+
 	redgardenResultH := middleware.RequireAuth(keys)(
 		middleware.RequirePermission("redgarden.match.write")(&handlers.RedgardenGameResultHandler{DB: db}),
 	)
