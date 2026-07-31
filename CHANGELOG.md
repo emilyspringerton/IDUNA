@@ -1,6 +1,14 @@
 # IDUNA Changelog
 
 ## 2026-07-31
+- feat(mmo): `GET /api/v1/characters/by-player/:player_id` -- REDGARDEN_GUI_NORTHSTAR.md
+  Milestone 4 (reward-credit hook). Resolves a WOTAN player_id to its DragonsNShit character, if
+  it has one -- REDGARDEN's `apps/arena_server` (`report_match_result`) only knew match
+  participants' player_ids from their connect tickets, with no way to find the character_id its
+  gold-credit call needs. Same shape as the existing `GET /api/v1/characters/:id`, keyed by
+  `player_id` instead; checked ahead of that route's own prefix match so it doesn't get treated
+  as a literal character_id. No new permission -- same generic `RequireAuth` every characters
+  route already uses. 3 new tests.
 - feat(redgarden): `POST /api/v1/redgarden/player-ticket` -- REDGARDEN_GUI_NORTHSTAR.md
   Milestone 3 (Battlegrounds entry point). Mints a real REDGARDEN connect ticket for a real
   DragonsNShit character's own `player_id`, the non-bot counterpart to the existing

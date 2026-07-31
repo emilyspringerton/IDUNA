@@ -5,6 +5,7 @@ package handlers
 // Routes (all require M2M or user JWT unless noted):
 //   POST   /api/v1/characters                         — create character
 //   GET    /api/v1/characters/:id                     — fetch character
+//   GET    /api/v1/characters/by-player/:player_id     — resolve a WOTAN player_id to its character (2026-07-31)
 //   PATCH  /api/v1/characters/:id/position            — update scene+pos (game server M2M)
 //   PATCH  /api/v1/characters/:id/gold                — deduct gold (409 if insufficient)
 //   PATCH  /api/v1/characters/:id/gold/credit          — credit gold, bounded per call (2026-07-31)
@@ -144,6 +145,17 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleGetEquipment(w, r, id)
 		return
 	}
+	// GET /api/v1/characters/by-player/:player_id (2026-07-31, REDGARDEN_GUI_NORTHSTAR.md
+	// Milestone 4): resolves a WOTAN player_id to its DragonsNShit character, if it has one --
+	// apps/arena_server's report_match_result already knows a match's players' real player_ids
+	// (from their connect ticket) but has no way to find the character_id its own gold-credit
+	// call needs. Must be checked before the generic GET /:id fallback just below, which would
+	// otherwise treat "by-player" as a character_id.
+	if r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/characters/by-player/") {
+		playerID := strings.TrimPrefix(path, "/api/v1/characters/by-player/")
+		h.handleGetCharacterByPlayer(w, r, playerID)
+		return
+	}
 	// GET /api/v1/characters/:id
 	if r.Method == http.MethodGet && len(path) > len("/api/v1/characters/") {
 		id := strings.TrimPrefix(path, "/api/v1/characters/")
@@ -202,6 +214,31 @@ func (h *MMOHandler) handleGetCharacter(w http.ResponseWriter, r *http.Request, 
 		&c.JobMain, &c.JobSub, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			mmoWriteError(w, http.StatusNotFound, "character not found")
+			return
+		}
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+// handleGetCharacterByPlayer (REDGARDEN_GUI_NORTHSTAR.md Milestone 4): same shape as
+// handleGetCharacter, keyed by player_id instead of character_id. A player_id can have at most
+// one DragonsNShit character (createCharacterRequest's own INSERT has no uniqueness constraint
+// on player_id in the schema, but every real caller -- apps2/mud's fetch-or-create -- only ever
+// creates one per player_id in practice); LIMIT 1 makes that assumption explicit rather than
+// silently depending on row order if it's ever violated.
+func (h *MMOHandler) handleGetCharacterByPlayer(w http.ResponseWriter, r *http.Request, playerID string) {
+	row := h.DB.QueryRowContext(r.Context(),
+		`SELECT character_id, player_id, name, scene_id, pos_x, pos_y, pos_z,
+		        gold_balance, level, current_xp, job_main, job_sub, created_at, updated_at
+		 FROM characters WHERE player_id = ? LIMIT 1`, playerID)
+	var c characterResponse
+	if err := row.Scan(&c.CharacterID, &c.PlayerID, &c.Name, &c.SceneID,
+		&c.PosX, &c.PosY, &c.PosZ, &c.GoldBalance, &c.Level, &c.CurrentXP,
+		&c.JobMain, &c.JobSub, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			mmoWriteError(w, http.StatusNotFound, "no DragonsNShit character for this player_id")
 			return
 		}
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
