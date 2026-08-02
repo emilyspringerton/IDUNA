@@ -100,6 +100,17 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleUpdatePosition(w, r, id)
 		return
 	}
+	// PATCH /api/v1/characters/:id/level (2026-08-02, real bug found live building
+	// GoblinFoxDragon's Town combat: idunaclient.UpdateCharacterLevel has always called plain
+	// PATCH /api/v1/characters/:id -- a route that has never existed here, only ever falling
+	// through to the 404 at the bottom of this function. Every caller (apps2/mud's real telnet
+	// disconnect-time level/XP sync, and now headless sessions) has been silently failing this
+	// entire time, masked by "best-effort" error handling at every call site. Real route added.
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/level") {
+		id := extractSegment(path, "/api/v1/characters/", "/level")
+		h.handleUpdateLevel(w, r, id)
+		return
+	}
 	// PATCH /api/v1/characters/:id/gold
 	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/gold") {
 		id := extractSegment(path, "/api/v1/characters/", "/gold")
@@ -292,6 +303,53 @@ func (h *MMOHandler) handleUpdatePosition(w http.ResponseWriter, r *http.Request
 		`UPDATE characters SET scene_id=?, pos_x=?, pos_y=?, pos_z=?, updated_at=?
 		 WHERE character_id=?`,
 		req.SceneID, req.PosX, req.PosY, req.PosZ, now, id,
+	)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		mmoWriteError(w, http.StatusNotFound, "character not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type updateLevelRequest struct {
+	Level     int `json:"level"`
+	CurrentXP int `json:"current_xp"`
+}
+
+// handleUpdateLevel persists a character's level/current_xp -- the real route
+// idunaclient.UpdateCharacterLevel has always called (see this route's own registration comment
+// in routeCharacters for the bug this closes). Agent-only, unlike handleUpdatePosition's
+// player-self-update allowance: a player's own client legitimately needs to report its own
+// position, but self-reporting your own level/XP is a cheat vector no client should ever be
+// trusted with -- only apps2/mud's own agent JWT (the sole real authority on how much XP a
+// character actually earned) may call this.
+func (h *MMOHandler) handleUpdateLevel(w http.ResponseWriter, r *http.Request, id string) {
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if _, isAgent := claims["agent_name"]; !isAgent {
+			mmoWriteError(w, http.StatusForbidden, "level updates are agent-only")
+			return
+		}
+	}
+
+	var req updateLevelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Level < 1 {
+		mmoWriteError(w, http.StatusBadRequest, "level must be >= 1")
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE characters SET level=?, current_xp=?, updated_at=? WHERE character_id=?`,
+		req.Level, req.CurrentXP, now, id,
 	)
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())

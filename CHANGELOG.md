@@ -1,5 +1,18 @@
 # IDUNA Changelog
 
+## 2026-08-02 (3)
+- fix(mmo): add real `PATCH /api/v1/characters/:id/level` route. Found live building
+  GoblinFoxDragon's Town headless-combat feature: `idunaclient.UpdateCharacterLevel` has always
+  called plain `PATCH /api/v1/characters/:id` -- a route that has never existed on this side
+  (only `/position`, `/gold`, `/gold/credit`, `/skills` do), silently 404ing and masked by
+  "best-effort" error handling at every call site. This means every real telnet character's
+  level/XP has never actually persisted across `apps2/mud` process restarts, this entire time --
+  a level-up only ever lived in that connection's own in-memory `player` until now. Added the
+  real route + `handleUpdateLevel`. Agent-only (unlike `handleUpdatePosition`'s player-self-update
+  allowance): self-reporting your own level/XP is a cheat vector no client should be trusted
+  with, so even the *owning* player's own JWT is rejected here, not just a non-owner's. 5 new
+  tests, full suite green.
+
 ## 2026-08-02 (2)
 - fix(mmo): `PATCH /api/v1/characters/:id/position` now checks ownership for player-JWT callers.
   GoblinFoxDragon "unify the whole bitch" (Town scene syncing position back to the real
