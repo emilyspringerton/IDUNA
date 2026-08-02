@@ -498,6 +498,14 @@ func main() {
 	})
 	mux.Handle("/api/v1/redgarden/self-ticket", redgardenSelfTicketH)
 
+	// Chat relay between GoblinFoxDragon's apps2/mud (telnet) and REDGARDEN's Battlegrounds GUI
+	// client -- two separate processes/protocols with no channel of their own, IDUNA is the one
+	// thing both already authenticate against. Any authenticated caller may post or poll (own
+	// auth check inside the handler covers the no-claims case) -- founder: "can we start adding
+	// affordances to the fork to surface the features of the MUD?" -> "In-match MUD chat."
+	chatMessagesH := middleware.RequireAuth(keys)(&handlers.ChatMessagesHandler{DB: db})
+	mux.Handle("/api/v1/chat/messages", chatMessagesH)
+
 	redgardenResultH := middleware.RequireAuth(keys)(
 		middleware.RequirePermission("redgarden.match.write")(&handlers.RedgardenGameResultHandler{DB: db}),
 	)
