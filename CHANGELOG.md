@@ -1,5 +1,21 @@
 # IDUNA Changelog
 
+## 2026-08-02 (2)
+- fix(mmo): `PATCH /api/v1/characters/:id/position` now checks ownership for player-JWT callers.
+  GoblinFoxDragon "unify the whole bitch" (Town scene syncing position back to the real
+  character record) means this endpoint -- doc-commented "game server M2M" and, until now, only
+  ever reached by apps2/mud's trusted agent JWT -- is about to be called directly by a compiled
+  client running on a player's own machine for the first time. `RequireAuth` alone (any valid
+  JWT, no ownership check) was fine while only a trusted backend reached it; a real player JWT
+  moving an arbitrary character_id it doesn't own wasn't previously possible to prevent because
+  nothing checked. Agent JWTs (identified by the `agent_name` claim only `POST /api/v1/auth/agent`
+  issues, same distinguishing field `AgentAuthHandler` already sets) are unaffected -- apps2/mud's
+  own position-sync call keeps working exactly as before. A caller with no claims in context at
+  all (direct-to-handler calls bypassing `RequireAuth`, same shape this package's own existing
+  gold-endpoint tests already use) is also unaffected -- nothing to check without an authenticated
+  context. 4 new tests, full suite green. Live-rebuilt and restarted; confirmed the in-progress
+  REDGARDEN match (`red_garden_arena_server` --port 7303) was untouched by the restart.
+
 ## 2026-07-31 (2)
 - feat(redgarden): `POST /api/v1/redgarden/self-ticket` -- closes `REDGARDEN_GUI_NORTHSTAR.md`'s
   own named gap ("No GUI login path exists yet end-to-end"). Same "mint for the caller's own JWT

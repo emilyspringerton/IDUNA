@@ -33,6 +33,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"iduna/internal/http/middleware"
 )
 
 // ── MMOHandler ────────────────────────────────────────────────────────────────
@@ -260,6 +262,31 @@ func (h *MMOHandler) handleUpdatePosition(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+
+	// Ownership check (2026-08-02, GoblinFoxDragon "unify the whole bitch" -- Town's own GUI
+	// client now calls this endpoint directly with a real PLAYER's own JWT, the first caller of
+	// this handler that isn't a trusted M2M backend (apps2/mud's own agent JWT, still exempted
+	// below via the agent_name claim only agent tokens carry, see AgentAuthHandler). Before this,
+	// RequireAuth's "any valid JWT" was enough to move ANY character -- harmless while only a
+	// trusted backend service ever reached this handler, not harmless once a compiled client
+	// running on a player's own machine can reach it too.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if _, isAgent := claims["agent_name"]; !isAgent {
+			sub, _ := claims["sub"].(string)
+			var ownerPlayerID string
+			if err := h.DB.QueryRowContext(r.Context(),
+				`SELECT player_id FROM characters WHERE character_id=?`, id,
+			).Scan(&ownerPlayerID); err != nil {
+				mmoWriteError(w, http.StatusNotFound, "character not found")
+				return
+			}
+			if sub == "" || sub != ownerPlayerID {
+				mmoWriteError(w, http.StatusForbidden, "not your character")
+				return
+			}
+		}
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := h.DB.ExecContext(r.Context(),
 		`UPDATE characters SET scene_id=?, pos_x=?, pos_y=?, pos_z=?, updated_at=?
