@@ -1,5 +1,18 @@
 # IDUNA Changelog
 
+## 2026-08-03 (4)
+- ops: bootstrapped webmaster (uid=0) for the first time on this box -- founder: "make me a new
+  account eli@okemily.com pw testtest." `local_users` was completely empty (no webmaster.json had
+  ever existed at `var/webmaster.json`), so `POST /api/v1/users` (requires `users.admin`, only
+  uid=0 has it) had no real credential able to call it at all. Seeded `var/webmaster.json`
+  (gitignored, real random 24-char password, not committed) with `webmaster@okemily.com`,
+  restarted `iduna` (manual kill+relaunch sourcing `~/.config/iduna/env`, same env the systemd
+  user unit uses -- `systemctl --user` itself isn't reachable in this shell) so
+  `userlog.SeedWebmaster` ran and created uid=0. Then created the real requested account
+  (`eli@okemily.com` / local_uid=1) via the real `/api/v1/users` API, authenticated as webmaster
+  -- not a direct DB write, so the event log/projector stay consistent with everything else that
+  reads local_users. Confirmed both via `/health` and a real `/api/v1/auth/local` login as `eli`.
+
 ## 2026-08-02 (3)
 - fix(mmo): add real `PATCH /api/v1/characters/:id/level` route. Found live building
   GoblinFoxDragon's Town headless-combat feature: `idunaclient.UpdateCharacterLevel` has always
