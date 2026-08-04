@@ -13,6 +13,20 @@ import (
 	authjwt "iduna/internal/auth/jwt"
 )
 
+// DragonsNShit char_id: real testing accounts (2026-08-04, founder: "i need a way to create
+// dragonsnshit accounts for testing - i need iduna login i think it should live in iduna create
+// account for dragonsnshit"). Before this, every disposable test character this session used --
+// including this exact same day's own KO-recovery and Home Point Crystal verification passes --
+// was a raw SQLite INSERT straight into IDUNA's own characters table, bypassing the real account
+// system entirely (no real login, no real player row, nothing a human tester could actually sign
+// into). Real fix: an optional `character_name` field on the existing email/register endpoint --
+// living in the same place a real DragonsNShit-playing account is already created, not a second,
+// parallel "test account" endpoint -- that also inserts a real `characters` row (same shape
+// mmo.go's own handleCreateCharacter uses) for the freshly-registered player, atomically, in the
+// same request. The returned JSON now carries character_id + character_name alongside the real
+// login credentials, so a caller has everything needed to both log in (email/password, real JWT)
+// and immediately drive apps2/mud's own HTTP API with a real character_id -- no SQL access needed.
+
 // PlayerEmailAuthHandler handles email+password auth for SHANKPIT players.
 //
 //	POST /api/v1/auth/email/register — create player + credential, return JWT
@@ -42,6 +56,12 @@ type emailAuthRequest struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
+	// CharacterName, if set, also creates a real DragonsNShit character for this new player in
+	// the same request (register.go's own createCharacterRequest shape, JobMain defaults to WAR
+	// same as mmo.go's own handleCreateCharacter). Registration-only -- handleLogin has no
+	// equivalent field, since a returning player's character already exists.
+	CharacterName string `json:"character_name"`
+	CharacterJob  string `json:"character_job"`
 }
 
 func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +128,32 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		http.Error(w, "registration failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	var characterID string
+	req.CharacterName = strings.TrimSpace(req.CharacterName)
+	if req.CharacterName != "" {
+		jobMain := strings.TrimSpace(strings.ToUpper(req.CharacterJob))
+		if jobMain == "" {
+			jobMain = "WAR"
+		}
+		characterID = uuid.New().String()
+		nowStr := time.Now().UTC().Format(time.RFC3339)
+		_, err = tx.ExecContext(r.Context(),
+			`INSERT INTO characters (character_id, player_id, name, job_main, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			characterID, playerID, req.CharacterName, jobMain, nowStr, nowStr,
+		)
+		if err != nil {
+			tx.Rollback()
+			if strings.Contains(err.Error(), "UNIQUE") {
+				http.Error(w, "character name already taken", http.StatusConflict)
+				return
+			}
+			http.Error(w, "character creation failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		http.Error(w, "commit failed", http.StatusInternalServerError)
 		return
@@ -119,12 +165,17 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	resp := map[string]string{
 		"player_id":    playerID,
 		"display_name": req.DisplayName,
 		"token":        token,
-	})
+	}
+	if characterID != "" {
+		resp["character_id"] = characterID
+		resp["character_name"] = req.CharacterName
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
