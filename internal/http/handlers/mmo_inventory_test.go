@@ -32,6 +32,10 @@ func newInventoryDB(t *testing.T) *sql.DB {
 			current_xp   INTEGER NOT NULL DEFAULT 0,
 			job_main     TEXT NOT NULL DEFAULT 'WAR',
 			job_sub      TEXT NOT NULL DEFAULT '',
+			home_scene_id INTEGER NOT NULL DEFAULT 0,
+			home_pos_x   REAL NOT NULL DEFAULT 0,
+			home_pos_y   REAL NOT NULL DEFAULT 0,
+			home_pos_z   REAL NOT NULL DEFAULT 0,
 			created_at   TEXT NOT NULL,
 			updated_at   TEXT NOT NULL
 		);

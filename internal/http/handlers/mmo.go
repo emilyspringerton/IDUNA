@@ -89,6 +89,10 @@ type characterResponse struct {
 	CurrentXP   int     `json:"current_xp"`
 	JobMain     string  `json:"job_main"`
 	JobSub      string  `json:"job_sub"`
+	HomeSceneID int     `json:"home_scene_id"`
+	HomePosX    float64 `json:"home_pos_x"`
+	HomePosY    float64 `json:"home_pos_y"`
+	HomePosZ    float64 `json:"home_pos_z"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
 }
@@ -98,6 +102,12 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/position") {
 		id := extractSegment(path, "/api/v1/characters/", "/position")
 		h.handleUpdatePosition(w, r, id)
+		return
+	}
+	// PATCH /api/v1/characters/:id/home
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/home") {
+		id := extractSegment(path, "/api/v1/characters/", "/home")
+		h.handleUpdateHome(w, r, id)
 		return
 	}
 	// PATCH /api/v1/characters/:id/level (2026-08-02, real bug found live building
@@ -219,12 +229,14 @@ func (h *MMOHandler) handleCreateCharacter(w http.ResponseWriter, r *http.Reques
 func (h *MMOHandler) handleGetCharacter(w http.ResponseWriter, r *http.Request, id string) {
 	row := h.DB.QueryRowContext(r.Context(),
 		`SELECT character_id, player_id, name, scene_id, pos_x, pos_y, pos_z,
-		        gold_balance, level, current_xp, job_main, job_sub, created_at, updated_at
+		        gold_balance, level, current_xp, job_main, job_sub,
+		        home_scene_id, home_pos_x, home_pos_y, home_pos_z, created_at, updated_at
 		 FROM characters WHERE character_id = ?`, id)
 	var c characterResponse
 	if err := row.Scan(&c.CharacterID, &c.PlayerID, &c.Name, &c.SceneID,
 		&c.PosX, &c.PosY, &c.PosZ, &c.GoldBalance, &c.Level, &c.CurrentXP,
-		&c.JobMain, &c.JobSub, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.JobMain, &c.JobSub, &c.HomeSceneID, &c.HomePosX, &c.HomePosY, &c.HomePosZ,
+		&c.CreatedAt, &c.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			mmoWriteError(w, http.StatusNotFound, "character not found")
 			return
@@ -244,12 +256,14 @@ func (h *MMOHandler) handleGetCharacter(w http.ResponseWriter, r *http.Request, 
 func (h *MMOHandler) handleGetCharacterByPlayer(w http.ResponseWriter, r *http.Request, playerID string) {
 	row := h.DB.QueryRowContext(r.Context(),
 		`SELECT character_id, player_id, name, scene_id, pos_x, pos_y, pos_z,
-		        gold_balance, level, current_xp, job_main, job_sub, created_at, updated_at
+		        gold_balance, level, current_xp, job_main, job_sub,
+		        home_scene_id, home_pos_x, home_pos_y, home_pos_z, created_at, updated_at
 		 FROM characters WHERE player_id = ? LIMIT 1`, playerID)
 	var c characterResponse
 	if err := row.Scan(&c.CharacterID, &c.PlayerID, &c.Name, &c.SceneID,
 		&c.PosX, &c.PosY, &c.PosZ, &c.GoldBalance, &c.Level, &c.CurrentXP,
-		&c.JobMain, &c.JobSub, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.JobMain, &c.JobSub, &c.HomeSceneID, &c.HomePosX, &c.HomePosY, &c.HomePosZ,
+		&c.CreatedAt, &c.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			mmoWriteError(w, http.StatusNotFound, "no DragonsNShit character for this player_id")
 			return
@@ -301,6 +315,44 @@ func (h *MMOHandler) handleUpdatePosition(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := h.DB.ExecContext(r.Context(),
 		`UPDATE characters SET scene_id=?, pos_x=?, pos_y=?, pos_z=?, updated_at=?
+		 WHERE character_id=?`,
+		req.SceneID, req.PosX, req.PosY, req.PosZ, now, id,
+	)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		mmoWriteError(w, http.StatusNotFound, "character not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type updateHomeRequest struct {
+	SceneID int     `json:"scene_id"`
+	PosX    float64 `json:"pos_x"`
+	PosY    float64 `json:"pos_y"`
+	PosZ    float64 `json:"pos_z"`
+}
+
+// handleUpdateHome persists a character's real Home Point (2026-08-04, founder: iterate --
+// following up on a real gap found live earlier the same day: `sethome` only ever mutated the
+// in-memory homePoint struct in apps2/mud, never IDUNA, so a custom Home Point silently reverted
+// to unset on every fresh session -- idle eviction or a service restart. Same shape as
+// handleUpdatePosition, no ownership check needed beyond RequireAuth since only apps2/mud's own
+// M2M agent JWT ever calls this (mirrors UpdatePosition's own real caller, not a player-facing
+// client route).
+func (h *MMOHandler) handleUpdateHome(w http.ResponseWriter, r *http.Request, id string) {
+	var req updateHomeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE characters SET home_scene_id=?, home_pos_x=?, home_pos_y=?, home_pos_z=?, updated_at=?
 		 WHERE character_id=?`,
 		req.SceneID, req.PosX, req.PosY, req.PosZ, now, id,
 	)
