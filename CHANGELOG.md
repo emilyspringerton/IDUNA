@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-04 (3)
+- feat(mmo): persist and return a character's real Home Point. New PATCH /api/v1/characters/:id/home
+  (mirrors /position); characterResponse + GET handlers now include home_scene_id/home_pos_x/y/z.
+  Fixed a real test fixture gap (mmo_inventory_test.go schema) this surfaced.
+
 ## 2026-08-04 (2)
 - feat(auth): create a real DragonsNShit character atomically on email register. Founder: "i need
   a way to create dragonsnshit accounts for testing - i need iduna login i think it should live
