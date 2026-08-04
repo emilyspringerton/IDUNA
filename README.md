@@ -1,5 +1,15 @@
 # IDUNA — Platform IAM & Governance Service
 
+## Current Status (2026-08-04)
+
+Live user account creation exists at **okemily.com/** (Google OAuth → honor code → permanent
+gamertag, real end-to-end, `internal/http/handlers/web_ceremony.go`) for the platform-wide
+identity system. Separately, `POST /api/v1/auth/email/register` now takes an optional
+`character_name` and atomically creates a real DragonsNShit test account (real login + a real
+playable character in one call) — see `CHANGELOG.md` 2026-08-04. Both are real, tested, and live.
+
+---
+
 IDUNA is the central trust authority for the EINHORN_INDUSTRIAL / FARTHQ ecosystem. It sits between external identity providers (Google OAuth) and all downstream services and agents. Downstream services never trust external tokens directly — they exclusively trust IDUNA-issued ES256 JWTs.
 
 IDUNA is intentionally not owned by any single agent. It is shared infrastructure.
