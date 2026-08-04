@@ -1,5 +1,20 @@
 # IDUNA Changelog
 
+## 2026-08-04 (2)
+- feat(auth): create a real DragonsNShit character atomically on email register. Founder: "i need
+  a way to create dragonsnshit accounts for testing - i need iduna login i think it should live
+  in iduna create account for dragonsnshit." New optional `character_name`/`character_job` fields
+  on `POST /api/v1/auth/email/register` -- when set, the same request also inserts a real
+  `characters` row (same shape `mmo.go`'s own `handleCreateCharacter` uses) in the same
+  transaction, returning `character_id`/`character_name` alongside the real login credentials.
+  Replaces this session's own repeated raw-SQLite-INSERT test-character habit with a real,
+  reusable feature. Live-verified end-to-end: register -> login -> `GET /api/v1/characters/:id`
+  -> a real character usable immediately against apps2/mud's own `/api/town/command`. Also found
+  and fixed a real operational issue while deploying: an orphaned, untracked `iduna` process from
+  2026-08-03 was squatting on `:8080`, causing every systemd-managed restart to silently
+  crash-loop on "address already in use" while the stale binary kept serving all traffic --
+  killed it; `iduna.service` runs under real supervision again.
+
 ## 2026-08-03 (4)
 - ops: bootstrapped webmaster (uid=0) for the first time on this box -- founder: "make me a new
   account eli@okemily.com pw testtest." `local_users` was completely empty (no webmaster.json had
