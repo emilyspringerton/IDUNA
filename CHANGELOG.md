@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-05
+- Back Office expansion: fixed /admin/ 404 (nginx trailing-slash gap), dashboard (quick actions + mailing-list signup stats), /admin/dragonsnshit/create, first Game Master tool (/admin/gm disable/enable, players.disabled_at enforced at login) (sess-20260723-2347-df115bd5)
 - cmd/create-admin-agent -- provision a human-operator Back Office login (agent_name + agent_secret with iduna.admin). Created EDDY as the founder's own admin login. (sess-20260723-2347-df115bd5)
 - /admin/saga -- SAGA divergence queue page (S143-03 first slice): vaporware debt + dark matter per repo, via emily saga gaps --json (sess-20260723-2347-df115bd5)
 
