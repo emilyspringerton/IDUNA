@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-05
+
+- PATCH /api/v1/characters/:id/job -- persist real job_main/job_sub (closes a gap where setjob never wrote back to IDUNA) (sess-20260723-2347-df115bd5)
+
+
 ## 2026-08-04 (3)
 - feat(mmo): persist and return a character's real Home Point. New PATCH /api/v1/characters/:id/home
   (mirrors /position); characterResponse + GET handlers now include home_scene_id/home_pos_x/y/z.
