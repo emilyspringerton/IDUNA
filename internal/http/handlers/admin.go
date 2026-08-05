@@ -34,6 +34,7 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/audit", h.audit)
 	h.mux.HandleFunc("/admin/apples", h.apples)
 	h.mux.HandleFunc("/admin/apples/", h.appleDetail)
+	h.mux.HandleFunc("/admin/saga", h.saga)
 }
 
 // ServeHTTP dispatches admin routes. Mount at /admin and /admin/ with auth middleware.
@@ -402,6 +403,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/agents">Agents</a>
   <a href="/admin/audit">Audit Log</a>
   <a href="/admin/apples">Apples</a>
+  <a href="/admin/saga">SAGA</a>
   <span style="flex:1"></span>
   <a href="/admin/logout" style="font-size:11px;color:#888">Sign out</a>
 </nav>
