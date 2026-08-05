@@ -6,7 +6,7 @@
       "id": "00000003-0000-4000-8000-000000000001",
       "name": "EMILY-PRIME",
       "type": "llm_agent",
-      "description": "Emily Prime \u2014 chief of staff, meta-orchestrator, CEO-facing surface",
+      "description": "Emily Prime — chief of staff, meta-orchestrator, CEO-facing surface",
       "permissions": [
         "fatbaby.operator",
         "emily-prime.operator",
@@ -26,7 +26,7 @@
       "id": "00000003-0000-4000-8000-000000000002",
       "name": "FATBABY-EMILY",
       "type": "llm_agent",
-      "description": "FatBaby-Emily \u2014 domain signal intelligence for SEC/PR pipeline",
+      "description": "FatBaby-Emily — domain signal intelligence for SEC/PR pipeline",
       "permissions": [
         "fatbaby.operator",
         "governance.admin",
@@ -40,7 +40,7 @@
       "id": "00000003-0000-4000-8000-000000000003",
       "name": "EMIREE",
       "type": "llm_agent",
-      "description": "Emiree \u2014 underlying state engine, peer loop with Emily Prime, strategic layer",
+      "description": "Emiree — underlying state engine, peer loop with Emily Prime, strategic layer",
       "permissions": [
         "fatbaby.operator",
         "emily-prime.operator",
@@ -55,7 +55,7 @@
       "id": "00000003-0000-4000-8000-000000000004",
       "name": "JON",
       "type": "llm_agent",
-      "description": "Jon Stockwell \u2014 options strategist, divergence engine",
+      "description": "Jon Stockwell — options strategist, divergence engine",
       "permissions": [
         "fatbaby.operator",
         "signalapi.read",
@@ -67,7 +67,7 @@
       "id": "00000003-0000-4000-8000-000000000005",
       "name": "BOB",
       "type": "db_agent",
-      "description": "Bob \u2014 IDUNA database admin agent, migrations and schema inspection only",
+      "description": "Bob — IDUNA database admin agent, migrations and schema inspection only",
       "permissions": [
         "bob.db.admin",
         "iduna.me.read"
@@ -77,7 +77,7 @@
       "id": "00000003-0000-4000-8000-000000000006",
       "name": "TYLER",
       "type": "llm_agent",
-      "description": "Tyler (HARRY_HOUDINI) \u2014 self-directed RSI agent for the TYLER repo. Iduna-managed. Custody chain: TYLER \u2192 EINHORN_INDUSTRIAL \u2192 EMILY_OS. Build 0016.",
+      "description": "Tyler (HARRY_HOUDINI) — self-directed RSI agent for the TYLER repo. Iduna-managed. Custody chain: TYLER → EINHORN_INDUSTRIAL → EMILY_OS. Build 0016.",
       "permissions": [
         "tyler.rsi.write",
         "apples.write",
@@ -88,7 +88,7 @@
       "id": "00000003-0000-4000-8000-000000000009",
       "name": "EDIS-WOOCOMMERCE",
       "type": "provisioner_agent",
-      "description": "EDIS WooCommerce hook \u2014 provisions Emily+ subscriptions in IDUNA on successful payment. One per EDIS WordPress instance.",
+      "description": "EDIS WooCommerce hook — provisions Emily+ subscriptions in IDUNA on successful payment. One per EDIS WordPress instance.",
       "permissions": [
         "subscriptions.admin",
         "iduna.me.read",
@@ -99,7 +99,7 @@
       "id": "00000003-0000-4000-8000-000000000008",
       "name": "EMILY-TRAINING",
       "type": "training_agent",
-      "description": "Emily Training \u2014 manages GPT-2 fine-tuning pipeline; uploads training data and downloads checkpoints via Google Drive API",
+      "description": "Emily Training — manages GPT-2 fine-tuning pipeline; uploads training data and downloads checkpoints via Google Drive API",
       "permissions": [
         "drive.write",
         "drive.read",
@@ -112,7 +112,7 @@
       "id": "00000003-0000-4000-8000-000000000007",
       "name": "EDIS-CUSTODIAN",
       "type": "provisioner_agent",
-      "description": "EDIS Custodian \u2014 provisions IDUNA-managed secrets to fresh EDIS WordPress servers. Registered by emily install --edis. One custodian per EDIS instance.",
+      "description": "EDIS Custodian — provisions IDUNA-managed secrets to fresh EDIS WordPress servers. Registered by emily install --edis. One custodian per EDIS instance.",
       "permissions": [
         "edis.secrets.read",
         "apples.write",
@@ -124,7 +124,7 @@
       "id": "00000003-0000-4000-8000-000000000010",
       "name": "NORN",
       "type": "kernel_agent",
-      "description": "NORN \u2014 the propose\u2192grade\u2192gate\u2192promote loop kernel (HQ-SPEC-PRIME-101). Files an Apple on every artifact_promoted event from any instantiation (EPS extractor, entity-graph rules, and future ones). S141-04.",
+      "description": "NORN — the propose→grade→gate→promote loop kernel (HQ-SPEC-PRIME-101). Files an Apple on every artifact_promoted event from any instantiation (EPS extractor, entity-graph rules, and future ones). S141-04.",
       "permissions": [
         "apples.write",
         "apples.read",
@@ -157,6 +157,15 @@
       "description": "GoblinFoxDragon apps2/mud (DragonsNShit telnet MUD) — authenticates via POST /api/v1/auth/agent to mint a real REDGARDEN connect ticket on behalf of a real DragonsNShit character's own player_id (POST /api/v1/redgarden/player-ticket) when a player uses the Battlegrounds entry point. Deliberately separate from redgarden.ticket.mint (REDGARDEN-BOTS, headless-bot-only) — see redgarden_player_ticket.go's own doc comment for the trust model. REDGARDEN_GUI_NORTHSTAR.md Milestone 3, 2026-07-31.",
       "permissions": [
         "redgarden.player-ticket.mint"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000014",
+      "name": "GTA7-SERVER",
+      "type": "game_server_agent",
+      "description": "EINHORN_SURVIVAL/GTA7 Paper plugin — authenticates via POST /api/v1/auth/agent to post Field Office claim/flip receipts as Apples and register real WOTAN-shared player_id records per Minecraft player (POST /api/v1/players/register, provider=minecraft). Same player-identity pattern as REDGARDEN-BOTS. VS0/VS1, 2026-08-05.",
+      "permissions": [
+        "apples.write"
       ]
     }
   ]
