@@ -116,7 +116,7 @@ func main() {
 	}
 	jwksH := &handlers.JWKSHandler{Keys: keys}
 	healthH := &handlers.HealthHandler{}
-	adminH := &handlers.AdminHandler{Store: iamStore}
+	adminH := &handlers.AdminHandler{Store: iamStore, DB: db}
 	adminH.Init()
 	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer}
 	applesH := &handlers.ApplesHandler{Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
@@ -159,6 +159,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("mailinglist: failed to open store: %v", err)
 	}
+	adminH.Mailinglist = mailingListStore
 	mailingListVault := mailinglist.NewVault()
 	var mailchimpClient *mailinglist.MailchimpClient
 	if mcKey := os.Getenv("MAILCHIMP_API_KEY"); mcKey != "" {

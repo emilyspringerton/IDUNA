@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,20 +14,33 @@ import (
 
 	"iduna/internal/auth"
 	"iduna/internal/http/middleware"
+	"iduna/internal/mailinglist"
 	"iduna/internal/store"
 )
 
 // AdminHandler serves the Back Office admin UI.
 // All routes require iduna.admin permission (enforced at the mux level via middleware).
 type AdminHandler struct {
-	Store store.IAMStore
-	mux   *http.ServeMux
+	Store       store.IAMStore
+	Mailinglist *mailinglist.Store // optional -- nil is handled gracefully (dashboard just omits the signup stats card)
+	DB          *sql.DB            // raw truestore handle, for player/character queries not exposed via IAMStore (dragonsnshit account creation, GM tools)
+	mux         *http.ServeMux
 }
 
 // Init registers routes on the handler's internal mux. Call once after construction.
 func (h *AdminHandler) Init() {
 	h.mux = http.NewServeMux()
 	h.mux.HandleFunc("/admin", h.overview)
+	// Real bug found live 2026-08-05: okemily.com's own nginx location for
+	// "/admin/" (trailing slash) never matches a bare "/admin" request (nginx
+	// prefix matching requires the literal "/admin/" prefix), so WordPress's
+	// own catch-all 301-redirects bare "/admin" to "/admin/" first -- which
+	// then DID reach IDUNA correctly, but had no matching handler here (Go's
+	// ServeMux treats "/admin" as an exact-only pattern, not a subtree, since
+	// it has no trailing slash) and 404'd. Registered directly here rather
+	// than only fixed at the nginx layer, since localhost:8080/admin/ should
+	// work regardless of which front door reaches it.
+	h.mux.HandleFunc("/admin/", h.overview)
 	h.mux.HandleFunc("/admin/users", h.users)
 	h.mux.HandleFunc("/admin/users/", h.userAction)
 	h.mux.HandleFunc("/admin/agents", h.agents)
@@ -35,6 +49,9 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/apples", h.apples)
 	h.mux.HandleFunc("/admin/apples/", h.appleDetail)
 	h.mux.HandleFunc("/admin/saga", h.saga)
+	h.mux.HandleFunc("/admin/dragonsnshit/create", h.dragonsnshitCreate)
+	h.mux.HandleFunc("/admin/gm", h.gmSearch)
+	h.mux.HandleFunc("/admin/gm/", h.gmAccountAction)
 }
 
 // ServeHTTP dispatches admin routes. Mount at /admin and /admin/ with auth middleware.
@@ -56,12 +73,27 @@ func (h *AdminHandler) overview(w http.ResponseWriter, r *http.Request) {
 	agents, _ := h.Store.ListAgents(ctx)
 	events, _ := h.Store.ListIAMEvents(ctx, 5)
 
+	// Mailing-list signup stats (founder, live: "dashboard can show email
+	// signups stats"). Mailinglist is optional (nil when MAILING_LIST_DB_PATH
+	// isn't configured for this deployment) -- degrades to omitting the card
+	// rather than erroring, same "optional dependency, graceful absence"
+	// shape RecentUsers/RecentEvents already use via their own `_` error discards.
+	var signupTotal int
+	var signupBySource []mailinglist.SourceCount
+	if h.Mailinglist != nil {
+		signupTotal, _ = h.Mailinglist.Count()
+		signupBySource, _ = h.Mailinglist.CountsBySource()
+	}
+
 	renderHTML(w, adminOverviewTmpl, map[string]any{
-		"Title":        "Back Office",
-		"RecentUsers":  users,
-		"AgentCount":   len(agents),
-		"RecentEvents": events,
-		"Now":          time.Now().UTC().Format("2006-01-02 15:04 UTC"),
+		"Title":          "Back Office",
+		"RecentUsers":    users,
+		"AgentCount":     len(agents),
+		"RecentEvents":   events,
+		"HasMailinglist": h.Mailinglist != nil,
+		"SignupTotal":    signupTotal,
+		"SignupBySource": signupBySource,
+		"Now":            time.Now().UTC().Format("2006-01-02 15:04 UTC"),
 	})
 }
 
@@ -404,6 +436,8 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/audit">Audit Log</a>
   <a href="/admin/apples">Apples</a>
   <a href="/admin/saga">SAGA</a>
+  <a href="/admin/dragonsnshit/create">DragonsNShit</a>
+  <a href="/admin/gm">GM Tools</a>
   <span style="flex:1"></span>
   <a href="/admin/logout" style="font-size:11px;color:#888">Sign out</a>
 </nav>
@@ -486,7 +520,33 @@ var adminOverviewTmpl = mustParseTmpl("overview", `
 </div>
 </div>
 
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:0">
 <div class="section-card" style="margin-top:0">
+  <h2>Quick Actions</h2>
+  <table>
+  <tr><td><a href="/admin/dragonsnshit/create">Create DragonsNShit account</a></td><td class="meta">real player + credential + character, one form</td></tr>
+  <tr><td><a href="/admin/gm">Game Master tools</a></td><td class="meta">search + disable/enable a DragonsNShit account</td></tr>
+  <tr><td><a href="/admin/saga">SAGA divergence queue</a></td><td class="meta">vaporware debt + dark matter, per repo</td></tr>
+  <tr><td><a href="/admin/agents">Register a new agent</a></td><td class="meta">M2M credential, permission grants</td></tr>
+  <tr><td><a href="/admin/apples">Apples ledger</a></td><td class="meta">golden documentation audit trail</td></tr>
+  </table>
+</div>
+
+{{if .HasMailinglist}}
+<div class="section-card" style="margin-top:0">
+  <h2>Mailing List Signups</h2>
+  <table>
+  <tr><th>Source</th><th>Count</th></tr>
+  {{range .SignupBySource}}
+  <tr><td class="meta">{{.Source}}</td><td>{{.Count}}</td></tr>
+  {{end}}
+  <tr><td><b>Total</b></td><td><b>{{.SignupTotal}}</b></td></tr>
+  </table>
+</div>
+{{end}}
+</div>
+
+<div class="section-card" style="margin-top:20px">
   <h2>System</h2>
   <table>
   <tr><th>Component</th><th>Value</th></tr>

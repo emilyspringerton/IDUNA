@@ -136,3 +136,38 @@ func (s *Store) CountBySource(source string) (int, error) {
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM subscribers WHERE source = ?`, source).Scan(&n)
 	return n, err
 }
+
+// Count returns the total subscriber count across every source -- for the
+// Back Office dashboard (founder, live: "dashboard can show email signups
+// stats"). Same PII-free reasoning as CountBySource: plaintext source/count
+// only, never touches email_ciphertext.
+func (s *Store) Count() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM subscribers`).Scan(&n)
+	return n, err
+}
+
+// SourceCount is one row of CountsBySource's breakdown.
+type SourceCount struct {
+	Source string
+	Count  int
+}
+
+// CountsBySource returns subscriber counts grouped by source, highest first,
+// for the Back Office dashboard's signup breakdown.
+func (s *Store) CountsBySource() ([]SourceCount, error) {
+	rows, err := s.db.Query(`SELECT source, COUNT(*) AS n FROM subscribers GROUP BY source ORDER BY n DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SourceCount
+	for rows.Next() {
+		var sc SourceCount
+		if err := rows.Scan(&sc.Source, &sc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}

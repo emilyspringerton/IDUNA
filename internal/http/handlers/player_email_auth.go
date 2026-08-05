@@ -191,11 +191,12 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 	}
 
 	var playerID, displayName, hash string
+	var disabledAt sql.NullString
 	err := h.DB.QueryRowContext(r.Context(),
-		`SELECT pc.player_id, p.display_name, pc.password_hash
+		`SELECT pc.player_id, p.display_name, pc.password_hash, p.disabled_at
 		 FROM player_credentials pc JOIN players p ON pc.player_id=p.player_id
 		 WHERE pc.email=?`, req.Email,
-	).Scan(&playerID, &displayName, &hash)
+	).Scan(&playerID, &displayName, &hash, &disabledAt)
 	if err == sql.ErrNoRows {
 		http.Error(w, "invalid email or password", http.StatusUnauthorized)
 		return
@@ -206,6 +207,16 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
 		http.Error(w, "invalid email or password", http.StatusUnauthorized)
+		return
+	}
+	// First Game Master tool (2026-08-05, founder: "a way to disable accounts"). Checked after
+	// the password compare, not before -- rejecting a disabled account with the same generic
+	// "invalid email or password" the wrong-password case uses would let a player probe whether
+	// their OWN password still works while genuinely disabled, but a distinct message here is
+	// fine: they already proved they own the credential, so "account disabled" tells a real
+	// account owner (not an attacker guessing passwords) something they're entitled to know.
+	if disabledAt.Valid {
+		http.Error(w, "this account has been disabled", http.StatusForbidden)
 		return
 	}
 
