@@ -121,6 +121,12 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleUpdateLevel(w, r, id)
 		return
 	}
+	// PATCH /api/v1/characters/:id/job
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/job") {
+		id := extractSegment(path, "/api/v1/characters/", "/job")
+		h.handleUpdateJob(w, r, id)
+		return
+	}
 	// PATCH /api/v1/characters/:id/gold
 	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/gold") {
 		id := extractSegment(path, "/api/v1/characters/", "/gold")
@@ -373,6 +379,11 @@ type updateLevelRequest struct {
 	CurrentXP int `json:"current_xp"`
 }
 
+type updateJobRequest struct {
+	JobMain string `json:"job_main"`
+	JobSub  string `json:"job_sub"`
+}
+
 // handleUpdateLevel persists a character's level/current_xp -- the real route
 // idunaclient.UpdateCharacterLevel has always called (see this route's own registration comment
 // in routeCharacters for the bug this closes). Agent-only, unlike handleUpdatePosition's
@@ -402,6 +413,50 @@ func (h *MMOHandler) handleUpdateLevel(w http.ResponseWriter, r *http.Request, i
 	res, err := h.DB.ExecContext(r.Context(),
 		`UPDATE characters SET level=?, current_xp=?, updated_at=? WHERE character_id=?`,
 		req.Level, req.CurrentXP, now, id,
+	)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		mmoWriteError(w, http.StatusNotFound, "character not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleUpdateJob persists a character's real job_main/job_sub -- real gap found live 2026-08-05
+// diagnosing "1/2/3 ability hotkeys don't match my real spells in Meadow": apps2/mud's cmdSetJob
+// only ever mutated the in-memory session's p.jobID, never wrote job_main back here, so
+// town_fetch_character (battlegrounds_gui, called once per Town entry) kept reading whatever job
+// the character was created with -- any relaunch or reconnect silently reverted the ability bar to
+// the character's original job. Agent-only, same reasoning as handleUpdateLevel: a client
+// self-reporting its own job would let a WAR client claim BLM's spell access. JobSub optional
+// (empty string clears it, matching cmdSetSubJob's own "NONE" semantics) since both live on one
+// row and this closes the same persistence gap for both in one endpoint rather than two.
+func (h *MMOHandler) handleUpdateJob(w http.ResponseWriter, r *http.Request, id string) {
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if _, isAgent := claims["agent_name"]; !isAgent {
+			mmoWriteError(w, http.StatusForbidden, "job updates are agent-only")
+			return
+		}
+	}
+
+	var req updateJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.JobMain == "" {
+		mmoWriteError(w, http.StatusBadRequest, "job_main required")
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE characters SET job_main=?, job_sub=?, updated_at=? WHERE character_id=?`,
+		req.JobMain, req.JobSub, now, id,
 	)
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
