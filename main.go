@@ -21,6 +21,7 @@ import (
 	"iduna/internal/mailinglist"
 	"iduna/internal/statuspage"
 	"iduna/internal/store"
+	"iduna/internal/tyler"
 	"iduna/internal/userlog"
 	"iduna/internal/util"
 	"iduna/internal/vault"
@@ -241,6 +242,25 @@ func main() {
 	}
 	blogH := &handlers.BlogHandler{Store: blogStore, Renderer: &blog.Renderer{OutputDir: blogOutputDir}}
 
+	// TYLER reading room -- same own-SQLite-file/render-to-static shape as
+	// the blog, but its own store/templates: TYLER episode scripts have
+	// real headers/tables/checklists the blog's paragraph-only renderer
+	// can't handle, and read better on a book-styled page than a dev-blog
+	// theme. See internal/tyler's own package doc.
+	tylerDBPath := os.Getenv("TYLER_DB_PATH")
+	if tylerDBPath == "" {
+		tylerDBPath = "./var/tyler.db"
+	}
+	tylerStore, err := tyler.Open(tylerDBPath)
+	if err != nil {
+		log.Fatalf("tyler: failed to open store: %v", err)
+	}
+	tylerOutputDir := os.Getenv("TYLER_OUTPUT_DIR")
+	if tylerOutputDir == "" {
+		tylerOutputDir = "/var/www/okemily/tyler"
+	}
+	tylerH := &handlers.TylerHandler{Store: tylerStore, Renderer: &tyler.Renderer{OutputDir: tylerOutputDir}}
+
 	// Status page — real health checks against the services that actually
 	// have a reachable public endpoint (see statuspage.DefaultTargets doc
 	// for why emily-agent/SHANKPIT are deliberately excluded, not shown as
@@ -343,6 +363,10 @@ func main() {
 	// blog.write; reading is public.
 	blogCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("blog.write")(http.HandlerFunc(blogH.Create)))
 	blogH.RegisterRoutes(mux, blogCreateProtected)
+
+	// TYLER reading room -- posting requires tyler.write; reading is public.
+	tylerCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("tyler.write")(http.HandlerFunc(tylerH.Create)))
+	tylerH.RegisterRoutes(mux, tylerCreateProtected)
 
 	mux.Handle("/api/v1/status", statusH)
 

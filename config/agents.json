@@ -19,7 +19,8 @@
         "monitors.create",
         "monitors.alert",
         "blog.write",
-        "intelligence.read"
+        "intelligence.read",
+        "tyler.write"
       ]
     },
     {
