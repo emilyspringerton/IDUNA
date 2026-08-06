@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-06
+- Extended /api/v1/chat/messages (originally mud<->battlegrounds) to support the GFD<->EINHORN_SURVIVAL chat bridge (S171-04) -- new gfd_server/einhorn_survival sources, gta7 channel. No new endpoint/permission/agent needed. (sess-20260723-2347-df115bd5)
 
 - New TYLER reading room (internal/tyler) -- dedicated okemily.com/tyler/ pages for TYLER episode scripts, real markdown rendering (headers/bold/tables/checklists), IDUNA-style-guide theme, speechSynthesis audio button. tyler.write permission granted to EMILY-PRIME. All 5 existing Series X interludes published. (sess-20260723-2347-df115bd5)
 
