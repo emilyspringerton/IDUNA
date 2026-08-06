@@ -9,11 +9,16 @@ import (
 	"iduna/internal/http/middleware"
 )
 
-// ChatMessagesHandler relays chat between GoblinFoxDragon's apps2/mud (telnet, real say/yell/
-// guild chat) and REDGARDEN's Battlegrounds GUI client -- two separate processes/protocols with
-// no channel of their own. Any authenticated caller (any valid IDUNA JWT -- agent or player) may
-// post or poll; deliberately no identity linkage to players/characters (see the migration's own
-// doc comment for why: apps2/mud's telnet identity isn't unified with a real IDUNA player_id).
+// ChatMessagesHandler relays chat between processes with no channel of their
+// own. Two real bridges share this one table/endpoint, not two parallel
+// systems: GoblinFoxDragon's apps2/mud (telnet, real say/yell/guild chat)
+// <-> REDGARDEN's Battlegrounds GUI client, and (S171-04) GFD's apps2/
+// server-go (real say/tell/yell/guild UDP chat) <-> EINHORN_SURVIVAL/GTA7's
+// Paper server. Any authenticated caller (any valid IDUNA JWT -- agent or
+// player) may post or poll; deliberately no identity linkage to players/
+// characters (see the migration's own doc comment for why: neither mud's
+// telnet identity nor GFD's UDP-session identity is unified with a real
+// IDUNA player_id).
 //
 //	POST /api/v1/chat/messages   {"channel": "say", "sender_name": "Tyler", "body": "hi"}
 //	  -> 201, {"id": 42}
@@ -33,9 +38,16 @@ type chatMessage struct {
 }
 
 var validChatChannels = map[string]bool{
-	"say": true, "yell": true, "guild": true, "battlegrounds": true,
+	"say": true, "yell": true, "guild": true, "battlegrounds": true, "gta7": true,
 }
-var validChatSources = map[string]bool{"mud": true, "battlegrounds": true}
+
+// gfd_server/einhorn_survival added for the S171-04 GFD<->EINHORN_SURVIVAL
+// bridge (GoblinFoxDragon/docs2/CHAT_BRIDGE_TO_EINHORN_SURVIVAL_SPEC.md) --
+// same table/endpoint as the existing mud<->battlegrounds bridge above,
+// deliberately not a parallel system. gfd_server posts under the real
+// "yell" channel (GFD's own zone-wide broadcast channel, the only one this
+// bridge relays); einhorn_survival posts under the new "gta7" channel.
+var validChatSources = map[string]bool{"mud": true, "battlegrounds": true, "gfd_server": true, "einhorn_survival": true}
 
 func (h *ChatMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.DB == nil {
