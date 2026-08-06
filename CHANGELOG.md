@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-06
+
+- New TYLER reading room (internal/tyler) -- dedicated okemily.com/tyler/ pages for TYLER episode scripts, real markdown rendering (headers/bold/tables/checklists), IDUNA-style-guide theme, speechSynthesis audio button. tyler.write permission granted to EMILY-PRIME. All 5 existing Series X interludes published. (sess-20260723-2347-df115bd5)
+
+
 ## 2026-08-05
 - Registered GTA7-SERVER agent (apples.write) for the GTA7 Paper plugin -- direct HTTP Apple posting + WOTAN-shared player_id registration, replacing GTA7's earlier CLI-shell-out shortcut. (sess-20260723-2347-df115bd5)
 - Back Office expansion: fixed /admin/ 404 (nginx trailing-slash gap), dashboard (quick actions + mailing-list signup stats), /admin/dragonsnshit/create, first Game Master tool (/admin/gm disable/enable, players.disabled_at enforced at login) (sess-20260723-2347-df115bd5)
