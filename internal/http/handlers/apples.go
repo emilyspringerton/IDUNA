@@ -433,6 +433,12 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 		title = title[:60]
 	}
 	commitMsg := fmt.Sprintf("apple: #%d %s — %s", apple.ID, apple.AppleType, title)
+	// gitDir is ApplesGitDir (the separate APPLES repo, not IDUNA itself) -- session tag
+	// always lives under EMILY_ROOT specifically. Real gap found and fixed 2026-08-10
+	// (founder: "ensure the entire monorepo always gets that session id in all commits").
+	if tag := currentSessionTag(emilyRootDefault()); tag != "" {
+		commitMsg = commitMsg + "\n\nSession: " + tag
+	}
 	gitEnv := append(os.Environ(),
 		"GIT_AUTHOR_NAME=iduna", "GIT_AUTHOR_EMAIL=iduna@einhorn.internal",
 		"GIT_COMMITTER_NAME=iduna", "GIT_COMMITTER_EMAIL=iduna@einhorn.internal",
@@ -569,4 +575,32 @@ func hasClaimPermission(claims map[string]any, perm string) bool {
 		}
 	}
 	return false
+}
+
+// emilyRootDefault / currentSessionTag: duplicated in every Go module that makes automated git
+// commits (emily.cli/cmd/session.go, EMILY/emily-agent/integration.go, here) since they're
+// separate go.work modules with no existing shared package for this small a concern -- all read
+// the exact same var/current-session.json file (written by `emily session new`), so behavior
+// stays centralized on the data side even though the code is duplicated. Real gap found and
+// fixed 2026-08-10 (founder: "ensure the entire monorepo always gets that session id in all
+// commits").
+func emilyRootDefault() string {
+	if v := os.Getenv("EMILY_ROOT"); v != "" {
+		return v
+	}
+	return "/home/fatbaby/EMILY"
+}
+
+func currentSessionTag(emilyRoot string) string {
+	data, err := os.ReadFile(filepath.Join(emilyRoot, "var", "current-session.json"))
+	if err != nil {
+		return ""
+	}
+	var rec struct {
+		Tag string `json:"tag"`
+	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return ""
+	}
+	return rec.Tag
 }
