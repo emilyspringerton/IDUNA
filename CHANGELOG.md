@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-10
+
+- 新增 CarePyre 聯絡表單後端：POST /api/v1/carepyre/contact(公開、CORS+rate-limit)寫入 carepyre_contact_submissions,並在 Back Office 新增 /admin/carepyre 檢視頁(暫不接 email 通知,依創辦人指示先縮小範圍) (sess-20260809-1420-e9d3d7f8)
+
+
 ## 2026-08-06
 - Extended /api/v1/chat/messages (originally mud<->battlegrounds) to support the GFD<->EINHORN_SURVIVAL chat bridge (S171-04) -- new gfd_server/einhorn_survival sources, gta7 channel. No new endpoint/permission/agent needed. (sess-20260723-2347-df115bd5)
 
