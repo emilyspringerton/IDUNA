@@ -355,6 +355,20 @@ func main() {
 	mailingListH.Register(mux)
 	disH.Register(mux)
 
+	// CarePyre contact form — carepyre.org's "Contact Us", public + rate-limited
+	// same as mailing-list subscribe, no auth (visitor has no IDUNA identity).
+	// Founder real-time, 2026-08-10: dump the contact form into IDUNA instead
+	// of a mailto: link.
+	carepyreContactH := &handlers.CarePyreContactHandler{
+		DB: db,
+		AllowOrigin: []string{
+			"https://carepyre.org",
+			"https://www.carepyre.org",
+		},
+		Limiter: middleware.NewIPRateLimiter(5),
+	}
+	carepyreContactH.Register(mux)
+
 	// Vault — every endpoint loopback-gated inside the handler itself, same
 	// convention as mailing-list unlock/init (see VaultHandler doc comment).
 	vaultH.Register(mux)

@@ -48,6 +48,7 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/audit", h.audit)
 	h.mux.HandleFunc("/admin/apples", h.apples)
 	h.mux.HandleFunc("/admin/apples/", h.appleDetail)
+	h.mux.HandleFunc("/admin/carepyre", h.carepyre)
 	h.mux.HandleFunc("/admin/saga", h.saga)
 	h.mux.HandleFunc("/admin/dragonsnshit/create", h.dragonsnshitCreate)
 	h.mux.HandleFunc("/admin/gm", h.gmSearch)
@@ -333,6 +334,50 @@ func (h *AdminHandler) apples(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- carepyre ---
+
+type carepyreSubmission struct {
+	ID        int64
+	Name      string
+	Email     string
+	Message   string
+	CreatedAt string
+}
+
+// carepyre lists submissions from carepyre.org's public "Contact Us" form
+// (see CarePyreContactHandler). Read-only — no email notification wired up
+// (founder, 2026-08-10: "not real email to keep scope small"), this back
+// office page is the way submissions get seen.
+func (h *AdminHandler) carepyre(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	if h.DB == nil {
+		http.Error(w, "db not available", http.StatusServiceUnavailable)
+		return
+	}
+	rows, err := h.DB.Query(`SELECT id, name, email, message, created_at FROM carepyre_contact_submissions ORDER BY id DESC LIMIT 200`)
+	if err != nil {
+		http.Error(w, "failed to list submissions: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var submissions []carepyreSubmission
+	for rows.Next() {
+		var s carepyreSubmission
+		if err := rows.Scan(&s.ID, &s.Name, &s.Email, &s.Message, &s.CreatedAt); err != nil {
+			http.Error(w, "failed to scan submission: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		submissions = append(submissions, s)
+	}
+	renderHTML(w, adminCarePyreTmpl, map[string]any{
+		"Title":       "CarePyre Contact Form",
+		"Submissions": submissions,
+	})
+}
+
 func (h *AdminHandler) appleDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.NotFound(w, r)
@@ -435,6 +480,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/agents">Agents</a>
   <a href="/admin/audit">Audit Log</a>
   <a href="/admin/apples">Apples</a>
+  <a href="/admin/carepyre">CarePyre</a>
   <a href="/admin/saga">SAGA</a>
   <a href="/admin/dragonsnshit/create">DragonsNShit</a>
   <a href="/admin/gm">GM Tools</a>
@@ -529,6 +575,7 @@ var adminOverviewTmpl = mustParseTmpl("overview", `
   <tr><td><a href="/admin/saga">SAGA divergence queue</a></td><td class="meta">vaporware debt + dark matter, per repo</td></tr>
   <tr><td><a href="/admin/agents">Register a new agent</a></td><td class="meta">M2M credential, permission grants</td></tr>
   <tr><td><a href="/admin/apples">Apples ledger</a></td><td class="meta">golden documentation audit trail</td></tr>
+  <tr><td><a href="/admin/carepyre">CarePyre contact form</a></td><td class="meta">carepyre.org submissions, no email — check here</td></tr>
   </table>
 </div>
 
@@ -713,6 +760,28 @@ var adminAuditTmpl = mustParseTmpl("audit", `
 </table>
 {{else}}
 <p class="empty">No audit events yet.</p>
+{{end}}
+{{end}}`)
+
+var adminCarePyreTmpl = mustParseTmpl("carepyre", `
+{{define "body"}}
+<h1>CarePyre Contact Form</h1>
+<p class="meta" style="margin-bottom:16px">Most recent 200 submissions from carepyre.org's public Contact Us form. No email notification is wired up — check back here.</p>
+{{if .Submissions}}
+<table>
+<tr><th>#</th><th>Name</th><th>Email</th><th>Message</th><th>Time</th></tr>
+{{range .Submissions}}
+<tr>
+  <td class="meta">{{.ID}}</td>
+  <td>{{.Name}}</td>
+  <td class="meta"><a href="mailto:{{.Email}}">{{.Email}}</a></td>
+  <td style="max-width:420px;white-space:pre-wrap">{{.Message}}</td>
+  <td class="meta">{{.CreatedAt}}</td>
+</tr>
+{{end}}
+</table>
+{{else}}
+<p class="empty">No submissions yet.</p>
 {{end}}
 {{end}}`)
 
