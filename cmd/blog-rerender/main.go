@@ -45,6 +45,9 @@ func main() {
 	if err := r.RenderIndex(posts); err != nil {
 		log.Fatalf("render index: %v", err)
 	}
-	log.Printf("done: %d posts + index rendered to %s", len(posts), *outDir)
+	if err := r.RenderManifest(posts); err != nil {
+		log.Fatalf("render manifest: %v", err)
+	}
+	log.Printf("done: %d posts + index + manifest rendered to %s", len(posts), *outDir)
 	os.Exit(0)
 }

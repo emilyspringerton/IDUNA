@@ -92,8 +92,13 @@ func (h *BlogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	posts, err := h.Store.List()
 	if err != nil {
 		log.Printf("[blog] list posts for index render failed: %v", err)
-	} else if err := h.Renderer.RenderIndex(posts); err != nil {
-		log.Printf("[blog] render index failed: %v", err)
+	} else {
+		if err := h.Renderer.RenderIndex(posts); err != nil {
+			log.Printf("[blog] render index failed: %v", err)
+		}
+		if err := h.Renderer.RenderManifest(posts); err != nil {
+			log.Printf("[blog] render manifest failed: %v", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
