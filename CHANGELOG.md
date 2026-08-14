@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-14
+
+- New Renderer.RenderManifest: live blog manifest text file at okemily.com/blog-manifest.txt, wired into publish path + cmd/blog-rerender (sess-20260813-2154-dda37e8b)
+
+
 ## 2026-08-10
 
 - 新增 CarePyre 聯絡表單後端：POST /api/v1/carepyre/contact(公開、CORS+rate-limit)寫入 carepyre_contact_submissions,並在 Back Office 新增 /admin/carepyre 檢視頁(暫不接 email 通知,依創辦人指示先縮小範圍) (sess-20260809-1420-e9d3d7f8)
