@@ -127,6 +127,93 @@ func TestStore_UptimePercentRespectsWindow(t *testing.T) {
 	}
 }
 
+func TestStore_History(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "status.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+
+	store.record("svc", true, 10)
+	store.record("svc", false, 20)
+	store.record("other", true, 5) // different target, must not leak in
+
+	checks, err := store.History("svc", time.Now().Add(-time.Hour), 0)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(checks) != 2 {
+		t.Fatalf("expected 2 checks, got %d", len(checks))
+	}
+	// Chronological order: the up=true record first, up=false second.
+	if !checks[0].Up || checks[0].LatencyMS != 10 {
+		t.Fatalf("expected first check up=true latency=10, got %+v", checks[0])
+	}
+	if checks[1].Up || checks[1].LatencyMS != 20 {
+		t.Fatalf("expected second check up=false latency=20, got %+v", checks[1])
+	}
+}
+
+func TestStore_HistoryRespectsWindow(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "status.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+
+	store.db.Exec(`INSERT INTO checks (target, up, latency_ms, checked_at) VALUES (?, 1, 5, ?)`,
+		"svc", time.Now().Add(-48*time.Hour))
+	store.record("svc", true, 10)
+
+	checks, err := store.History("svc", time.Now().Add(-time.Hour), 0)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(checks) != 1 {
+		t.Fatalf("expected only the recent check within the window, got %d", len(checks))
+	}
+}
+
+func TestStore_HistoryLimitKeepsMostRecent(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "status.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+
+	for i := int64(1); i <= 5; i++ {
+		store.record("svc", true, i)
+	}
+
+	checks, err := store.History("svc", time.Now().Add(-time.Hour), 2)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(checks) != 2 {
+		t.Fatalf("expected limit=2 to cap at 2 checks, got %d", len(checks))
+	}
+	// Must keep the two most recent (latency 4, 5), still chronological order.
+	if checks[0].LatencyMS != 4 || checks[1].LatencyMS != 5 {
+		t.Fatalf("expected the two most recent checks in chronological order, got %+v", checks)
+	}
+}
+
+func TestStore_HistoryNoChecksYet(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "status.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+
+	checks, err := store.History("never-checked", time.Now().Add(-time.Hour), 0)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(checks) != 0 {
+		t.Fatalf("expected no checks, got %d", len(checks))
+	}
+}
+
 func TestChecker_Run_DelaysFirstCheck(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

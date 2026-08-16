@@ -90,25 +90,25 @@ var idunaOpenAPISpec = map[string]any{
 			"DriveFile": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"id":           map[string]any{"type": "string"},
-					"name":         map[string]any{"type": "string"},
-					"mime_type":    map[string]any{"type": "string"},
-					"size":         map[string]any{"type": "string"},
+					"id":            map[string]any{"type": "string"},
+					"name":          map[string]any{"type": "string"},
+					"mime_type":     map[string]any{"type": "string"},
+					"size":          map[string]any{"type": "string"},
 					"web_view_link": map[string]any{"type": "string"},
-					"created_time": map[string]any{"type": "string", "format": "date-time"},
+					"created_time":  map[string]any{"type": "string", "format": "date-time"},
 				},
 			},
 			"SprintItem": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"id":           map[string]any{"type": "integer"},
-					"agent_name":   map[string]any{"type": "string"},
-					"requirement":  map[string]any{"type": "string"},
-					"status":       map[string]any{"type": "string", "enum": []string{"pending", "queued", "in_progress", "complete", "blocked"}},
-					"roadmap_id":   map[string]any{"type": "string"},
-					"apple_id":     map[string]any{"type": "integer"},
-					"created_at":   map[string]any{"type": "string", "format": "date-time"},
-					"updated_at":   map[string]any{"type": "string", "format": "date-time"},
+					"id":          map[string]any{"type": "integer"},
+					"agent_name":  map[string]any{"type": "string"},
+					"requirement": map[string]any{"type": "string"},
+					"status":      map[string]any{"type": "string", "enum": []string{"pending", "queued", "in_progress", "complete", "blocked"}},
+					"roadmap_id":  map[string]any{"type": "string"},
+					"apple_id":    map[string]any{"type": "integer"},
+					"created_at":  map[string]any{"type": "string", "format": "date-time"},
+					"updated_at":  map[string]any{"type": "string", "format": "date-time"},
 				},
 			},
 			"ErrorResponse": map[string]any{
@@ -142,7 +142,7 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type": "object",
+								"type":     "object",
 								"required": []string{"email", "password"},
 								"properties": map[string]any{
 									"email":    map[string]any{"type": "string", "format": "email"},
@@ -171,7 +171,7 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type": "object",
+								"type":     "object",
 								"required": []string{"agent_name", "agent_secret"},
 								"properties": map[string]any{
 									"agent_name":   map[string]any{"type": "string"},
@@ -193,8 +193,8 @@ var idunaOpenAPISpec = map[string]any{
 		// ── Users ─────────────────────────────────────────────────────────────
 		"/api/v1/users": map[string]any{
 			"get": map[string]any{
-				"summary":  "List local users",
-				"tags":     []string{"users"},
+				"summary": "List local users",
+				"tags":    []string{"users"},
 				"parameters": []map[string]any{
 					{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "default": 100}},
 				},
@@ -211,7 +211,7 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type": "object",
+								"type":     "object",
 								"required": []string{"email", "password"},
 								"properties": map[string]any{
 									"email":        map[string]any{"type": "string", "format": "email"},
@@ -283,7 +283,7 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type": "object",
+								"type":     "object",
 								"required": []string{"type", "title"},
 								"properties": map[string]any{
 									"type":        map[string]any{"type": "string"},
@@ -366,7 +366,7 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type": "object",
+								"type":     "object",
 								"required": []string{"provider", "provider_sub"},
 								"properties": map[string]any{
 									"provider":     map[string]any{"type": "string", "example": "google"},
@@ -456,8 +456,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"email", "password"},
+								"type":     "object",
+								"required": []string{"email", "password"},
 								"properties": map[string]any{
 									"email":    map[string]any{"type": "string", "format": "email"},
 									"password": map[string]any{"type": "string"},
@@ -491,8 +491,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"email", "password"},
+								"type":     "object",
+								"required": []string{"email", "password"},
 								"properties": map[string]any{
 									"email":    map[string]any{"type": "string", "format": "email"},
 									"password": map[string]any{"type": "string"},
@@ -613,8 +613,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"slug", "title", "body"},
+								"type":     "object",
+								"required": []string{"slug", "title", "body"},
 								"properties": map[string]any{
 									"slug":   map[string]any{"type": "string", "description": "lowercase letters/numbers/hyphens"},
 									"title":  map[string]any{"type": "string"},
@@ -658,8 +658,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"email", "consent"},
+								"type":     "object",
+								"required": []string{"email", "consent"},
 								"properties": map[string]any{
 									"email":   map[string]any{"type": "string", "format": "email"},
 									"consent": map[string]any{"type": "boolean"},
@@ -685,6 +685,23 @@ var idunaOpenAPISpec = map[string]any{
 				"security":    []map[string]any{},
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Status per target + live 24h uptime percentage"},
+				},
+			},
+		},
+		"/api/v1/status/history": map[string]any{
+			"get": map[string]any{
+				"summary":     "Raw check history for one status target",
+				"tags":        []string{"status"},
+				"description": "Incident-timeline/latency-graph data source: every recorded check (up/down + latency_ms) for a target, oldest first, capped at 500 samples and 168 hours.",
+				"security":    []map[string]any{},
+				"parameters": []map[string]any{
+					{"name": "target", "in": "query", "required": true, "schema": map[string]any{"type": "string"}, "description": "Target name, e.g. \"iduna\" (see GET /api/v1/status for the current list)"},
+					{"name": "hours", "in": "query", "required": false, "schema": map[string]any{"type": "integer"}, "description": "Lookback window, default 24, capped at 168"},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "target, label, hours, and the checks array"},
+					"400": errorResponse("Missing target query param"),
+					"404": errorResponse("Unknown target"),
 				},
 			},
 		},
@@ -730,8 +747,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"name"},
+								"type":     "object",
+								"required": []string{"name"},
 								"properties": map[string]any{
 									"name":                map[string]any{"type": "string"},
 									"kind":                map[string]any{"type": "string", "enum": []string{"heartbeat", "cron", "deadman"}, "default": "heartbeat"},
@@ -828,8 +845,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"user_id", "plan", "status"},
+								"type":     "object",
+								"required": []string{"user_id", "plan", "status"},
 								"properties": map[string]any{
 									"user_id":    map[string]any{"type": "string"},
 									"plan":       map[string]any{"type": "string"},
@@ -878,8 +895,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"agent_name", "platform", "fcm_token"},
+								"type":     "object",
+								"required": []string{"agent_name", "platform", "fcm_token"},
 								"properties": map[string]any{
 									"agent_name":  map[string]any{"type": "string"},
 									"platform":    map[string]any{"type": "string", "example": "android"},
@@ -924,8 +941,8 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type":       "object",
-								"required":   []string{"image_data"},
+								"type":     "object",
+								"required": []string{"image_data"},
 								"properties": map[string]any{
 									"image_data": map[string]any{"type": "string", "description": "base64-encoded image"},
 									"media_type": map[string]any{"type": "string", "default": "image/jpeg"},
@@ -1071,7 +1088,7 @@ var idunaOpenAPISpec = map[string]any{
 					"content": map[string]any{
 						"application/json": map[string]any{
 							"schema": map[string]any{
-								"type": "object",
+								"type":     "object",
 								"required": []string{"requirement"},
 								"properties": map[string]any{
 									"requirement": map[string]any{"type": "string"},

@@ -1,5 +1,19 @@
 # IDUNA Changelog
 
+## 2026-08-16
+
+- feat(S153-11 partial): `GET /api/v1/status/history?target=<name>&hours=<n>` — raw check history
+  (up/down + latency_ms, chronological) for one status target, capped at 500 samples / 168 hours.
+  `statuspage.Store.History` backs it; no schema change, every check has always been retained
+  (see `Store.UptimePercent`'s own doc comment) — this just exposes the rows directly instead of
+  only a rolled-up percentage. `status.html` renders it as a per-service incident-timeline strip
+  (colored bar per check, hover for exact time/status/latency) — the two candidates S153-11 named
+  as already-buildable off the existing data model. Live-verified against real production history
+  through `okemily.com`'s public proxy (61 real checks over 1h for `iduna`). Company-cap/latency-
+  graph-as-a-chart and a public postmortem/incident log remain open, not attempted here. 9 new
+  tests (`Store.History` + `StatusHistoryHandler`), `go build`/`vet`/`test -race ./...` clean.
+  (sess-20260813-2154-dda37e8b)
+
 ## 2026-08-14
 
 - New Renderer.RenderManifest: live blog manifest text file at okemily.com/blog-manifest.txt, wired into publish path + cmd/blog-rerender (sess-20260813-2154-dda37e8b)

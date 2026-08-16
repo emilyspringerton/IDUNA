@@ -280,6 +280,7 @@ func main() {
 		log.Printf("[statuspage] %v", err)
 	})
 	statusH := &handlers.StatusPageHandler{Store: statusStore, Targets: statusTargets}
+	statusHistoryH := &handlers.StatusHistoryHandler{Store: statusStore, Targets: statusTargets}
 
 	mux := http.NewServeMux()
 
@@ -383,6 +384,7 @@ func main() {
 	tylerH.RegisterRoutes(mux, tylerCreateProtected)
 
 	mux.Handle("/api/v1/status", statusH)
+	mux.Handle("/api/v1/status/history", statusHistoryH)
 
 	// Admin login/logout — public (no auth required).
 	mux.Handle("/admin/login", adminLoginH)

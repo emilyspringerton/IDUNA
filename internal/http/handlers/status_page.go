@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"iduna/internal/statuspage"
@@ -48,5 +49,69 @@ func (h *StatusPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"services":   out,
 		"note":       "Self-reported from the same host running these services — not independent third-party monitoring. If the host itself is down, this page is down with it.",
 		"checked_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// StatusHistoryHandler serves GET /api/v1/status/history?target=<name>&hours=<n> —
+// public, read-only raw check history for one target, the incident-timeline
+// and latency-graph data source named as still-open in BACKLOG.md S153-11.
+// No schema change backs this: statuspage.Store has retained every check
+// since day one (see Store.UptimePercent's doc comment); this just exposes
+// the same rows directly instead of only a rolled-up percentage.
+type StatusHistoryHandler struct {
+	Store   *statuspage.Store
+	Targets []statuspage.Target
+}
+
+const (
+	statusHistoryDefaultHours = 24
+	statusHistoryMaxHours     = 168 // 7 days — matches the checks table's practical retention horizon; no pruning job exists yet, so this is a request-size guard, not a real data-lifetime limit
+	statusHistoryMaxSamples   = 500 // caps response size regardless of interval; 500 samples at the 60s poll interval is ~8.3h, so a 24h/168h request is thinned by the underlying poll cadence, not by this cap, in practice
+)
+
+func (h *StatusHistoryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "target query param is required"})
+		return
+	}
+	known := false
+	label := ""
+	for _, t := range h.Targets {
+		if t.Name == target {
+			known = true
+			label = t.Label
+			break
+		}
+	}
+	if !known {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "unknown target"})
+		return
+	}
+
+	hours := statusHistoryDefaultHours
+	if raw := r.URL.Query().Get("hours"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			hours = n
+		}
+	}
+	if hours > statusHistoryMaxHours {
+		hours = statusHistoryMaxHours
+	}
+
+	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	checks, err := h.Store.History(target, since, statusHistoryMaxSamples)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to load history"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"target": target,
+		"label":  label,
+		"hours":  hours,
+		"checks": checks,
 	})
 }

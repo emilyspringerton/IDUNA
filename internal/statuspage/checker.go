@@ -190,6 +190,52 @@ func (s *Store) UptimePercent(target string, since time.Time) (pct float64, samp
 	return float64(up) / float64(total) * 100.0, total
 }
 
+// Check is one recorded liveness sample, oldest-first when returned by
+// History. This is the same "checks" row every other Store method already
+// aggregates over — History just exposes it directly, for the incident-
+// timeline/latency-graph UI named as still-open in BACKLOG.md S153-11.
+type Check struct {
+	Up        bool      `json:"up"`
+	LatencyMS int64     `json:"latency_ms"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
+// History returns every recorded check for target since the given time, in
+// chronological order, capped at limit (0 = no cap). No schema change was
+// needed — every check has always been retained; this just reads it back.
+func (s *Store) History(target string, since time.Time, limit int) ([]Check, error) {
+	query := `SELECT up, latency_ms, checked_at FROM checks WHERE target = ? AND checked_at >= ? ORDER BY checked_at ASC`
+	args := []any{target, since}
+	if limit > 0 {
+		// Cap from the most recent end (DESC + LIMIT), then re-reverse to
+		// chronological order below — a plain ASC+LIMIT would cap from the
+		// oldest end instead, which is never what a "last N checks" caller wants.
+		query = `SELECT up, latency_ms, checked_at FROM (
+			SELECT up, latency_ms, checked_at FROM checks WHERE target = ? AND checked_at >= ?
+			ORDER BY checked_at DESC LIMIT ?
+		) ORDER BY checked_at ASC`
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query check history: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Check
+	for rows.Next() {
+		var upInt int
+		var c Check
+		if err := rows.Scan(&upInt, &c.LatencyMS, &c.CheckedAt); err != nil {
+			return nil, fmt.Errorf("scan check history row: %w", err)
+		}
+		c.Up = upInt == 1
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // Checker periodically pings every target and records the result.
 type Checker struct {
 	Store   *Store
