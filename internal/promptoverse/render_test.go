@@ -145,6 +145,19 @@ func TestRenderer_RenderAll_LinksSubjectWithTwoOrMoreLeaves(t *testing.T) {
 		}
 	}
 
+	// Regression: the subject page lives one directory deeper
+	// (subject/<slug>/) than leaf pages (<slug>/), so a bare "<slug>/<img>"
+	// src (correct on the top-level index) resolves to the wrong place here
+	// -- it needs the full /prompt-o-verse/ prefix like the <a href>s use.
+	for _, wantImg := range []string{
+		`src="/prompt-o-verse/duck-tux-claymation/a.png"`,
+		`src="/prompt-o-verse/duck-tux-lego/b.png"`,
+	} {
+		if !strings.Contains(subjHTML, wantImg) {
+			t.Errorf("subject page image src broken, expected %q: %s", wantImg, subjHTML)
+		}
+	}
+
 	// No subject page should exist for a single-leaf subject.
 	if _, err := os.Stat(filepath.Join(dir, "subject", "a-lonely-teapot", "index.html")); !os.IsNotExist(err) {
 		t.Error("expected no subject page for a single-leaf subject")

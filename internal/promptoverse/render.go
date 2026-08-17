@@ -253,7 +253,7 @@ const subjectTemplate = `<!DOCTYPE html>
     {{range .Nodes}}<li>
       <a href="/prompt-o-verse/{{.Slug}}/">
         <figure>
-          <img src="{{.Slug}}/{{.ImageFile}}" alt="{{.Label}} &mdash; {{$.Subject}}" loading="lazy">
+          <img src="/prompt-o-verse/{{.Slug}}/{{.ImageFile}}" alt="{{.Label}} &mdash; {{$.Subject}}" loading="lazy">
           <figcaption>
             <span class="kind-tag">{{.Kind}}</span>
             <h2>{{.Label}}</h2>
