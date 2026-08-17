@@ -1,5 +1,22 @@
 # IDUNA Changelog
 
+## 2026-08-17 (2)
+
+- feat(prompt-o-verse VS0): new `internal/promptoverse` package + `PromptOVerseHandler`, same
+  own-SQLite/render-to-static shape as `internal/tyler`, wired into okemily.com at
+  `/prompt-o-verse/`. Each node carries exactly 3 pieces of data per the founder's own contract —
+  top-level prompt, generated image, labeled taxonomy tags — rendered with real semantic HTML
+  (`<article>`, `<figure>`/`<figcaption>`, `<dl>`/`<dt>`/`<dd>` for tags, `<time datetime>`), not
+  div soup. New `promptoverse.write` permission (migration `202608170002`), granted to EMILY-PRIME.
+  Seeded live with a real 20-top-level-prompt VS0 MVP batch (baseball card photography, 3 real
+  historical eras + 17 fun/surreal transformations aimed at people new to generative AI, per
+  founder direction) generated via Vertex AI's `gemini-2.5-flash-image` — 17/20 succeeded before
+  hitting real rate limits (429s), 3 queued to backfill later per founder's own "proceed with what
+  you have" call. `okemily-deploy.sh` updated to exclude `prompt-o-verse/` from its rsync (same
+  blog/tyler live-render protection, would otherwise get wiped on next deploy). 11 new tests
+  (store CRUD/dedup/ordering, renderer semantic-HTML/index output). `go build`/`vet`/`test ./...`
+  clean. Live-verified on okemily.com, real generated images visible.
+
 ## 2026-08-17
 
 - fix(S157-01): grant EMILY-PRIME the `heimdal.process` permission it was always meant to have.

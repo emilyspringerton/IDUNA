@@ -19,6 +19,7 @@ import (
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
+	"iduna/internal/promptoverse"
 	"iduna/internal/statuspage"
 	"iduna/internal/store"
 	"iduna/internal/tyler"
@@ -261,6 +262,25 @@ func main() {
 	}
 	tylerH := &handlers.TylerHandler{Store: tylerStore, Renderer: &tyler.Renderer{OutputDir: tylerOutputDir}}
 
+	// Prompt-o-verse gallery -- same own-SQLite-file/render-to-static shape
+	// as blog/tyler, but also writes a generated image file alongside each
+	// page (the taxonomy data model is 3 pieces per node: top-level prompt,
+	// generated image, labeled tags -- see internal/promptoverse's own
+	// package doc and EMILY/docs/NORTHSTAR_PROMPT_O_VERSE.md).
+	promptoverseDBPath := os.Getenv("PROMPTOVERSE_DB_PATH")
+	if promptoverseDBPath == "" {
+		promptoverseDBPath = "./var/promptoverse.db"
+	}
+	promptoverseStore, err := promptoverse.Open(promptoverseDBPath)
+	if err != nil {
+		log.Fatalf("promptoverse: failed to open store: %v", err)
+	}
+	promptoverseOutputDir := os.Getenv("PROMPTOVERSE_OUTPUT_DIR")
+	if promptoverseOutputDir == "" {
+		promptoverseOutputDir = "/var/www/okemily/prompt-o-verse"
+	}
+	promptoverseH := &handlers.PromptOVerseHandler{Store: promptoverseStore, Renderer: &promptoverse.Renderer{OutputDir: promptoverseOutputDir}}
+
 	// Status page — real health checks against the services that actually
 	// have a reachable public endpoint (see statuspage.DefaultTargets doc
 	// for why emily-agent/SHANKPIT are deliberately excluded, not shown as
@@ -382,6 +402,10 @@ func main() {
 	// TYLER reading room -- posting requires tyler.write; reading is public.
 	tylerCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("tyler.write")(http.HandlerFunc(tylerH.Create)))
 	tylerH.RegisterRoutes(mux, tylerCreateProtected)
+
+	// Prompt-o-verse gallery -- posting requires promptoverse.write; reading is public.
+	promptoverseCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.Create)))
+	promptoverseH.RegisterRoutes(mux, promptoverseCreateProtected)
 
 	mux.Handle("/api/v1/status", statusH)
 	mux.Handle("/api/v1/status/history", statusHistoryH)

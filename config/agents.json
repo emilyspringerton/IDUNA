@@ -21,7 +21,8 @@
         "monitors.alert",
         "blog.write",
         "intelligence.read",
-        "tyler.write"
+        "tyler.write",
+        "promptoverse.write"
       ]
     },
     {
