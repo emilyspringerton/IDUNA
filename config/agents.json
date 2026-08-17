@@ -15,6 +15,7 @@
         "apples.read",
         "signalapi.read",
         "heimdal.submit",
+        "heimdal.process",
         "monitors.read",
         "monitors.create",
         "monitors.alert",

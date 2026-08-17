@@ -1,5 +1,21 @@
 # IDUNA Changelog
 
+## 2026-08-17
+
+- fix(S157-01): grant EMILY-PRIME the `heimdal.process` permission it was always meant to have.
+  `PATCH /api/v1/heimdal/sprints/{id}`'s own doc comment says "(heimdal.process — Emily Prime)"
+  and the permission itself has been seeded in the catalog since `202606090003_heimdal_sprints.sql`
+  ("Process HEIMDAL sprints and update status (Emily Prime only)"), but `config/agents.json` never
+  actually granted it — no agent could ever call that endpoint. This is why sprints 1/2/3 sat
+  `pending` for two months: not blocked on HITL-11's dead credit balance as assumed, but on a
+  permission that was designed-for and documented but never wired. Added `heimdal.process` to
+  EMILY-PRIME's permission list, re-ran `cmd/bootstrap` (dry-run first to confirm no credential
+  rotation/destruction — the S141-04 `writeSecretsEnv` merge fix holds), verified live: a freshly
+  minted EMILY-PRIME JWT carries the permission, `PATCH` on all three stale sprints now succeeds.
+  Reconciled all three by hand against real, already-confirmed BACKLOG.md state (S21-03, S24-01,
+  S23-01) rather than waiting on HITL-11's haiku auto-translate — see EMILY/BACKLOG.md S157-01.
+  (sess-20260813-2154-dda37e8b)
+
 ## 2026-08-16
 
 - feat(S153-11 partial): `GET /api/v1/status/history?target=<name>&hours=<n>` — raw check history
