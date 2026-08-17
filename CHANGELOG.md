@@ -1,5 +1,27 @@
 # IDUNA Changelog
 
+## 2026-08-17 (3)
+
+- feat(prompt-o-verse): add a real taxonomy level -- `Label` is now the style/subcategory (e.g.
+  "Renaissance oil painting"), `Subject` is what it's applied to (e.g. "baseball card", "Master
+  Chief (Halo)"), and each node carries both an `EZPrompt` (short, e.g. "renaissance oil painting
+  master chief halo" -- what a normal/vanilla pipeline would receive unenriched) and the real
+  `ExpandedPrompt` it was actually generated from, formalizing the northstar's own two-tier
+  prompting model (§3) as real fields instead of one undifferentiated prompt string. Index page
+  rewritten to group leaf nodes by `Label` (`<section>` per style, semantic heading + count),
+  proving styles generalize across subjects instead of looking baseball-card-specific -- every
+  leaf keeps its own dedicated page regardless of grouping (SEO, per founder direction). Seeded a
+  new Master Chief (Halo) batch reusing 9 existing styles (1910s tobacco card, stained glass,
+  8-bit pixel art, Renaissance oil painting, LEGO minifigure, claymation, pop art silkscreen,
+  woodcut, watercolor) via Vertex AI -- 3/9 succeeded before hitting sustained rate limits, stopped
+  there per founder's own "proceed with what you have" call rather than continuing to hammer the
+  limiter. Wiped and reseeded all 20 live nodes (17 baseball card + 3 Master Chief) against the
+  new schema. 2 new regression tests (shared-Label grouping, singular/plural variant count) +
+  updated existing tests for the renamed/added fields. `go build`/`vet`/`test ./...` clean.
+  Live-verified: shared styles now show "2 variants" on the index, e.g. the tobacco-card style
+  applied to Master Chief renders a genuinely convincing "MASTER CHIEF · SPARTAN II · UNSC"
+  Victorian-bordered lithograph card.
+
 ## 2026-08-17 (2)
 
 - feat(prompt-o-verse VS0): new `internal/promptoverse` package + `PromptOVerseHandler`, same

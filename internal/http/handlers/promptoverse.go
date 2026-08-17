@@ -30,10 +30,12 @@ func (h *PromptOVerseHandler) RegisterRoutes(mux *http.ServeMux, createProtected
 
 type createNodeRequest struct {
 	Slug           string            `json:"slug"`
-	Label          string            `json:"label"`
-	Kind           string            `json:"kind"` // "historical" | "surreal"
-	TopLevelPrompt string            `json:"top_level_prompt"`
-	ImageBase64    string            `json:"image_base64"` // raw PNG bytes, base64-encoded
+	Label          string            `json:"label"`           // style/subcategory, e.g. "Renaissance oil painting" -- gallery groups by this
+	Subject        string            `json:"subject"`         // what the style was applied to, e.g. "baseball card", "Master Chief (Halo)"
+	Kind           string            `json:"kind"`            // "historical" | "surreal"
+	EZPrompt       string            `json:"ez_prompt"`       // short/bare top-top-level prompt
+	ExpandedPrompt string            `json:"expanded_prompt"` // the real prompt the image was generated from
+	ImageBase64    string            `json:"image_base64"`    // raw PNG bytes, base64-encoded
 	Tags           map[string]string `json:"tags"`
 }
 
@@ -50,15 +52,17 @@ func (h *PromptOVerseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Slug = strings.TrimSpace(strings.ToLower(req.Slug))
 	req.Label = strings.TrimSpace(req.Label)
+	req.Subject = strings.TrimSpace(req.Subject)
 	req.Kind = strings.TrimSpace(strings.ToLower(req.Kind))
-	req.TopLevelPrompt = strings.TrimSpace(req.TopLevelPrompt)
+	req.EZPrompt = strings.TrimSpace(req.EZPrompt)
+	req.ExpandedPrompt = strings.TrimSpace(req.ExpandedPrompt)
 
 	if req.Slug == "" || !slugRe.MatchString(req.Slug) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "slug must be lowercase letters/numbers/hyphens"})
 		return
 	}
-	if req.Label == "" || req.TopLevelPrompt == "" || req.ImageBase64 == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "label, top_level_prompt, and image_base64 are required"})
+	if req.Label == "" || req.EZPrompt == "" || req.ExpandedPrompt == "" || req.ImageBase64 == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "label, ez_prompt, expanded_prompt, and image_base64 are required"})
 		return
 	}
 	if req.Kind != "historical" && req.Kind != "surreal" {
@@ -70,8 +74,10 @@ func (h *PromptOVerseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	n := promptoverse.Node{
 		Slug:           req.Slug,
 		Label:          req.Label,
+		Subject:        req.Subject,
 		Kind:           req.Kind,
-		TopLevelPrompt: req.TopLevelPrompt,
+		EZPrompt:       req.EZPrompt,
+		ExpandedPrompt: req.ExpandedPrompt,
 		ImageFile:      imageFile,
 		Tags:           req.Tags,
 	}
@@ -123,8 +129,9 @@ func (h *PromptOVerseHandler) list(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, len(nodes))
 	for i, n := range nodes {
 		out[i] = map[string]any{
-			"slug": n.Slug, "label": n.Label, "kind": n.Kind,
-			"top_level_prompt": n.TopLevelPrompt, "tags": n.Tags, "published_at": n.PublishedAt,
+			"slug": n.Slug, "label": n.Label, "subject": n.Subject, "kind": n.Kind,
+			"ez_prompt": n.EZPrompt, "expanded_prompt": n.ExpandedPrompt,
+			"tags": n.Tags, "published_at": n.PublishedAt,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": out})
@@ -138,7 +145,8 @@ func (h *PromptOVerseHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"slug": n.Slug, "label": n.Label, "kind": n.Kind, "top_level_prompt": n.TopLevelPrompt,
+		"slug": n.Slug, "label": n.Label, "subject": n.Subject, "kind": n.Kind,
+		"ez_prompt": n.EZPrompt, "expanded_prompt": n.ExpandedPrompt,
 		"image_file": n.ImageFile, "tags": n.Tags, "published_at": n.PublishedAt,
 	})
 }

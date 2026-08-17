@@ -1,8 +1,13 @@
 // render.go writes Prompt-o-verse nodes as static HTML — semantic markup
-// throughout (article/figure/figcaption/dl-dt-dd/time/data), not div soup,
-// per founder direction: the taxonomy data (top-level prompt, generated
-// image, labeled tags) should be legible in the markup itself, not just
-// styled to look right. Same "own renderer, IDUNA style guide" shape as
+// throughout (article/figure/figcaption/dl-dt-dd/time/section), not div
+// soup, per founder direction: the taxonomy data (EZ prompt, expanded
+// prompt, generated image, labeled tags) should be legible in the markup
+// itself, not just styled to look right. Individual node pages stay as
+// dedicated leaf-node URLs (SEO: each generated image is independently
+// indexable) — the index groups those same leaf nodes by style/Label
+// ("stained glass" is the subcategory; "baseball card" vs "Master Chief"
+// are sibling leaf nodes under it), per founder direction not to collapse
+// leaves into fewer pages. Same "own renderer, IDUNA style guide" shape as
 // internal/tyler/render.go.
 package promptoverse
 
@@ -23,8 +28,8 @@ const pageTemplate = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{.Label}} &mdash; Prompt-o-verse</title>
-<meta name="description" content="{{.TopLevelPrompt}}">
+<title>{{.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}} &mdash; Prompt-o-verse</title>
+<meta name="description" content="{{.EZPrompt}}">
 <style>
   :root {
     --bg: #101014; --panel-bg: #17171d; --accent: #7c8cff;
@@ -53,9 +58,10 @@ const pageTemplate = `<!DOCTYPE html>
   .kind-tag {
     display: inline-block; font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); border: 1px solid var(--accent); border-radius: 999px;
-    padding: 0.2rem 0.7rem; margin-bottom: 0.6rem;
+    padding: 0.2rem 0.7rem; margin-bottom: 0.6rem; margin-right: 0.4rem;
   }
-  h1 { font-size: clamp(1.8rem, 5vw, 2.4rem); margin: 0 0 0.3rem; font-weight: 700; }
+  h1 { font-size: clamp(1.8rem, 5vw, 2.4rem); margin: 0.6rem 0 0.2rem; font-weight: 700; }
+  .subject-line { font-size: 1.05rem; color: var(--text-soft); margin: 0 0 0.4rem; }
   .published { font-size: 0.85rem; color: var(--text-whisper); }
   figure.node-image { margin: 0 0 2.2rem; }
   figure.node-image img {
@@ -72,6 +78,7 @@ const pageTemplate = `<!DOCTYPE html>
     background: var(--panel-bg); border: 1px solid var(--rule); border-radius: 8px;
     padding: 1rem 1.2rem; color: var(--text-soft); margin: 0;
   }
+  .ez-prompt-text { font-size: 1.05rem; color: var(--text-main); margin: 0; }
   dl.taxonomy { display: grid; grid-template-columns: max-content 1fr; gap: 0.55rem 1rem; margin: 0; }
   dl.taxonomy dt {
     font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-whisper);
@@ -90,17 +97,23 @@ const pageTemplate = `<!DOCTYPE html>
     <header class="node-header">
       <span class="kind-tag">{{.Kind}}</span>
       <h1>{{.Label}}</h1>
+      {{if .Subject}}<p class="subject-line">Applied to: {{.Subject}}</p>{{end}}
       <p class="published">Published <time datetime="{{.PublishedISO}}">{{.PublishedDate}}</time></p>
     </header>
 
     <figure class="node-image">
-      <img src="{{.ImageFile}}" alt="{{.Label}} &mdash; generated image" width="1024" height="1024" loading="lazy">
-      <figcaption>Generated output for this taxonomy node.</figcaption>
+      <img src="{{.ImageFile}}" alt="{{.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}} &mdash; generated image" width="1024" height="1024" loading="lazy">
+      <figcaption>Generated output for this taxonomy leaf node.</figcaption>
     </figure>
 
-    <section class="node-section" aria-labelledby="prompt-heading">
-      <h2 id="prompt-heading">Top-Level Prompt</h2>
-      <p class="prompt-text">{{.TopLevelPrompt}}</p>
+    <section class="node-section" aria-labelledby="ez-prompt-heading">
+      <h2 id="ez-prompt-heading">Prompt</h2>
+      <p class="ez-prompt-text">{{.EZPrompt}}</p>
+    </section>
+
+    <section class="node-section" aria-labelledby="expanded-prompt-heading">
+      <h2 id="expanded-prompt-heading">Expanded Prompt</h2>
+      <p class="prompt-text">{{.ExpandedPrompt}}</p>
     </section>
 
     <section class="node-section" aria-labelledby="taxonomy-heading">
@@ -142,16 +155,22 @@ const indexTemplate = `<!DOCTYPE html>
   .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
   nav.wordmark a { font-size: 0.72rem; letter-spacing: 0.28em; text-transform: uppercase; color: var(--text-whisper); text-decoration: none; }
   h1 { font-weight: 700; font-size: clamp(1.9rem, 5vw, 2.6rem); margin: 1.1rem 0 0.4rem; }
-  .tagline { color: var(--text-soft); font-size: 1.02rem; margin-bottom: 2.2rem; max-width: 640px; }
-  ul.gallery { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.1rem; }
+  .tagline { color: var(--text-soft); font-size: 1.02rem; margin-bottom: 2.4rem; max-width: 640px; }
+  section.category { margin-bottom: 2.6rem; }
+  section.category h2 {
+    font-size: 1.25rem; font-weight: 700; margin: 0 0 0.2rem; padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  section.category .category-count { font-size: 0.8rem; color: var(--text-whisper); font-weight: 400; margin-left: 0.5rem; }
+  ul.gallery { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.1rem; }
   ul.gallery li { margin: 0; }
   ul.gallery a { display: block; text-decoration: none; color: inherit; }
   ul.gallery figure { margin: 0; background: var(--panel-bg); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
   ul.gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
   ul.gallery figcaption { padding: 0.7rem 0.85rem; }
   .kind-tag { display: inline-block; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.3rem; }
-  ul.gallery h2 { font-size: 0.95rem; font-weight: 600; margin: 0; }
-  ul.gallery a:hover h2 { color: var(--accent); }
+  ul.gallery h3 { font-size: 0.92rem; font-weight: 600; margin: 0; }
+  ul.gallery a:hover h3 { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -159,22 +178,27 @@ const indexTemplate = `<!DOCTYPE html>
   <nav class="wordmark"><a href="/">EINHORN_INDUSTRIAL</a></nav>
   <h1>Prompt-o-verse &mdash; A Gallery</h1>
   <p class="tagline">A browsable taxonomy of what's possible to ask a generative model for &mdash;
-  each node pairs a real top-level prompt with its generated output and its labeled taxonomy tags.
-  VS0 proof-of-concept, not the full vision.</p>
-  <ul class="gallery">
-    {{range .Nodes}}<li>
-      <a href="/prompt-o-verse/{{.Slug}}/">
-        <figure>
-          <img src="{{.Slug}}/{{.ImageFile}}" alt="{{.Label}}" loading="lazy">
-          <figcaption>
-            <span class="kind-tag">{{.Kind}}</span>
-            <h2>{{.Label}}</h2>
-          </figcaption>
-        </figure>
-      </a>
-    </li>
-    {{end}}
-  </ul>
+  each style groups the different subjects it's been applied to, every leaf pairs a real EZ prompt
+  and expanded prompt with its generated output and labeled taxonomy tags. VS0 proof-of-concept,
+  not the full vision.</p>
+  {{range .Categories}}<section class="category" aria-labelledby="cat-{{.Slug}}">
+    <h2 id="cat-{{.Slug}}">{{.Label}}<span class="category-count">{{.Count}} {{if eq .Count 1}}variant{{else}}variants{{end}}</span></h2>
+    <ul class="gallery">
+      {{range .Nodes}}<li>
+        <a href="/prompt-o-verse/{{.Slug}}/">
+          <figure>
+            <img src="{{.Slug}}/{{.ImageFile}}" alt="{{.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}}" loading="lazy">
+            <figcaption>
+              <span class="kind-tag">{{.Kind}}</span>
+              <h3>{{if .Subject}}{{.Subject}}{{else}}{{.Label}}{{end}}</h3>
+            </figcaption>
+          </figure>
+        </a>
+      </li>
+      {{end}}
+    </ul>
+  </section>
+  {{end}}
 </div>
 </body>
 </html>
@@ -188,12 +212,21 @@ type tagPair struct {
 type nodeView struct {
 	Slug           string
 	Label          string
+	Subject        string
 	Kind           string
-	TopLevelPrompt string
+	EZPrompt       string
+	ExpandedPrompt string
 	ImageFile      string
 	PublishedISO   string
 	PublishedDate  string
 	TagPairs       []tagPair
+}
+
+type categoryView struct {
+	Slug  string
+	Label string
+	Count int
+	Nodes []nodeView
 }
 
 func toView(n Node) nodeView {
@@ -209,8 +242,10 @@ func toView(n Node) nodeView {
 	return nodeView{
 		Slug:           n.Slug,
 		Label:          n.Label,
+		Subject:        n.Subject,
 		Kind:           n.Kind,
-		TopLevelPrompt: n.TopLevelPrompt,
+		EZPrompt:       n.EZPrompt,
+		ExpandedPrompt: n.ExpandedPrompt,
 		ImageFile:      n.ImageFile,
 		PublishedISO:   n.PublishedAt.Format("2006-01-02"),
 		PublishedDate:  n.PublishedAt.Format("January 2, 2006"),
@@ -221,7 +256,9 @@ func toView(n Node) nodeView {
 // RenderNode writes one node's page (and copies nothing -- the image file
 // must already exist at OutputDir/<slug>/<ImageFile> before this is called,
 // same "images are static assets, not template data" split as the rest of
-// this package) to OutputDir/<slug>/index.html.
+// this package) to OutputDir/<slug>/index.html. Each node keeps its own
+// dedicated URL regardless of grouping on the index -- leaf nodes stay
+// individually indexable (SEO), per founder direction.
 func (r *Renderer) RenderNode(n Node) error {
 	tmpl, err := template.New("node").Parse(pageTemplate)
 	if err != nil {
@@ -239,7 +276,13 @@ func (r *Renderer) RenderNode(n Node) error {
 	return tmpl.Execute(f, toView(n))
 }
 
-// RenderIndex writes the /prompt-o-verse/ gallery listing from all nodes.
+// RenderIndex writes the /prompt-o-verse/ gallery listing, grouped by
+// Label/style (the subcategory) -- e.g. "Renaissance oil painting" groups
+// its baseball-card leaf and its Master Chief leaf together, per founder
+// direction ("stained glass is top level... we don't necessarily need
+// separate pages for the 2 different mediums"). Category order follows
+// each style's first (most recent) appearance in the already-sorted
+// (published_at DESC) node list.
 func (r *Renderer) RenderIndex(nodes []Node) error {
 	tmpl, err := template.New("index").Parse(indexTemplate)
 	if err != nil {
@@ -254,9 +297,39 @@ func (r *Renderer) RenderIndex(nodes []Node) error {
 	}
 	defer f.Close()
 
-	views := make([]nodeView, len(nodes))
-	for i, n := range nodes {
-		views[i] = toView(n)
+	order := make([]string, 0)
+	byLabel := make(map[string][]nodeView)
+	for _, n := range nodes {
+		v := toView(n)
+		if _, seen := byLabel[n.Label]; !seen {
+			order = append(order, n.Label)
+		}
+		byLabel[n.Label] = append(byLabel[n.Label], v)
 	}
-	return tmpl.Execute(f, struct{ Nodes []nodeView }{Nodes: views})
+	categories := make([]categoryView, 0, len(order))
+	for _, label := range order {
+		categories = append(categories, categoryView{
+			Slug:  slugify(label),
+			Label: label,
+			Count: len(byLabel[label]),
+			Nodes: byLabel[label],
+		})
+	}
+
+	return tmpl.Execute(f, struct{ Categories []categoryView }{Categories: categories})
+}
+
+func slugify(s string) string {
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			out = append(out, r)
+		case r >= 'A' && r <= 'Z':
+			out = append(out, r+('a'-'A'))
+		case r == ' ' || r == '-' || r == '_':
+			out = append(out, '-')
+		}
+	}
+	return string(out)
 }

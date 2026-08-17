@@ -1,9 +1,11 @@
 // Package promptoverse is the system of record for the Prompt-o-verse
-// gallery on okemily.com — a browsable taxonomy of generated images, each
-// carrying its top-level prompt, its generated image, and its labeled
-// taxonomy tags (the "3 pieces of data per page" contract this was built
-// to). See EMILY/docs/NORTHSTAR_PROMPT_O_VERSE.md for the full concept;
-// this is VS0's first real product surface, not the whole vision.
+// gallery on okemily.com — a browsable taxonomy of generated images. Each
+// node carries the northstar's two-tier prompt model (§3 of
+// EMILY/docs/NORTHSTAR_PROMPT_O_VERSE.md) made concrete: a short EZ prompt
+// (e.g. "renaissance oil painting master chief halo") that unfurls into the
+// real expanded prompt actually used to generate the image, plus the
+// generated image itself and its labeled taxonomy tags. This is VS0's
+// first real product surface, not the whole vision.
 //
 // Same "own small SQLite file, render to static HTML" shape as
 // internal/blog and internal/tyler, for the same reason (see blog/store.go's
@@ -32,11 +34,23 @@ import (
 type Tags map[string]string
 
 type Node struct {
-	ID             int64
-	Slug           string
-	Label          string // short human label, e.g. "1990s glossy rookie card"
-	Kind           string // "historical" | "surreal" — the two taxonomy branches (northstar §1/§2)
-	TopLevelPrompt string // the exact EZ/top-level prompt used to generate this node
+	ID    int64
+	Slug  string
+	Label string // the style/taxonomy category, e.g. "Renaissance oil painting" — the gallery groups nodes by this (founder: "stained glass is top level")
+	// Subject is what the style was applied to, e.g. "baseball card",
+	// "Master Chief (Halo)" — the axis orthogonal to Label/style. The same
+	// Label can have multiple Subject variants (founder's own example:
+	// Renaissance oil painting of a baseball card AND of Master Chief).
+	Subject string
+	Kind    string // "historical" | "surreal" — the two taxonomy branches (northstar §1/§2)
+	// EZPrompt is the short, bare, top-top-level prompt a casual user would
+	// type -- e.g. "renaissance oil painting master chief halo" -- what a
+	// normal/vanilla text-to-image pipeline would receive unenriched.
+	EZPrompt string
+	// ExpandedPrompt is the real, feature-rich prompt this node's image was
+	// actually generated from -- what EZPrompt "unfurls into" (northstar §3
+	// tier 2). Never invented after the fact: always the literal prompt used.
+	ExpandedPrompt string
 	ImageFile      string // filename only, e.g. "02-glossy-90s-card.png" — served as a static asset alongside the rendered page
 	Tags           Tags   // labeled taxonomy data for the generated output (northstar §2's "label the generated data itself" step)
 	PublishedAt    time.Time
@@ -52,8 +66,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 	id              INTEGER PRIMARY KEY AUTOINCREMENT,
 	slug            TEXT     NOT NULL UNIQUE,
 	label           TEXT     NOT NULL,
+	subject         TEXT     NOT NULL DEFAULT '',
 	kind            TEXT     NOT NULL DEFAULT 'historical',
-	top_level_prompt TEXT    NOT NULL,
+	ez_prompt       TEXT     NOT NULL DEFAULT '',
+	expanded_prompt TEXT     NOT NULL,
 	image_file      TEXT     NOT NULL,
 	tags_json       TEXT     NOT NULL DEFAULT '{}',
 	published_at    DATETIME NOT NULL,
@@ -61,6 +77,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 );
 CREATE INDEX IF NOT EXISTS idx_nodes_published_at ON nodes(published_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
+CREATE INDEX IF NOT EXISTS idx_nodes_label ON nodes(label);
 `
 
 func Open(path string) (*Store, error) {
@@ -88,8 +105,8 @@ func (s *Store) Create(n Node) (int64, error) {
 		return 0, fmt.Errorf("marshal tags: %w", err)
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO nodes (slug, label, kind, top_level_prompt, image_file, tags_json, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		n.Slug, n.Label, n.Kind, n.TopLevelPrompt, n.ImageFile, string(tagsJSON), n.PublishedAt,
+		`INSERT INTO nodes (slug, label, subject, kind, ez_prompt, expanded_prompt, image_file, tags_json, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.Slug, n.Label, n.Subject, n.Kind, n.EZPrompt, n.ExpandedPrompt, n.ImageFile, string(tagsJSON), n.PublishedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -99,7 +116,7 @@ func (s *Store) Create(n Node) (int64, error) {
 
 // List returns all nodes, most recently published first.
 func (s *Store) List() ([]Node, error) {
-	rows, err := s.db.Query(`SELECT id, slug, label, kind, top_level_prompt, image_file, tags_json, published_at, created_at FROM nodes ORDER BY published_at DESC`)
+	rows, err := s.db.Query(`SELECT id, slug, label, subject, kind, ez_prompt, expanded_prompt, image_file, tags_json, published_at, created_at FROM nodes ORDER BY published_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +135,7 @@ func (s *Store) List() ([]Node, error) {
 
 // GetBySlug returns one node, or sql.ErrNoRows if not found.
 func (s *Store) GetBySlug(slug string) (Node, error) {
-	row := s.db.QueryRow(`SELECT id, slug, label, kind, top_level_prompt, image_file, tags_json, published_at, created_at FROM nodes WHERE slug = ?`, slug)
+	row := s.db.QueryRow(`SELECT id, slug, label, subject, kind, ez_prompt, expanded_prompt, image_file, tags_json, published_at, created_at FROM nodes WHERE slug = ?`, slug)
 	return scanNode(row)
 }
 
@@ -129,7 +146,7 @@ type scannable interface {
 func scanNode(row scannable) (Node, error) {
 	var n Node
 	var tagsJSON string
-	if err := row.Scan(&n.ID, &n.Slug, &n.Label, &n.Kind, &n.TopLevelPrompt, &n.ImageFile, &tagsJSON, &n.PublishedAt, &n.CreatedAt); err != nil {
+	if err := row.Scan(&n.ID, &n.Slug, &n.Label, &n.Subject, &n.Kind, &n.EZPrompt, &n.ExpandedPrompt, &n.ImageFile, &tagsJSON, &n.PublishedAt, &n.CreatedAt); err != nil {
 		return Node{}, err
 	}
 	if err := json.Unmarshal([]byte(tagsJSON), &n.Tags); err != nil {
