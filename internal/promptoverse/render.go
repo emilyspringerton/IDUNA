@@ -97,7 +97,7 @@ const pageTemplate = `<!DOCTYPE html>
     <header class="node-header">
       <span class="kind-tag">{{.Kind}}</span>
       <h1>{{.Label}}</h1>
-      {{if .Subject}}<p class="subject-line">Applied to: {{.Subject}}</p>{{end}}
+      {{if .Subject}}<p class="subject-line">Applied to: {{if .SubjectLink}}<a href="{{.SubjectLink}}">{{.Subject}}</a>{{else}}{{.Subject}}{{end}}</p>{{end}}
       <p class="published">Published <time datetime="{{.PublishedISO}}">{{.PublishedDate}}</time></p>
     </header>
 
@@ -204,6 +204,71 @@ const indexTemplate = `<!DOCTYPE html>
 </html>
 `
 
+const subjectTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.Subject}} &mdash; Prompt-o-verse</title>
+<meta name="description" content="Every style Prompt-o-verse has applied to {{.Subject}}.">
+<style>
+  :root {
+    --bg: #101014; --panel-bg: #17171d; --accent: #7c8cff;
+    --text-main: #eef0f4; --text-soft: #a8adb8; --text-whisper: #6f7480;
+    --rule: #23262f;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fafafa; --panel-bg: #ffffff; --accent: #4451c7;
+      --text-main: #14161c; --text-soft: #4a4f5c; --text-whisper: #8a8f9c;
+      --rule: #e4e4e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text-main); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+  nav.wordmark a { font-size: 0.72rem; letter-spacing: 0.28em; text-transform: uppercase; color: var(--text-whisper); text-decoration: none; }
+  h1 { font-weight: 700; font-size: clamp(1.9rem, 5vw, 2.6rem); margin: 1.1rem 0 0.4rem; }
+  .tagline { color: var(--text-soft); font-size: 1.02rem; margin-bottom: 2.4rem; }
+  ul.gallery { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.1rem; }
+  ul.gallery li { margin: 0; }
+  ul.gallery a { display: block; text-decoration: none; color: inherit; }
+  ul.gallery figure { margin: 0; background: var(--panel-bg); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  ul.gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
+  ul.gallery figcaption { padding: 0.7rem 0.85rem; }
+  .kind-tag { display: inline-block; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.3rem; }
+  ul.gallery h2 { font-size: 0.92rem; font-weight: 600; margin: 0; }
+  ul.gallery a:hover h2 { color: var(--accent); }
+  nav.back { margin-top: 3rem; }
+  nav.back a { font-size: 0.85rem; color: var(--text-whisper); text-decoration: none; }
+  nav.back a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="wordmark"><a href="/prompt-o-verse/">Prompt-o-verse &middot; A Gallery</a></nav>
+  <h1>{{.Subject}}</h1>
+  <p class="tagline">{{.Count}} {{if eq .Count 1}}style{{else}}styles{{end}} applied to this subject so far.</p>
+  <ul class="gallery">
+    {{range .Nodes}}<li>
+      <a href="/prompt-o-verse/{{.Slug}}/">
+        <figure>
+          <img src="{{.Slug}}/{{.ImageFile}}" alt="{{.Label}} &mdash; {{$.Subject}}" loading="lazy">
+          <figcaption>
+            <span class="kind-tag">{{.Kind}}</span>
+            <h2>{{.Label}}</h2>
+          </figcaption>
+        </figure>
+      </a>
+    </li>
+    {{end}}
+  </ul>
+  <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
+</div>
+</body>
+</html>
+`
+
 type tagPair struct {
 	Key   string
 	Value string
@@ -213,6 +278,7 @@ type nodeView struct {
 	Slug           string
 	Label          string
 	Subject        string
+	SubjectLink    string // "" unless this Subject has >=2 leaf nodes (founder direction)
 	Kind           string
 	EZPrompt       string
 	ExpandedPrompt string
@@ -220,6 +286,12 @@ type nodeView struct {
 	PublishedISO   string
 	PublishedDate  string
 	TagPairs       []tagPair
+}
+
+type subjectPageView struct {
+	Subject string
+	Count   int
+	Nodes   []nodeView
 }
 
 type categoryView struct {
@@ -253,13 +325,15 @@ func toView(n Node) nodeView {
 	}
 }
 
-// RenderNode writes one node's page (and copies nothing -- the image file
-// must already exist at OutputDir/<slug>/<ImageFile> before this is called,
-// same "images are static assets, not template data" split as the rest of
-// this package) to OutputDir/<slug>/index.html. Each node keeps its own
-// dedicated URL regardless of grouping on the index -- leaf nodes stay
-// individually indexable (SEO), per founder direction.
+// RenderNode writes one node's page in isolation, with no subject-link
+// context (SubjectLink stays empty) -- used for simple/standalone renders
+// and tests. Live publishing should use RenderAll instead, since whether a
+// Subject is linkable depends on how many *other* nodes share it.
 func (r *Renderer) RenderNode(n Node) error {
+	return r.renderNodePage(n, "")
+}
+
+func (r *Renderer) renderNodePage(n Node, subjectLink string) error {
 	tmpl, err := template.New("node").Parse(pageTemplate)
 	if err != nil {
 		return err
@@ -273,7 +347,9 @@ func (r *Renderer) RenderNode(n Node) error {
 		return err
 	}
 	defer f.Close()
-	return tmpl.Execute(f, toView(n))
+	v := toView(n)
+	v.SubjectLink = subjectLink
+	return tmpl.Execute(f, v)
 }
 
 // RenderIndex writes the /prompt-o-verse/ gallery listing, grouped by
@@ -317,6 +393,79 @@ func (r *Renderer) RenderIndex(nodes []Node) error {
 	}
 
 	return tmpl.Execute(f, struct{ Categories []categoryView }{Categories: categories})
+}
+
+// RenderAll re-renders every node's own page, the index, and every subject
+// page from the full current node list -- the correct entrypoint whenever a
+// node is created, since whether a Subject is linkable (>=2 leaves,
+// founder direction) can change for *existing* nodes too: publishing the
+// second leaf under a Subject is what makes the first leaf's own page need
+// a link it didn't have before. Cheap enough to always do in full at this
+// data scale (dozens of nodes) rather than track incremental invalidation.
+func (r *Renderer) RenderAll(nodes []Node) error {
+	subjectCounts := make(map[string]int, len(nodes))
+	for _, n := range nodes {
+		if n.Subject != "" {
+			subjectCounts[n.Subject]++
+		}
+	}
+
+	for _, n := range nodes {
+		link := ""
+		if n.Subject != "" && subjectCounts[n.Subject] >= 2 {
+			link = "/prompt-o-verse/subject/" + slugify(n.Subject) + "/"
+		}
+		if err := r.renderNodePage(n, link); err != nil {
+			return fmt.Errorf("render node %s: %w", n.Slug, err)
+		}
+	}
+
+	if err := r.RenderIndex(nodes); err != nil {
+		return err
+	}
+
+	return r.renderSubjectPages(nodes, subjectCounts)
+}
+
+// renderSubjectPages writes /prompt-o-verse/subject/<slug>/index.html for
+// every Subject with >=2 leaf nodes -- founder direction: "if taxonomies
+// have at least 2 leaf nodes make the subject tag clickable... show all
+// leaf nodes [sharing that subject]." Subjects with 0 or 1 leaves get no
+// page (nothing meaningful to browse to yet).
+func (r *Renderer) renderSubjectPages(nodes []Node, subjectCounts map[string]int) error {
+	order := make([]string, 0)
+	bySubject := make(map[string][]nodeView)
+	for _, n := range nodes {
+		if n.Subject == "" || subjectCounts[n.Subject] < 2 {
+			continue
+		}
+		if _, seen := bySubject[n.Subject]; !seen {
+			order = append(order, n.Subject)
+		}
+		bySubject[n.Subject] = append(bySubject[n.Subject], toView(n))
+	}
+
+	tmpl, err := template.New("subject").Parse(subjectTemplate)
+	if err != nil {
+		return err
+	}
+	for _, subject := range order {
+		dir := filepath.Join(r.OutputDir, "subject", slugify(subject))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+		f, err := os.Create(filepath.Join(dir, "index.html"))
+		if err != nil {
+			return err
+		}
+		view := subjectPageView{Subject: subject, Count: len(bySubject[subject]), Nodes: bySubject[subject]}
+		err = tmpl.Execute(f, view)
+		f.Close()
+		if err != nil {
+			return fmt.Errorf("render subject page %s: %w", subject, err)
+		}
+	}
+	return nil
 }
 
 func slugify(s string) string {

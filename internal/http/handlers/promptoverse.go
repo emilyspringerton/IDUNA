@@ -91,14 +91,14 @@ func (h *PromptOVerseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := writeImage(h.Renderer.OutputDir, req.Slug, imageFile, req.ImageBase64); err != nil {
 		log.Printf("[promptoverse] write image for %q failed: %v", n.Slug, err)
 	}
-	if err := h.Renderer.RenderNode(n); err != nil {
-		log.Printf("[promptoverse] render node %q failed: %v", n.Slug, err)
-	}
+	// RenderAll, not just this node + the index: a new leaf can push its
+	// Subject from 1 leaf to 2+, which is what makes an *older* sibling
+	// leaf's own page need a "see all X" link it didn't have before.
 	nodes, err := h.Store.List()
 	if err != nil {
-		log.Printf("[promptoverse] list nodes for index render failed: %v", err)
-	} else if err := h.Renderer.RenderIndex(nodes); err != nil {
-		log.Printf("[promptoverse] render index failed: %v", err)
+		log.Printf("[promptoverse] list nodes for render failed: %v", err)
+	} else if err := h.Renderer.RenderAll(nodes); err != nil {
+		log.Printf("[promptoverse] render all failed: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
