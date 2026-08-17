@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-17 (3)
+- feat(promptoverse): subject-grouping (leaf pages with a Subject that has ≥ 2 published leaves get a linked '/subject/<slug>/' page and a clickable Applied-to line); RenderAll now re-renders every node + subject pages on every publish (not just the new node + index) so an OLDER sibling gains its link the moment a SECOND leaf under the same Subject goes live; added cmd/promptoverse-rerender (mirrors cmd/blog-rerender) and used it to backfill all 28 existing nodes, which also fixed a stale published_at=0001-01-01 baked into early VS0 leaf pages from before RenderAll existed (DB values were always correct -- the static HTML just never got re-rendered with them until now) (sess-20260813-2154-dda37e8b)
 
 - feat(prompt-o-verse): add a real taxonomy level -- `Label` is now the style/subcategory (e.g.
   "Renaissance oil painting"), `Subject` is what it's applied to (e.g. "baseball card", "Master
