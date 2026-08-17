@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-17 (3)
+- fix(promptoverse): subject page <img src> used a bare relative path that only resolves correctly from the top-level index, not from subject/<slug>/ which is one directory deeper -- every subject page's images 404ed. Switched to the absolute /prompt-o-verse/<slug>/<file> path already used by the <a href>s in the same template. Re-ran cmd/promptoverse-rerender to fix already-published pages. (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): subject-grouping (leaf pages with a Subject that has ≥ 2 published leaves get a linked '/subject/<slug>/' page and a clickable Applied-to line); RenderAll now re-renders every node + subject pages on every publish (not just the new node + index) so an OLDER sibling gains its link the moment a SECOND leaf under the same Subject goes live; added cmd/promptoverse-rerender (mirrors cmd/blog-rerender) and used it to backfill all 28 existing nodes, which also fixed a stale published_at=0001-01-01 baked into early VS0 leaf pages from before RenderAll existed (DB values were always correct -- the static HTML just never got re-rendered with them until now) (sess-20260813-2154-dda37e8b)
 
 - feat(prompt-o-verse): add a real taxonomy level -- `Label` is now the style/subcategory (e.g.
