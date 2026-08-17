@@ -61,6 +61,8 @@ const pageTemplate = `<!DOCTYPE html>
     padding: 0.2rem 0.7rem; margin-bottom: 0.6rem; margin-right: 0.4rem;
   }
   h1 { font-size: clamp(1.8rem, 5vw, 2.4rem); margin: 0.6rem 0 0.2rem; font-weight: 700; }
+  h1 a { color: inherit; text-decoration: none; }
+  h1 a:hover { color: var(--accent); }
   .subject-line { font-size: 1.05rem; color: var(--text-soft); margin: 0 0 0.4rem; }
   .published { font-size: 0.85rem; color: var(--text-whisper); }
   figure.node-image { margin: 0 0 2.2rem; }
@@ -96,7 +98,7 @@ const pageTemplate = `<!DOCTYPE html>
   <article>
     <header class="node-header">
       <span class="kind-tag">{{.Kind}}</span>
-      <h1>{{.Label}}</h1>
+      <h1><a href="{{.StyleLink}}">{{.Label}}</a></h1>
       {{if .Subject}}<p class="subject-line">Applied to: {{if .SubjectLink}}<a href="{{.SubjectLink}}">{{.Subject}}</a>{{else}}{{.Subject}}{{end}}</p>{{end}}
       <p class="published">Published <time datetime="{{.PublishedISO}}">{{.PublishedDate}}</time></p>
     </header>
@@ -161,6 +163,8 @@ const indexTemplate = `<!DOCTYPE html>
     font-size: 1.25rem; font-weight: 700; margin: 0 0 0.2rem; padding-bottom: 0.6rem;
     border-bottom: 1px solid var(--rule);
   }
+  section.category h2 a { color: inherit; text-decoration: none; }
+  section.category h2 a:hover { color: var(--accent); }
   section.category .category-count { font-size: 0.8rem; color: var(--text-whisper); font-weight: 400; margin-left: 0.5rem; }
   ul.gallery { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.1rem; }
   ul.gallery li { margin: 0; }
@@ -181,8 +185,9 @@ const indexTemplate = `<!DOCTYPE html>
   each style groups the different subjects it's been applied to, every leaf pairs a real EZ prompt
   and expanded prompt with its generated output and labeled taxonomy tags. VS0 proof-of-concept,
   not the full vision.</p>
+  <div id="gallery-root">
   {{range .Categories}}<section class="category" aria-labelledby="cat-{{.Slug}}">
-    <h2 id="cat-{{.Slug}}">{{.Label}}<span class="category-count">{{.Count}} {{if eq .Count 1}}variant{{else}}variants{{end}}</span></h2>
+    <h2 id="cat-{{.Slug}}"><a href="/prompt-o-verse/style/{{.Slug}}/">{{.Label}}</a><span class="category-count">{{.Count}} {{if eq .Count 1}}variant{{else}}variants{{end}}</span></h2>
     <ul class="gallery">
       {{range .Nodes}}<li>
         <a href="/prompt-o-verse/{{.Slug}}/">
@@ -199,7 +204,82 @@ const indexTemplate = `<!DOCTYPE html>
     </ul>
   </section>
   {{end}}
+  </div>
 </div>
+<script>
+  // Founder direction (2026-08-17): "in the same way that live match and wotan hero rankings
+  // is live updating make promptoverse a gallery home page live update when new nodes are
+  // published." Same idiom as OKEMILY/tournaments.html's loadHeroLeaderboard: fetch on load,
+  // then setInterval, full innerHTML re-render from the latest API response each tick (not an
+  // incremental DOM diff -- simpler, and this list is small enough that re-rendering it whole
+  // is cheap). 10s poll, same as tournaments.html's STATS_POLL_MS: this is DB-backed data that
+  // changes on the order of minutes (a new node published), not live-match's several-times-a-
+  // second positional state, so a 3s poll would just be waste.
+  (function () {
+    var GALLERY_POLL_MS = 10000;
+    var root = document.getElementById('gallery-root');
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function cardHtml(n) {
+      var img = '/prompt-o-verse/' + encodeURIComponent(n.slug) + '/' + encodeURIComponent(n.slug) + '.png';
+      var title = n.subject ? n.subject : n.label;
+      var alt = escapeHtml(n.label) + (n.subject ? ' &mdash; ' + escapeHtml(n.subject) : '');
+      return '<li><a href="/prompt-o-verse/' + encodeURIComponent(n.slug) + '/">' +
+        '<figure><img src="' + img + '" alt="' + alt + '" loading="lazy">' +
+        '<figcaption><span class="kind-tag">' + escapeHtml(n.kind) + '</span>' +
+        '<h3>' + escapeHtml(title) + '</h3></figcaption></figure></a></li>';
+    }
+
+    function render(nodes) {
+      // Group by Label, preserving first-appearance order -- same logic as
+      // Renderer.RenderIndex in Go (nodes already arrive published_at DESC).
+      var order = [];
+      var byLabel = {};
+      nodes.forEach(function (n) {
+        if (!byLabel[n.label]) {
+          byLabel[n.label] = [];
+          order.push(n.label);
+        }
+        byLabel[n.label].push(n);
+      });
+
+      var html = order.map(function (label) {
+        var items = byLabel[label];
+        var slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        var count = items.length + ' ' + (items.length === 1 ? 'variant' : 'variants');
+        return '<section class="category" aria-labelledby="cat-' + slug + '">' +
+          '<h2 id="cat-' + slug + '"><a href="/prompt-o-verse/style/' + slug + '/">' + escapeHtml(label) + '</a><span class="category-count">' + count + '</span></h2>' +
+          '<ul class="gallery">' + items.map(cardHtml).join('') + '</ul></section>';
+      }).join('');
+
+      root.innerHTML = html;
+    }
+
+    function poll() {
+      fetch('/api/v1/promptoverse/nodes')
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          var nodes = data && data.nodes ? data.nodes : [];
+          if (nodes.length > 0) render(nodes);
+        })
+        .catch(function () {
+          // Silent -- the server-rendered page underneath is still fully
+          // correct, just not refreshed with anything newer this tick.
+        });
+    }
+
+    // No immediate poll() on load, unlike tournaments.html's leaderboards --
+    // those start from an empty container, this page is already server-
+    // rendered with the current nodes, so the first fetch only needs to
+    // happen once GALLERY_POLL_MS has actually passed.
+    setInterval(poll, GALLERY_POLL_MS);
+  })();
+</script>
 </body>
 </html>
 `
@@ -269,6 +349,78 @@ const subjectTemplate = `<!DOCTYPE html>
 </html>
 `
 
+// styleTemplate mirrors subjectTemplate but for the other taxonomy axis --
+// founder direction (2026-08-17): "we have no way to go from node up a
+// level like im on the lego baseball card but theres no way for me to go
+// to the lego page to show all those nodes." Every leaf's <h1>{{.Label}}</h1>
+// links here (nodeView.StyleLink, always set -- unlike Subject, Label is
+// required on every node so there's no "too few to bother" threshold the
+// way subject pages have).
+const styleTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.Label}} &mdash; Prompt-o-verse</title>
+<meta name="description" content="Every subject Prompt-o-verse has applied the {{.Label}} style to.">
+<style>
+  :root {
+    --bg: #101014; --panel-bg: #17171d; --accent: #7c8cff;
+    --text-main: #eef0f4; --text-soft: #a8adb8; --text-whisper: #6f7480;
+    --rule: #23262f;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fafafa; --panel-bg: #ffffff; --accent: #4451c7;
+      --text-main: #14161c; --text-soft: #4a4f5c; --text-whisper: #8a8f9c;
+      --rule: #e4e4e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text-main); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+  nav.wordmark a { font-size: 0.72rem; letter-spacing: 0.28em; text-transform: uppercase; color: var(--text-whisper); text-decoration: none; }
+  h1 { font-weight: 700; font-size: clamp(1.9rem, 5vw, 2.6rem); margin: 1.1rem 0 0.4rem; }
+  .tagline { color: var(--text-soft); font-size: 1.02rem; margin-bottom: 2.4rem; }
+  ul.gallery { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.1rem; }
+  ul.gallery li { margin: 0; }
+  ul.gallery a { display: block; text-decoration: none; color: inherit; }
+  ul.gallery figure { margin: 0; background: var(--panel-bg); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  ul.gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
+  ul.gallery figcaption { padding: 0.7rem 0.85rem; }
+  .kind-tag { display: inline-block; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.3rem; }
+  ul.gallery h2 { font-size: 0.92rem; font-weight: 600; margin: 0; }
+  ul.gallery a:hover h2 { color: var(--accent); }
+  nav.back { margin-top: 3rem; }
+  nav.back a { font-size: 0.85rem; color: var(--text-whisper); text-decoration: none; }
+  nav.back a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="wordmark"><a href="/prompt-o-verse/">Prompt-o-verse &middot; A Gallery</a></nav>
+  <h1>{{.Label}}</h1>
+  <p class="tagline">{{.Count}} {{if eq .Count 1}}node{{else}}nodes{{end}} use this style so far.</p>
+  <ul class="gallery">
+    {{range .Nodes}}<li>
+      <a href="/prompt-o-verse/{{.Slug}}/">
+        <figure>
+          <img src="/prompt-o-verse/{{.Slug}}/{{.ImageFile}}" alt="{{$.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}}" loading="lazy">
+          <figcaption>
+            <span class="kind-tag">{{.Kind}}</span>
+            <h2>{{if .Subject}}{{.Subject}}{{else}}{{.Label}}{{end}}</h2>
+          </figcaption>
+        </figure>
+      </a>
+    </li>
+    {{end}}
+  </ul>
+  <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
+</div>
+</body>
+</html>
+`
+
 type tagPair struct {
 	Key   string
 	Value string
@@ -277,6 +429,7 @@ type tagPair struct {
 type nodeView struct {
 	Slug           string
 	Label          string
+	StyleLink      string // always set -- Label (unlike Subject) is required on every node
 	Subject        string
 	SubjectLink    string // "" unless this Subject has >=2 leaf nodes (founder direction)
 	Kind           string
@@ -292,6 +445,12 @@ type subjectPageView struct {
 	Subject string
 	Count   int
 	Nodes   []nodeView
+}
+
+type stylePageView struct {
+	Label string
+	Count int
+	Nodes []nodeView
 }
 
 type categoryView struct {
@@ -314,6 +473,7 @@ func toView(n Node) nodeView {
 	return nodeView{
 		Slug:           n.Slug,
 		Label:          n.Label,
+		StyleLink:      "/prompt-o-verse/style/" + slugify(n.Label) + "/",
 		Subject:        n.Subject,
 		Kind:           n.Kind,
 		EZPrompt:       n.EZPrompt,
@@ -424,7 +584,11 @@ func (r *Renderer) RenderAll(nodes []Node) error {
 		return err
 	}
 
-	return r.renderSubjectPages(nodes, subjectCounts)
+	if err := r.renderSubjectPages(nodes, subjectCounts); err != nil {
+		return err
+	}
+
+	return r.renderStylePages(nodes)
 }
 
 // renderSubjectPages writes /prompt-o-verse/subject/<slug>/index.html for
@@ -463,6 +627,46 @@ func (r *Renderer) renderSubjectPages(nodes []Node, subjectCounts map[string]int
 		f.Close()
 		if err != nil {
 			return fmt.Errorf("render subject page %s: %w", subject, err)
+		}
+	}
+	return nil
+}
+
+// renderStylePages writes /prompt-o-verse/style/<slug>/index.html for every
+// distinct Label -- founder direction: "we have no way to go from node up a
+// level like im on the lego baseball card but theres no way for me to go
+// to the lego page to show all those nodes." Unlike renderSubjectPages,
+// there's no >=2 threshold: Label is required on every node (it's the
+// primary taxonomy axis, already the index's own grouping key), so even a
+// style with exactly 1 leaf still gets a real page.
+func (r *Renderer) renderStylePages(nodes []Node) error {
+	order := make([]string, 0)
+	byLabel := make(map[string][]nodeView)
+	for _, n := range nodes {
+		if _, seen := byLabel[n.Label]; !seen {
+			order = append(order, n.Label)
+		}
+		byLabel[n.Label] = append(byLabel[n.Label], toView(n))
+	}
+
+	tmpl, err := template.New("style").Parse(styleTemplate)
+	if err != nil {
+		return err
+	}
+	for _, label := range order {
+		dir := filepath.Join(r.OutputDir, "style", slugify(label))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+		f, err := os.Create(filepath.Join(dir, "index.html"))
+		if err != nil {
+			return err
+		}
+		view := stylePageView{Label: label, Count: len(byLabel[label]), Nodes: byLabel[label]}
+		err = tmpl.Execute(f, view)
+		f.Close()
+		if err != nil {
+			return fmt.Errorf("render style page %s: %w", label, err)
 		}
 	}
 	return nil

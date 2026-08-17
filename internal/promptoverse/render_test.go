@@ -61,8 +61,8 @@ func TestRenderer_RenderIndex_GroupsByLabel(t *testing.T) {
 	html := string(data)
 
 	// Both Renaissance leaves must appear under one category grouping, not two.
-	if strings.Count(html, "Renaissance oil painting<span") != 1 {
-		t.Errorf("expected exactly one 'Renaissance oil painting' category heading, got %d occurrences", strings.Count(html, "Renaissance oil painting<span"))
+	if strings.Count(html, "Renaissance oil painting</a><span") != 1 {
+		t.Errorf("expected exactly one 'Renaissance oil painting' category heading, got %d occurrences", strings.Count(html, "Renaissance oil painting</a><span"))
 	}
 	if !strings.Contains(html, "2 variants") {
 		t.Errorf("expected the Renaissance category to show a 2-variant count: %s", html)
@@ -70,6 +70,7 @@ func TestRenderer_RenderIndex_GroupsByLabel(t *testing.T) {
 	for _, want := range []string{
 		"/prompt-o-verse/renaissance-masterchief/", "/prompt-o-verse/renaissance-baseball/", "/prompt-o-verse/lego-baseball/",
 		"Master Chief (Halo)", "baseball card",
+		`<a href="/prompt-o-verse/style/renaissance-oil-painting/">Renaissance oil painting</a>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index missing %q", want)
@@ -190,5 +191,75 @@ func TestRenderer_RenderAll_ReRendersOlderSiblingWhenSecondLeafArrives(t *testin
 	}
 	if !strings.Contains(string(data), "/prompt-o-verse/subject/a-red-panda/") {
 		t.Error("expected the FIRST leaf's page to gain a subject link once a second leaf was published")
+	}
+}
+
+func TestRenderer_RenderAll_StylePageAlwaysExistsEvenForOneLeaf(t *testing.T) {
+	// Founder: "we have no way to go from node up a level like im on the
+	// lego baseball card but theres no way for me to go to the lego page to
+	// show all those nodes." Unlike Subject pages, Style pages have no
+	// >=2 threshold -- Label is required on every node.
+	dir := t.TempDir()
+	r := &Renderer{OutputDir: dir}
+	nodes := []Node{
+		{Slug: "lego-baseball", Label: "LEGO minifigure", Subject: "baseball card", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+		{Slug: "lego-duck", Label: "LEGO minifigure", Subject: "a duck", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "b.png", PublishedAt: time.Now()},
+		{Slug: "solo-style", Label: "watercolor sketchbook", Subject: "a lonely teapot", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "c.png", PublishedAt: time.Now()},
+	}
+	if err := r.RenderAll(nodes); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+
+	// Every leaf's <h1> must link up to its style page, regardless of count.
+	for _, tc := range []struct{ slug, wantLink string }{
+		{"lego-baseball", "/prompt-o-verse/style/lego-minifigure/"},
+		{"solo-style", "/prompt-o-verse/style/watercolor-sketchbook/"},
+	} {
+		data, err := os.ReadFile(filepath.Join(dir, tc.slug, "index.html"))
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.slug, err)
+		}
+		if !strings.Contains(string(data), `<h1><a href="`+tc.wantLink+`">`) {
+			t.Errorf("%s: expected h1 to link to %s, got: %s", tc.slug, tc.wantLink, data)
+		}
+	}
+
+	// The style page for a 2-leaf Label lists both, with real leaf links.
+	lego, err := os.ReadFile(filepath.Join(dir, "style", "lego-minifigure", "index.html"))
+	if err != nil {
+		t.Fatalf("read style page: %v", err)
+	}
+	legoHTML := string(lego)
+	for _, want := range []string{"/prompt-o-verse/lego-baseball/", "/prompt-o-verse/lego-duck/", "2 nodes", "LEGO minifigure"} {
+		if !strings.Contains(legoHTML, want) {
+			t.Errorf("style page missing %q: %s", want, legoHTML)
+		}
+	}
+
+	// The style page for a Label with only 1 leaf must still exist (no threshold).
+	solo, err := os.ReadFile(filepath.Join(dir, "style", "watercolor-sketchbook", "index.html"))
+	if err != nil {
+		t.Fatalf("expected a style page even for a single-leaf style: %v", err)
+	}
+	if !strings.Contains(string(solo), "1 node use this style") {
+		t.Errorf("expected singular '1 node' for a single-leaf style: %s", solo)
+	}
+}
+
+func TestRenderer_RenderIndex_CategoryHeadingLinksToStylePage(t *testing.T) {
+	dir := t.TempDir()
+	r := &Renderer{OutputDir: dir}
+	nodes := []Node{
+		{Slug: "solo", Label: "stained glass", Subject: "baseball card", Kind: "historical", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+	}
+	if err := r.RenderIndex(nodes); err != nil {
+		t.Fatalf("RenderIndex: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `<a href="/prompt-o-verse/style/stained-glass/">stained glass</a>`) {
+		t.Errorf("expected the index category heading to link to the style page: %s", data)
 	}
 }
