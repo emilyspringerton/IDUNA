@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-18
+- Auth strip now proactively refreshes its token via IDUNA's existing /api/v1/auth/refresh, plus retries once on a real 401 (sess-20260813-2154-dda37e8b)
 - New cards/sections stagger in with a jittered fade-in instead of snapping in synchronously (sess-20260813-2154-dda37e8b)
 - Auth strip now shows a visible 'Sign in (coming soon)' placeholder instead of rendering empty when GOOGLE_CLIENT_ID isn't set (sess-20260813-2154-dda37e8b)
 - Fixed the real live-reload bug: subject/style pages never had a poll script at all (only the index page did). Added node_variants (regenerate-with-variation, additive, same page) (sess-20260813-2154-dda37e8b)
