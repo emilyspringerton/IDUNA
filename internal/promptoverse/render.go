@@ -36,6 +36,11 @@ type Renderer struct {
 	// human action -- see EMILY/BACKLOG.md S176-34); the widget renders a
 	// "not yet available" state instead of a broken button when empty.
 	GoogleClientID string
+	// Store, when set, lets renderNodePage look up a leaf's additional
+	// variants (S176-30) to render on the same page. Optional so tests and
+	// call sites that only ever render nodes with no variant history don't
+	// need to construct/open a real Store.
+	Store *Store
 }
 
 func (r *Renderer) emilyRoot() string {
@@ -260,6 +265,10 @@ const pageTemplate = `<!DOCTYPE html>
   nav.back { margin-top: 3rem; }
   nav.back a { font-size: 0.85rem; color: var(--text-whisper); text-decoration: none; }
   nav.back a:hover { color: var(--accent); }
+  .variants { margin-top: 2.6rem; padding-top: 1.8rem; border-top: 1px solid var(--rule); }
+  .variants > h2 { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-whisper); margin: 0 0 1.4rem; }
+  article.variant { margin-bottom: 2.6rem; padding: 1.4rem 1.6rem; background: var(--panel-bg); border: 1px solid var(--rule); border-radius: 10px; }
+  article.variant .variant-note { font-size: 0.95rem; color: var(--text-main); margin: 0 0 1rem; font-style: italic; }
 ` + authStripCSS + `
 </style>
 </head>
@@ -298,6 +307,25 @@ const pageTemplate = `<!DOCTYPE html>
       </dl>
     </section>
   </article>
+  {{if .Variants}}<section class="variants">
+    <h2>Other variants of this generation</h2>
+    {{range .Variants}}<article class="variant">
+      {{if .Note}}<p class="variant-note">{{.Note}}</p>{{end}}
+      <figure class="node-image">
+        <img src="{{.ImageFile}}" alt="{{$.Label}}{{if $.Subject}} &mdash; {{$.Subject}}{{end}} &mdash; variant" width="1024" height="1024" loading="lazy">
+        <figcaption>Generated {{.PublishedDate}}.</figcaption>
+      </figure>
+      <section class="node-section" aria-labelledby="ez-prompt-heading">
+        <h2 id="ez-prompt-heading">Prompt</h2>
+        <p class="ez-prompt-text">{{.EZPrompt}}</p>
+      </section>
+      <section class="node-section" aria-labelledby="expanded-prompt-heading">
+        <h2 id="expanded-prompt-heading">Expanded Prompt</h2>
+        <p class="prompt-text">{{.ExpandedPrompt}}</p>
+      </section>
+    </article>
+    {{end}}
+  </section>{{end}}
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
 ` + authStripScript + `
@@ -776,6 +804,21 @@ type nodeView struct {
 	// gallery-grid list item (index/subject/style templates use their own
 	// page-level GoogleClientID for the header auth strip instead).
 	GoogleClientID string
+	// Variants only matters at the ROOT page context too (renderNodePage
+	// populates it; toView leaves it nil for gallery-grid list items) --
+	// S176-30, additional images for the same slug, rendered on the same
+	// page rather than as separate leaf pages.
+	Variants []variantView
+}
+
+// variantView is one additional generated image for a leaf node --
+// see NodeVariant / renderNodePage.
+type variantView struct {
+	ImageFile      string
+	EZPrompt       string
+	ExpandedPrompt string
+	Note           string
+	PublishedDate  string
 }
 
 // mashupLinkView is one cross-link to another subject/style page shown
@@ -887,6 +930,21 @@ func (r *Renderer) renderNodePage(n Node, subjectLink string) error {
 	defer f.Close()
 	v := r.toView(n)
 	v.SubjectLink = subjectLink
+	if r.Store != nil {
+		variants, err := r.Store.ListVariants(n.Slug)
+		if err != nil {
+			return fmt.Errorf("list variants for %s: %w", n.Slug, err)
+		}
+		for _, nv := range variants {
+			v.Variants = append(v.Variants, variantView{
+				ImageFile:      nv.ImageFile,
+				EZPrompt:       nv.EZPrompt,
+				ExpandedPrompt: nv.ExpandedPrompt,
+				Note:           nv.Note,
+				PublishedDate:  nv.CreatedAt.Format("January 2, 2006"),
+			})
+		}
+	}
 	return tmpl.Execute(f, v)
 }
 

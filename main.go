@@ -279,7 +279,7 @@ func main() {
 	if promptoverseOutputDir == "" {
 		promptoverseOutputDir = "/var/www/okemily/prompt-o-verse"
 	}
-	promptoverseH := &handlers.PromptOVerseHandler{Store: promptoverseStore, Renderer: &promptoverse.Renderer{OutputDir: promptoverseOutputDir, GoogleClientID: googleClientID}}
+	promptoverseH := &handlers.PromptOVerseHandler{Store: promptoverseStore, Renderer: &promptoverse.Renderer{OutputDir: promptoverseOutputDir, GoogleClientID: googleClientID, Store: promptoverseStore}}
 
 	// Status page — real health checks against the services that actually
 	// have a reachable public endpoint (see statuspage.DefaultTargets doc
@@ -403,9 +403,10 @@ func main() {
 	tylerCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("tyler.write")(http.HandlerFunc(tylerH.Create)))
 	tylerH.RegisterRoutes(mux, tylerCreateProtected)
 
-	// Prompt-o-verse gallery -- posting requires promptoverse.write; reading is public.
+	// Prompt-o-verse gallery -- posting/adding-variants both require promptoverse.write; reading is public.
 	promptoverseCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.Create)))
-	promptoverseH.RegisterRoutes(mux, promptoverseCreateProtected)
+	promptoverseAddVariantProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.AddVariant)))
+	promptoverseH.RegisterRoutes(mux, promptoverseCreateProtected, promptoverseAddVariantProtected)
 
 	// Mashup nominations -- the social layer for Prompt-o-verse (S176-27,
 	// "build out mashup nomination as a social tool"). Nominating requires

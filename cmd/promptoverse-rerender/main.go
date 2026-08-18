@@ -40,7 +40,7 @@ func main() {
 		log.Fatalf("list nodes: %v", err)
 	}
 
-	r := &promptoverse.Renderer{OutputDir: *outDir}
+	r := &promptoverse.Renderer{OutputDir: *outDir, Store: store}
 	if err := r.RenderAll(nodes); err != nil {
 		log.Fatalf("render all: %v", err)
 	}

@@ -22,10 +22,11 @@ type PromptOVerseHandler struct {
 	Renderer *promptoverse.Renderer
 }
 
-func (h *PromptOVerseHandler) RegisterRoutes(mux *http.ServeMux, createProtected http.Handler) {
+func (h *PromptOVerseHandler) RegisterRoutes(mux *http.ServeMux, createProtected, addVariantProtected http.Handler) {
 	mux.Handle("POST /api/v1/promptoverse/nodes", createProtected)
 	mux.HandleFunc("GET /api/v1/promptoverse/nodes", h.list)
 	mux.HandleFunc("GET /api/v1/promptoverse/nodes/{slug}", h.get)
+	mux.Handle("POST /api/v1/promptoverse/nodes/{slug}/variants", addVariantProtected)
 }
 
 type createNodeRequest struct {
@@ -105,6 +106,70 @@ func (h *PromptOVerseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		"status": "published",
 		"slug":   n.Slug,
 		"url":    "https://okemily.com/prompt-o-verse/" + n.Slug + "/",
+	})
+}
+
+type addVariantRequest struct {
+	EZPrompt       string `json:"ez_prompt"`
+	ExpandedPrompt string `json:"expanded_prompt"`
+	ImageBase64    string `json:"image_base64"`
+	Note           string `json:"note"`
+}
+
+// AddVariant handles POST /api/v1/promptoverse/nodes/{slug}/variants --
+// "regenerate with variation" (S176-30), e.g. correcting a detail like
+// "red hoodie instead of grey" on an already-published leaf. ADDITIVE,
+// never destructive -- founder, real-time: "we need to keep both and i
+// think for seo reasons we should condense the forced feature leaf nodes
+// onto the same html page." The original node and its image are
+// untouched; a new variant image/prompt is attached to the SAME slug and
+// rendered alongside the original on the SAME page. Exported so main.go
+// can wrap it with permission middleware, same shape as Create.
+func (h *PromptOVerseHandler) AddVariant(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+
+	var req addVariantRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+		return
+	}
+	req.EZPrompt = strings.TrimSpace(req.EZPrompt)
+	req.ExpandedPrompt = strings.TrimSpace(req.ExpandedPrompt)
+	req.Note = strings.TrimSpace(req.Note)
+	if req.EZPrompt == "" || req.ExpandedPrompt == "" || req.ImageBase64 == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "ez_prompt, expanded_prompt, and image_base64 are required"})
+		return
+	}
+
+	existingVariants, err := h.Store.ListVariants(slug)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+	// v1 is implicitly the original node's own image; variants start at v2.
+	imageFile := fmt.Sprintf("%s-variant-%d.png", slug, len(existingVariants)+2)
+
+	id, err := h.Store.AddVariant(slug, imageFile, req.EZPrompt, req.ExpandedPrompt, req.Note)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "node not found: " + err.Error()})
+		return
+	}
+	if err := writeImage(h.Renderer.OutputDir, slug, imageFile, req.ImageBase64); err != nil {
+		log.Printf("[promptoverse] write variant image for %q failed: %v", slug, err)
+	}
+
+	nodes, err := h.Store.List()
+	if err != nil {
+		log.Printf("[promptoverse] list nodes for render failed: %v", err)
+	} else if err := h.Renderer.RenderAll(nodes); err != nil {
+		log.Printf("[promptoverse] render all failed: %v", err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "variant added",
+		"variant_id": id,
+		"slug":       slug,
+		"url":        "https://okemily.com/prompt-o-verse/" + slug + "/",
 	})
 }
 

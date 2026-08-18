@@ -113,7 +113,7 @@ func main() {
 		return
 	}
 
-	r := &promptoverse.Renderer{OutputDir: *outDir}
+	r := &promptoverse.Renderer{OutputDir: *outDir, Store: store}
 	if err := r.RenderAll(nodes); err != nil {
 		log.Fatalf("re-render after thumbnail generation: %v", err)
 	}

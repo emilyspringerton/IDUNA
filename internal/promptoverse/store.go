@@ -104,6 +104,25 @@ CREATE TABLE IF NOT EXISTS mashup_nominations (
 );
 CREATE INDEX IF NOT EXISTS idx_nominations_status ON mashup_nominations(status);
 CREATE INDEX IF NOT EXISTS idx_nominations_nominated_by ON mashup_nominations(nominated_by);
+
+-- node_variants: "regenerate with variation" (S176-30). Founder,
+-- real-time: "we need to keep both and i think for seo reasons we should
+-- condense the forced feature leaf nodes onto the same html page" -- a
+-- correction (e.g. "red hoodie instead of grey") is an ADDITIONAL image
+-- attached to the SAME node/slug, never an overwrite and never a new
+-- leaf page. node_slug is a plain string FK (SQLite doesn't enforce it
+-- without PRAGMA foreign_keys, which this connection does enable, but
+-- kept loose/no ON DELETE behavior since nodes are never deleted today).
+CREATE TABLE IF NOT EXISTS node_variants (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	node_slug       TEXT     NOT NULL,
+	image_file      TEXT     NOT NULL,
+	ez_prompt       TEXT     NOT NULL DEFAULT '',
+	expanded_prompt TEXT     NOT NULL,
+	note            TEXT     NOT NULL DEFAULT '',
+	created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_node_variants_slug ON node_variants(node_slug);
 `
 
 func Open(path string) (*Store, error) {
@@ -163,6 +182,62 @@ func (s *Store) List() ([]Node, error) {
 func (s *Store) GetBySlug(slug string) (Node, error) {
 	row := s.db.QueryRow(`SELECT id, slug, label, subject, kind, ez_prompt, expanded_prompt, image_file, tags_json, published_at, created_at FROM nodes WHERE slug = ?`, slug)
 	return scanNode(row)
+}
+
+// NodeVariant is an ADDITIONAL generated image for an existing leaf node,
+// e.g. a correction like "red hoodie instead of grey" -- "regenerate with
+// variation" (S176-30). Founder, real-time, correcting an earlier
+// overwrite-in-place design: "we need to keep both and i think for seo
+// reasons we should condense the forced feature leaf nodes onto the same
+// html page" -- variants are additive and rendered alongside the
+// original on the SAME node page/URL, never a separate leaf page and
+// never a destructive replace.
+type NodeVariant struct {
+	ID             int64
+	NodeSlug       string
+	ImageFile      string
+	EZPrompt       string
+	ExpandedPrompt string
+	Note           string
+	CreatedAt      time.Time
+}
+
+// AddVariant appends a new variant image+prompt for an existing node.
+// Returns sql.ErrNoRows if the slug doesn't exist (variants can't be
+// orphaned from a real leaf page).
+func (s *Store) AddVariant(nodeSlug, imageFile, ezPrompt, expandedPrompt, note string) (int64, error) {
+	if _, err := s.GetBySlug(nodeSlug); err != nil {
+		return 0, err
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO node_variants (node_slug, image_file, ez_prompt, expanded_prompt, note) VALUES (?, ?, ?, ?, ?)`,
+		nodeSlug, imageFile, ezPrompt, expandedPrompt, note,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListVariants returns a node's additional variants, oldest first.
+func (s *Store) ListVariants(nodeSlug string) ([]NodeVariant, error) {
+	rows, err := s.db.Query(
+		`SELECT id, node_slug, image_file, ez_prompt, expanded_prompt, note, created_at FROM node_variants WHERE node_slug = ? ORDER BY created_at ASC`,
+		nodeSlug,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeVariant
+	for rows.Next() {
+		var v NodeVariant
+		if err := rows.Scan(&v.ID, &v.NodeSlug, &v.ImageFile, &v.EZPrompt, &v.ExpandedPrompt, &v.Note, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // DistinctSubjects returns every distinct non-empty Subject that has at
