@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-18
+
+- feat(promptoverse): GET /api/v1/promptoverse/discovery -- public read-only endpoint combining the hardcoded style registry (exported from emily.cli), discovered styles, GPT-2 candidate tags, and content-policy dead-letter entries (sess-20260813-2154-dda37e8b)
+
+
 ## 2026-08-17 (3)
 - feat(promptoverse): gallery index now live-updates every 10s (fetch/setInterval, same idiom as OKEMILY/tournaments.html's hero leaderboard) via the existing GET /api/v1/promptoverse/nodes endpoint. New Style pages at /prompt-o-verse/style/<label-slug>/ (mirrors Subject pages but for the Label axis, always generated -- no leaf-count threshold), linked from every leaf's h1 and from index category headings. (sess-20260813-2154-dda37e8b)
 - fix(promptoverse): subject page <img src> used a bare relative path that only resolves correctly from the top-level index, not from subject/<slug>/ which is one directory deeper -- every subject page's images 404ed. Switched to the absolute /prompt-o-verse/<slug>/<file> path already used by the <a href>s in the same template. Re-ran cmd/promptoverse-rerender to fix already-published pages. (sess-20260813-2154-dda37e8b)
