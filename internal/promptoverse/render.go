@@ -102,7 +102,18 @@ const authStripScript = `{{if .GoogleClientID}}<script src="https://accounts.goo
   }
   window.__promptoverseHandleCredential = handleCredential;
 
-  if (!clientId) return;
+  if (!clientId) {
+    // No real GOOGLE_CLIENT_ID configured yet (S176-34, human action) --
+    // show a visible, honest placeholder instead of leaving the strip
+    // silently empty. Founder, real-time: "ok where is my social funnel?
+    // at least a login button at the top?" -- an invisible container
+    // isn't a funnel.
+    pill.textContent = 'Sign in (coming soon)';
+    pill.style.display = 'inline-block';
+    pill.style.cursor = 'default';
+    pill.style.opacity = '0.6';
+    return;
+  }
   if (localStorage.getItem(TOKEN_KEY)) { showSignedIn(); return; }
 
   signinEl.innerHTML = '<div id="po_g_id_signin"></div>';

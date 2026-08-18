@@ -183,6 +183,27 @@ func TestRenderer_LeafGalleryPoll_PresentOnSubjectAndStylePages(t *testing.T) {
 	}
 }
 
+func TestRenderer_AuthStrip_NoClientIDShowsVisiblePlaceholder(t *testing.T) {
+	// Founder, real-time: "ok where is my social funnel? at least a login
+	// button at the top?" -- an invisible empty container isn't a funnel;
+	// with no GoogleClientID the strip must still show something visible.
+	outDir := t.TempDir()
+	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir()}
+	nodes := []Node{
+		{Slug: "fractal-1", Label: "a", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+	}
+	if err := r.RenderAll(nodes); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Sign in (coming soon)") {
+		t.Errorf("expected a visible placeholder pill with no GoogleClientID: %s", data)
+	}
+}
+
 func TestRenderer_SubjectPage_NominationWidget_NoClientIDShowsUnavailable(t *testing.T) {
 	outDir := t.TempDir()
 	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir()}
