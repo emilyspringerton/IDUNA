@@ -218,6 +218,7 @@ const indexTemplate = `<!DOCTYPE html>
   (function () {
     var GALLERY_POLL_MS = 10000;
     var root = document.getElementById('gallery-root');
+    var lastSignature = null;
 
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, function (c) {
@@ -275,7 +276,24 @@ const indexTemplate = `<!DOCTYPE html>
         .then(function (res) { return res.json(); })
         .then(function (data) {
           var nodes = data && data.nodes ? data.nodes : [];
-          if (nodes.length > 0) render(nodes);
+          if (nodes.length === 0) return;
+          // Founder-reported bug (2026-08-18): "there is a page flicker
+          // now it randomly flickers the first image in each tag on the
+          // home page." Root cause: this used to rebuild the ENTIRE grid
+          // from scratch every tick regardless of whether anything
+          // actually changed -- with a lot of concurrent publish activity,
+          // most 10s ticks had no real change, but the full innerHTML
+          // replacement still tore down and recreated every <img>,
+          // forcing a re-decode/repaint (visible as flicker) for no
+          // reason. A slug-order signature is enough to detect "nothing
+          // changed" cheaply and skip the re-render entirely on those
+          // ticks -- order matters here (not just membership), since the
+          // whole point is catching a category's first-card position
+          // shifting even when the node SET is identical.
+          var signature = nodes.map(function (n) { return n.slug; }).join('|');
+          if (signature === lastSignature) return;
+          lastSignature = signature;
+          render(nodes);
         })
         .catch(function () {
           // Silent -- the server-rendered page underneath is still fully
