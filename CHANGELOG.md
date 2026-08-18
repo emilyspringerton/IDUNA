@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-18
+- Fixed stale live-reload JS: iduna.service was running a binary built 21s before the incremental-DOM-patch fix landed, restarted with current code (sess-20260813-2154-dda37e8b)
 - Renderer shows Mashups cross-links on subject/style pages, reading the new LLM-judgment cache from emily.cli (sess-20260813-2154-dda37e8b)
 - fix(promptoverse): gallery index no longer re-renders on every live-update poll tick when the node list hasn't actually changed -- was causing visible flicker, especially the first card in each category (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): new cmd/promptoverse-thumbnails (systemd timer, 15min) idempotently generates a thumbnail + JPEG-optimized version of every node's image via ImageMagick convert, re-rendering afterward. Renderer resolves GalleryImageFile/HeroImageFile at render time (thumb/optimized if present, original otherwise); live-update JS falls back via onerror. Live: 1.9MB PNGs became 236KB optimized JPEGs + 24KB thumbnails. (sess-20260813-2154-dda37e8b)
