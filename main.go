@@ -407,6 +407,10 @@ func main() {
 	promptoverseCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.Create)))
 	promptoverseH.RegisterRoutes(mux, promptoverseCreateProtected)
 
+	// Prompt-o-verse discovery page data -- style registry + GPT-2-harvested
+	// candidates + content-block dead-letter dataset, read-only, public.
+	mux.HandleFunc("GET /api/v1/promptoverse/discovery", (&handlers.DiscoveryHandler{}).Get)
+
 	mux.Handle("/api/v1/status", statusH)
 	mux.Handle("/api/v1/status/history", statusHistoryH)
 
