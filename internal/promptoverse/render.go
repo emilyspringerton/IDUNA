@@ -111,6 +111,88 @@ const authStripScript = `{{if .GoogleClientID}}<script src="https://accounts.goo
 </script>
 `
 
+// leafPollScript is the SAME live-update poll the index page has
+// (see indexTemplate's own script for the flicker-fix history), extended
+// to subject and style pages -- founder, real-time, after multiple
+// "live reload is still broken" reports: those pages had NO poll script
+// at all, only the index page did (confirmed by grepping this file for
+// setInterval/insertNewCards before this fix -- exactly one hit). A page
+// that never had live-reload will never look "fixed" no matter how many
+// times the index page's mechanism gets rebuilt/restarted/verified.
+// Reuses the container's own data attributes to know how to filter the
+// shared /api/v1/promptoverse/nodes response and what to title each card
+// with -- one script, two page types, no copy-drift.
+const leafPollScript = `<script>
+(function () {
+  var POLL_MS = 10000;
+  var root = document.getElementById('leaf-gallery-root');
+  if (!root) return;
+  var filterKey = root.getAttribute('data-filter-key'); // "subject" | "label"
+  var filterValue = root.getAttribute('data-filter-value');
+  var titleMode = root.getAttribute('data-title-mode'); // "label" | "subject-or-label"
+  var countEl = document.getElementById('leaf-gallery-count');
+  var countNoun = root.getAttribute('data-count-noun'); // "style" | "node"
+  var list = root.querySelector('ul.gallery');
+
+  var knownSlugs = {};
+  Array.prototype.forEach.call(list.querySelectorAll('li > a'), function (a) {
+    var href = a.getAttribute('href') || '';
+    var parts = href.split('/').filter(Boolean);
+    var slug = parts[parts.length - 1];
+    if (slug) knownSlugs[slug] = true;
+  });
+  var knownCount = Object.keys(knownSlugs).length;
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function cardEl(n) {
+    var base = '/prompt-o-verse/' + encodeURIComponent(n.slug) + '/' + encodeURIComponent(n.slug);
+    var thumb = base + '-thumb.jpg';
+    var original = base + '.png';
+    var title = titleMode === 'subject-or-label' ? (n.subject || n.label) : n.label;
+    var alt = titleMode === 'subject-or-label'
+      ? escapeHtml(n.label) + (n.subject ? ' &mdash; ' + escapeHtml(n.subject) : '')
+      : escapeHtml(n.label) + ' &mdash; ' + escapeHtml(n.subject || '');
+    var li = document.createElement('li');
+    li.innerHTML = '<a href="/prompt-o-verse/' + encodeURIComponent(n.slug) + '/">' +
+      '<figure><img src="' + thumb + '" alt="' + alt + '" loading="lazy" ' +
+      'onerror="this.onerror=null;this.src=\'' + original + '\';">' +
+      '<figcaption><span class="kind-tag">' + escapeHtml(n.kind) + '</span>' +
+      '<h2>' + escapeHtml(title) + '</h2></figcaption></figure></a>';
+    return li;
+  }
+
+  function poll() {
+    fetch('/api/v1/promptoverse/nodes')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        var nodes = (data && data.nodes ? data.nodes : []).filter(function (n) {
+          return n[filterKey] === filterValue;
+        });
+        var added = 0;
+        nodes.forEach(function (n) {
+          if (knownSlugs[n.slug]) return;
+          knownSlugs[n.slug] = true;
+          list.appendChild(cardEl(n));
+          added++;
+        });
+        if (added > 0 && countEl) {
+          knownCount += added;
+          countEl.textContent = knownCount + ' ' + (knownCount === 1 ? countNoun : countNoun + 's');
+        }
+      })
+      .catch(function () {});
+  }
+
+  setInterval(poll, POLL_MS);
+})();
+</script>
+`
+
 const pageTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -488,7 +570,8 @@ const subjectTemplate = `<!DOCTYPE html>
   <nav class="wordmark"><a href="/prompt-o-verse/">Prompt-o-verse &middot; A Gallery</a></nav>
   ` + authStripHTML + `
   <h1>{{.Subject}}</h1>
-  <p class="tagline">{{.Count}} {{if eq .Count 1}}style{{else}}styles{{end}} applied to this subject so far.</p>
+  <p class="tagline"><span id="leaf-gallery-count">{{.Count}} {{if eq .Count 1}}style{{else}}styles{{end}}</span> applied to this subject so far.</p>
+  <div id="leaf-gallery-root" data-filter-key="subject" data-filter-value="{{.Subject}}" data-title-mode="label" data-count-noun="style">
   <ul class="gallery">
     {{range .Nodes}}<li>
       <a href="/prompt-o-verse/{{.Slug}}/">
@@ -503,6 +586,7 @@ const subjectTemplate = `<!DOCTYPE html>
     </li>
     {{end}}
   </ul>
+  </div>
   {{if .Mashups}}<section class="mashups">
     <h2>Mashups featuring {{.Subject}}</h2>
     <ul>
@@ -524,7 +608,7 @@ const subjectTemplate = `<!DOCTYPE html>
   </section>
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
-` + authStripScript + `
+` + authStripScript + leafPollScript + `
 <script>
 (function () {
   var root = document.getElementById('nominate-root');
@@ -630,7 +714,8 @@ const styleTemplate = `<!DOCTYPE html>
   <nav class="wordmark"><a href="/prompt-o-verse/">Prompt-o-verse &middot; A Gallery</a></nav>
   ` + authStripHTML + `
   <h1>{{.Label}}</h1>
-  <p class="tagline">{{.Count}} {{if eq .Count 1}}node{{else}}nodes{{end}} use this style so far.</p>
+  <p class="tagline"><span id="leaf-gallery-count">{{.Count}} {{if eq .Count 1}}node{{else}}nodes{{end}}</span> use this style so far.</p>
+  <div id="leaf-gallery-root" data-filter-key="label" data-filter-value="{{.Label}}" data-title-mode="subject-or-label" data-count-noun="node">
   <ul class="gallery">
     {{range .Nodes}}<li>
       <a href="/prompt-o-verse/{{.Slug}}/">
@@ -645,6 +730,7 @@ const styleTemplate = `<!DOCTYPE html>
     </li>
     {{end}}
   </ul>
+  </div>
   {{if .Mashups}}<section class="mashups">
     <h2>Mashups featuring {{.Label}}</h2>
     <ul>
@@ -654,7 +740,7 @@ const styleTemplate = `<!DOCTYPE html>
   </section>{{end}}
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
-` + authStripScript + `
+` + authStripScript + leafPollScript + `
 </body>
 </html>
 `

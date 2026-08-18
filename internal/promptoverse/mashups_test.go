@@ -143,6 +143,46 @@ func TestRenderer_AuthStrip_PresentOnEveryPageType(t *testing.T) {
 	}
 }
 
+func TestRenderer_LeafGalleryPoll_PresentOnSubjectAndStylePages(t *testing.T) {
+	// Founder, real-time, after multiple "live reload is still broken"
+	// reports: the poll script only ever existed on the index page --
+	// subject/style pages never had one, so they could never auto-update
+	// no matter how many times the index mechanism got fixed.
+	outDir := t.TempDir()
+	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir()}
+	nodes := []Node{
+		{Slug: "fractal-1", Label: "style-a", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+		{Slug: "fractal-2", Label: "style-a", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "b.png", PublishedAt: time.Now()},
+	}
+	if err := r.RenderAll(nodes); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+
+	subjectHTML, err := os.ReadFile(filepath.Join(outDir, "subject", "fractal", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sHTML := string(subjectHTML)
+	if !strings.Contains(sHTML, `data-filter-key="subject"`) || !strings.Contains(sHTML, `data-filter-value="Fractal"`) {
+		t.Errorf("subject page missing correct poll filter attributes: %s", sHTML)
+	}
+	if !strings.Contains(sHTML, "setInterval(poll, POLL_MS)") {
+		t.Errorf("subject page missing the leaf poll script: %s", sHTML)
+	}
+
+	styleHTML, err := os.ReadFile(filepath.Join(outDir, "style", "style-a", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stHTML := string(styleHTML)
+	if !strings.Contains(stHTML, `data-filter-key="label"`) || !strings.Contains(stHTML, `data-filter-value="style-a"`) {
+		t.Errorf("style page missing correct poll filter attributes: %s", stHTML)
+	}
+	if !strings.Contains(stHTML, "setInterval(poll, POLL_MS)") {
+		t.Errorf("style page missing the leaf poll script: %s", stHTML)
+	}
+}
+
 func TestRenderer_SubjectPage_NominationWidget_NoClientIDShowsUnavailable(t *testing.T) {
 	outDir := t.TempDir()
 	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir()}

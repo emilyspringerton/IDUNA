@@ -241,7 +241,7 @@ func TestRenderer_RenderAll_StylePageAlwaysExistsEvenForOneLeaf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected a style page even for a single-leaf style: %v", err)
 	}
-	if !strings.Contains(string(solo), "1 node use this style") {
+	if !strings.Contains(string(solo), `id="leaf-gallery-count">1 node</span> use this style`) {
 		t.Errorf("expected singular '1 node' for a single-leaf style: %s", solo)
 	}
 }
