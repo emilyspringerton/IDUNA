@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-18
+- Auth strip now shows a visible 'Sign in (coming soon)' placeholder instead of rendering empty when GOOGLE_CLIENT_ID isn't set (sess-20260813-2154-dda37e8b)
 - Fixed the real live-reload bug: subject/style pages never had a poll script at all (only the index page did). Added node_variants (regenerate-with-variation, additive, same page) (sess-20260813-2154-dda37e8b)
 - Site-wide auth strip (sign-in funnel) on every Prompt-o-verse page — header pill shared across node/index/subject/style pages via one localStorage token (sess-20260813-2154-dda37e8b)
 - Mashup nomination social tool: authenticated (Google ID-token) users nominate combining two subjects, admin-only approve/reject via new promptoverse.mashups.review permission, autocomplete widget on every subject page (sess-20260813-2154-dda37e8b)
