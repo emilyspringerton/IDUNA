@@ -104,6 +104,45 @@ func TestRenderer_SubjectPage_ShowsMashupsSection(t *testing.T) {
 	}
 }
 
+func TestRenderer_AuthStrip_PresentOnEveryPageType(t *testing.T) {
+	// Founder, real-time: "ok but where is the funnel? like in the footer
+	// or the header or something a login button?" -- the sign-in strip
+	// must be discoverable everywhere, not just buried in the subject-page
+	// nomination widget.
+	outDir := t.TempDir()
+	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir(), GoogleClientID: "test-client-id"}
+	nodes := []Node{
+		{Slug: "fractal-1", Label: "style-a", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+		{Slug: "fractal-2", Label: "style-a", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "b.png", PublishedAt: time.Now()},
+	}
+	if err := r.RenderAll(nodes); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+
+	pages := map[string]string{
+		"node page":    filepath.Join(outDir, "fractal-1", "index.html"),
+		"index page":   filepath.Join(outDir, "index.html"),
+		"subject page": filepath.Join(outDir, "subject", "fractal", "index.html"),
+		"style page":   filepath.Join(outDir, "style", "style-a", "index.html"),
+	}
+	for name, path := range pages {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s: read: %v", name, err)
+		}
+		html := string(data)
+		if !strings.Contains(html, `id="po-auth-strip"`) {
+			t.Errorf("%s missing the shared auth strip: %s", name, path)
+		}
+		if !strings.Contains(html, `data-google-client-id="test-client-id"`) {
+			t.Errorf("%s auth strip missing the client id: %s", name, path)
+		}
+		if !strings.Contains(html, "accounts.google.com/gsi/client") {
+			t.Errorf("%s missing the GSI script tag: %s", name, path)
+		}
+	}
+}
+
 func TestRenderer_SubjectPage_NominationWidget_NoClientIDShowsUnavailable(t *testing.T) {
 	outDir := t.TempDir()
 	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir()}

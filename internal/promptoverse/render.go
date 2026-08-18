@@ -45,6 +45,72 @@ func (r *Renderer) emilyRoot() string {
 	return emilyRootDefault()
 }
 
+// authStripCSS/authStripHTML/authStripScript are the site-wide "funnel" --
+// founder, real-time, after the mashup-nomination widget shipped only on
+// subject pages: "ok but where is the funnel? like in the footer or the
+// header or something a login button?" A sign-in affordance that only
+// exists buried in one page's widget isn't discoverable; every Prompt-o-
+// verse page (node/index/subject/style) now carries the same small header
+// strip, sharing one localStorage token and one Google Identity Services
+// init so a user only ever signs in once. Spliced into each of the 4 page
+// templates via plain Go string concatenation (each template is still its
+// own self-contained string, matching this file's existing convention of
+// duplicating CSS/JS per template rather than introducing a partial-
+// template system) -- single source of truth here, not four copies to
+// drift.
+const authStripCSS = `
+  .auth-strip { float: right; display: flex; align-items: center; gap: 0.5rem; }
+  .auth-pill { font-size: 0.76rem; color: var(--text-soft); padding: 0.3rem 0.75rem; border: 1px solid var(--rule); border-radius: 999px; cursor: pointer; white-space: nowrap; }
+  .auth-pill:hover { color: var(--accent); border-color: var(--accent); }
+`
+
+const authStripHTML = `<div class="auth-strip" id="po-auth-strip" data-google-client-id="{{.GoogleClientID}}">
+    <span class="auth-pill" id="po-auth-pill" style="display:none"></span>
+    <div id="po-auth-signin"></div>
+  </div>`
+
+const authStripScript = `{{if .GoogleClientID}}<script src="https://accounts.google.com/gsi/client" async defer></script>{{end}}
+<script>
+(function () {
+  var strip = document.getElementById('po-auth-strip');
+  if (!strip) return;
+  var clientId = strip.getAttribute('data-google-client-id');
+  var pill = document.getElementById('po-auth-pill');
+  var signinEl = document.getElementById('po-auth-signin');
+  var TOKEN_KEY = 'promptoverse_access_token';
+  window.promptoverseAuth = { TOKEN_KEY: TOKEN_KEY };
+
+  function showSignedIn() {
+    signinEl.innerHTML = '';
+    pill.textContent = 'Signed in ✓ (sign out)';
+    pill.style.display = 'inline-block';
+    pill.onclick = function () { localStorage.removeItem(TOKEN_KEY); location.reload(); };
+  }
+
+  function handleCredential(response) {
+    fetch('/api/v1/auth/google', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: response.credential })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) { if (data.access_token) { localStorage.setItem(TOKEN_KEY, data.access_token); location.reload(); } });
+  }
+  window.__promptoverseHandleCredential = handleCredential;
+
+  if (!clientId) return;
+  if (localStorage.getItem(TOKEN_KEY)) { showSignedIn(); return; }
+
+  signinEl.innerHTML = '<div id="po_g_id_signin"></div>';
+  var tryInit = function () {
+    if (!window.google || !window.google.accounts) { setTimeout(tryInit, 200); return; }
+    window.google.accounts.id.initialize({ client_id: clientId, callback: handleCredential });
+    window.google.accounts.id.renderButton(document.getElementById('po_g_id_signin'), { theme: 'outline', size: 'small' });
+  };
+  tryInit();
+})();
+</script>
+`
+
 const pageTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -112,11 +178,13 @@ const pageTemplate = `<!DOCTYPE html>
   nav.back { margin-top: 3rem; }
   nav.back a { font-size: 0.85rem; color: var(--text-whisper); text-decoration: none; }
   nav.back a:hover { color: var(--accent); }
+` + authStripCSS + `
 </style>
 </head>
 <body>
 <div class="wrap">
   <nav class="wordmark"><a href="/prompt-o-verse/">Prompt-o-verse &middot; A Gallery</a></nav>
+  ` + authStripHTML + `
   <article>
     <header class="node-header">
       <span class="kind-tag">{{.Kind}}</span>
@@ -150,6 +218,7 @@ const pageTemplate = `<!DOCTYPE html>
   </article>
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
+` + authStripScript + `
 </body>
 </html>
 `
@@ -197,11 +266,13 @@ const indexTemplate = `<!DOCTYPE html>
   .kind-tag { display: inline-block; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.3rem; }
   ul.gallery h3 { font-size: 0.92rem; font-weight: 600; margin: 0; }
   ul.gallery a:hover h3 { color: var(--accent); }
+` + authStripCSS + `
 </style>
 </head>
 <body>
 <div class="wrap">
   <nav class="wordmark"><a href="/">EINHORN_INDUSTRIAL</a></nav>
+  ` + authStripHTML + `
   <h1>Prompt-o-verse &mdash; A Gallery</h1>
   <p class="tagline">A browsable taxonomy of what's possible to ask a generative model for &mdash;
   each style groups the different subjects it's been applied to, every leaf pairs a real EZ prompt
@@ -354,6 +425,7 @@ const indexTemplate = `<!DOCTYPE html>
     setInterval(poll, GALLERY_POLL_MS);
   })();
 </script>
+` + authStripScript + `
 </body>
 </html>
 `
@@ -408,11 +480,13 @@ const subjectTemplate = `<!DOCTYPE html>
   .nominate button:disabled { opacity: 0.5; cursor: default; }
   .nominate .status { margin-top: 0.7rem; font-size: 0.82rem; color: var(--text-soft); }
   .nominate .g-signin { margin-bottom: 0.9rem; }
+` + authStripCSS + `
 </style>
 </head>
 <body>
 <div class="wrap">
   <nav class="wordmark"><a href="/prompt-o-verse/">Prompt-o-verse &middot; A Gallery</a></nav>
+  ` + authStripHTML + `
   <h1>{{.Subject}}</h1>
   <p class="tagline">{{.Count}} {{if eq .Count 1}}style{{else}}styles{{end}} applied to this subject so far.</p>
   <ul class="gallery">
@@ -438,7 +512,7 @@ const subjectTemplate = `<!DOCTYPE html>
   </section>{{end}}
   <section class="nominate" id="nominate-root" data-subject="{{.Subject}}" data-google-client-id="{{.GoogleClientID}}">
     <h2>Nominate a mashup</h2>
-    <div id="nominate-signin"></div>
+    <p class="status" id="nominate-signed-out" style="display:none">{{if .GoogleClientID}}Sign in using the button in the header above to nominate a mashup.{{else}}Mashup nominations need an account &mdash; sign-in is not yet available on this box.{{end}}</p>
     <div id="nominate-form" style="display:none">
       <input type="text" id="nominate-partner" list="subject-options" placeholder="Combine {{.Subject}} with&hellip;">
       <datalist id="subject-options">
@@ -450,54 +524,24 @@ const subjectTemplate = `<!DOCTYPE html>
   </section>
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
-{{if .GoogleClientID}}<script src="https://accounts.google.com/gsi/client" async defer></script>{{end}}
+` + authStripScript + `
 <script>
 (function () {
   var root = document.getElementById('nominate-root');
   var subject = root.getAttribute('data-subject');
-  var clientId = root.getAttribute('data-google-client-id');
-  var signinEl = document.getElementById('nominate-signin');
   var formEl = document.getElementById('nominate-form');
+  var signedOutEl = document.getElementById('nominate-signed-out');
   var statusEl = document.getElementById('nominate-status');
   var TOKEN_KEY = 'promptoverse_access_token';
 
   function setStatus(msg) { statusEl.textContent = msg; }
 
-  function showForm() {
-    signinEl.style.display = 'none';
+  // Auth state itself (sign in/out, token) is owned by the shared header
+  // strip (authStripScript) -- this widget only reads the resulting token.
+  if (localStorage.getItem(TOKEN_KEY)) {
     formEl.style.display = 'block';
-  }
-
-  function handleCredential(response) {
-    setStatus('Signing in…');
-    fetch('/api/v1/auth/google', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id_token: response.credential })
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        if (!data.access_token) { setStatus('Sign-in failed.'); return; }
-        localStorage.setItem(TOKEN_KEY, data.access_token);
-        setStatus('Signed in.');
-        showForm();
-      })
-      .catch(function () { setStatus('Sign-in failed.'); });
-  }
-  window.__promptoverseHandleCredential = handleCredential;
-
-  if (!clientId) {
-    signinEl.innerHTML = '<p class="status">Mashup nominations need an account &mdash; sign-in is not yet available on this box.</p>';
-  } else if (localStorage.getItem(TOKEN_KEY)) {
-    showForm();
   } else {
-    signinEl.innerHTML = '<div class="g-signin" id="g_id_signin"></div>';
-    var tryInit = function () {
-      if (!window.google || !window.google.accounts) { setTimeout(tryInit, 200); return; }
-      window.google.accounts.id.initialize({ client_id: clientId, callback: handleCredential });
-      window.google.accounts.id.renderButton(document.getElementById('g_id_signin'), { theme: 'outline', size: 'medium' });
-    };
-    tryInit();
+    signedOutEl.style.display = 'block';
   }
 
   document.getElementById('nominate-submit').addEventListener('click', function () {
@@ -578,11 +622,13 @@ const styleTemplate = `<!DOCTYPE html>
   .mashups ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; }
   .mashups a { display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--text-soft); text-decoration: none; font-size: 0.85rem; }
   .mashups a:hover { color: var(--accent); border-color: var(--accent); }
+` + authStripCSS + `
 </style>
 </head>
 <body>
 <div class="wrap">
   <nav class="wordmark"><a href="/prompt-o-verse/">Prompt-o-verse &middot; A Gallery</a></nav>
+  ` + authStripHTML + `
   <h1>{{.Label}}</h1>
   <p class="tagline">{{.Count}} {{if eq .Count 1}}node{{else}}nodes{{end}} use this style so far.</p>
   <ul class="gallery">
@@ -608,6 +654,7 @@ const styleTemplate = `<!DOCTYPE html>
   </section>{{end}}
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
+` + authStripScript + `
 </body>
 </html>
 `
@@ -638,6 +685,11 @@ type nodeView struct {
 	PublishedISO     string
 	PublishedDate    string
 	TagPairs         []tagPair
+	// GoogleClientID only matters when this nodeView is the ROOT context of
+	// a rendered page (pageTemplate) -- harmlessly empty when reused as a
+	// gallery-grid list item (index/subject/style templates use their own
+	// page-level GoogleClientID for the header auth strip instead).
+	GoogleClientID string
 }
 
 // mashupLinkView is one cross-link to another subject/style page shown
@@ -657,10 +709,11 @@ type subjectPageView struct {
 }
 
 type stylePageView struct {
-	Label   string
-	Count   int
-	Nodes   []nodeView
-	Mashups []mashupLinkView
+	Label          string
+	Count          int
+	Nodes          []nodeView
+	Mashups        []mashupLinkView
+	GoogleClientID string
 }
 
 type categoryView struct {
@@ -720,6 +773,7 @@ func (r *Renderer) toView(n Node) nodeView {
 		PublishedISO:     n.PublishedAt.Format("2006-01-02"),
 		PublishedDate:    n.PublishedAt.Format("January 2, 2006"),
 		TagPairs:         pairs,
+		GoogleClientID:   r.GoogleClientID,
 	}
 }
 
@@ -790,7 +844,10 @@ func (r *Renderer) RenderIndex(nodes []Node) error {
 		})
 	}
 
-	return tmpl.Execute(f, struct{ Categories []categoryView }{Categories: categories})
+	return tmpl.Execute(f, struct {
+		Categories     []categoryView
+		GoogleClientID string
+	}{Categories: categories, GoogleClientID: r.GoogleClientID})
 }
 
 // RenderAll re-renders every node's own page, the index, and every subject
@@ -949,10 +1006,11 @@ func (r *Renderer) renderStylePages(nodes []Node) error {
 			return err
 		}
 		view := stylePageView{
-			Label:   label,
-			Count:   len(byLabel[label]),
-			Nodes:   byLabel[label],
-			Mashups: buildMashupLinks(crossLinks[label], hasPage, "/prompt-o-verse/style/"),
+			Label:          label,
+			Count:          len(byLabel[label]),
+			Nodes:          byLabel[label],
+			Mashups:        buildMashupLinks(crossLinks[label], hasPage, "/prompt-o-verse/style/"),
+			GoogleClientID: r.GoogleClientID,
 		}
 		err = tmpl.Execute(f, view)
 		f.Close()
