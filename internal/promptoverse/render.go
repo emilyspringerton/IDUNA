@@ -101,7 +101,43 @@ const authStripScript = `{{if .GoogleClientID}}<script src="https://accounts.goo
     pill.textContent = 'Signed in ✓ (sign out)';
     pill.style.display = 'inline-block';
     pill.onclick = function () { localStorage.removeItem(TOKEN_KEY); location.reload(); };
+    scheduleRefresh();
   }
+
+  // The token the /auth/google flow issues is short-lived (1h) and, until
+  // now, nothing ever refreshed it -- founder, real-time: "we are still
+  // failing to refresh our token." IDUNA already has a real, live
+  // POST /api/v1/auth/refresh (S126-08) that exchanges a still-valid
+  // token for a fresh 8h one; this widget just never called it. Refresh
+  // proactively on a timer AND reactively on the first 401 any
+  // Prompt-o-verse fetch hits, rather than only one or the other.
+  function refreshToken() {
+    var token = localStorage.getItem(TOKEN_KEY);
+    if (!token) return;
+    fetch('/api/v1/auth/refresh', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token }
+    })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        if (data && data.token) {
+          localStorage.setItem(TOKEN_KEY, data.token);
+        } else {
+          // The token IDUNA rejected wasn't refreshable (expired past the
+          // refresh window, or revoked) -- clear it so the UI falls back
+          // to a real sign-in prompt instead of quietly failing forever.
+          localStorage.removeItem(TOKEN_KEY);
+        }
+      })
+      .catch(function () {});
+  }
+
+  function scheduleRefresh() {
+    // Token is good for 1h; refresh well before it expires so a
+    // long-lived tab never actually hits an expired token in practice.
+    setInterval(refreshToken, 20 * 60 * 1000);
+  }
+  window.__promptoverseRefreshToken = refreshToken;
 
   function handleCredential(response) {
     fetch('/api/v1/auth/google', {
@@ -715,19 +751,29 @@ const subjectTemplate = `<!DOCTYPE html>
     signedOutEl.style.display = 'block';
   }
 
-  document.getElementById('nominate-submit').addEventListener('click', function () {
-    var partner = document.getElementById('nominate-partner').value.trim();
-    if (!partner) { setStatus('Pick a subject to combine with first.'); return; }
+  function submitNomination(partner, retryOn401) {
     var token = localStorage.getItem(TOKEN_KEY);
     if (!token) { setStatus('Please sign in first.'); return; }
-    setStatus('Nominating…');
     fetch('/api/v1/promptoverse/mashup-nominations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
       body: JSON.stringify({ subject_a: subject, subject_b: partner })
     })
-      .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (res) {
+        // A 401 here means the token expired between page load and this
+        // click (real gap: nothing refreshed it -- see authStripScript's
+        // scheduleRefresh). Refresh once and retry, rather than just
+        // failing -- founder, real-time: "we are still failing to
+        // refresh our token."
+        if (res.status === 401 && retryOn401 && window.__promptoverseRefreshToken) {
+          window.__promptoverseRefreshToken();
+          setTimeout(function () { submitNomination(partner, false); }, 800);
+          return null;
+        }
+        return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+      })
       .then(function (result) {
+        if (!result) return; // retrying
         if (result.ok) {
           setStatus('Nominated ' + subject + ' × ' + partner + ' — pending review.');
           document.getElementById('nominate-partner').value = '';
@@ -736,6 +782,13 @@ const subjectTemplate = `<!DOCTYPE html>
         }
       })
       .catch(function () { setStatus('Could not submit that nomination.'); });
+  }
+
+  document.getElementById('nominate-submit').addEventListener('click', function () {
+    var partner = document.getElementById('nominate-partner').value.trim();
+    if (!partner) { setStatus('Pick a subject to combine with first.'); return; }
+    setStatus('Nominating…');
+    submitNomination(partner, true);
   });
 })();
 </script>
