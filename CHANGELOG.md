@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-18
+- feat(promptoverse): new cmd/promptoverse-thumbnails (systemd timer, 15min) idempotently generates a thumbnail + JPEG-optimized version of every node's image via ImageMagick convert, re-rendering afterward. Renderer resolves GalleryImageFile/HeroImageFile at render time (thumb/optimized if present, original otherwise); live-update JS falls back via onerror. Live: 1.9MB PNGs became 236KB optimized JPEGs + 24KB thumbnails. (sess-20260813-2154-dda37e8b)
 
 - feat(promptoverse): GET /api/v1/promptoverse/discovery -- public read-only endpoint combining the hardcoded style registry (exported from emily.cli), discovered styles, GPT-2 candidate tags, and content-policy dead-letter entries (sess-20260813-2154-dda37e8b)
 
