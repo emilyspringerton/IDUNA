@@ -218,7 +218,15 @@ const indexTemplate = `<!DOCTYPE html>
   (function () {
     var GALLERY_POLL_MS = 10000;
     var root = document.getElementById('gallery-root');
-    var lastSignature = null;
+    // knownSlugs seeds from the server-rendered cards already on the page,
+    // so the first poll doesn't treat everything as "new".
+    var knownSlugs = {};
+    Array.prototype.forEach.call(root.querySelectorAll('ul.gallery > li > a'), function (a) {
+      var href = a.getAttribute('href') || '';
+      var parts = href.split('/').filter(Boolean);
+      var slug = parts[parts.length - 1];
+      if (slug) knownSlugs[slug] = true;
+    });
 
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, function (c) {
@@ -226,7 +234,11 @@ const indexTemplate = `<!DOCTYPE html>
       });
     }
 
-    function cardHtml(n) {
+    function styleSlug(label) {
+      return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
+
+    function cardEl(n) {
       // Try the thumbnail cmd/promptoverse-thumbnails generates first; if
       // it doesn't exist yet (a brand-new node, or the cron hasn't run
       // since it published) the 404 falls back to the full original once,
@@ -239,36 +251,65 @@ const indexTemplate = `<!DOCTYPE html>
       var original = base + '.png';
       var title = n.subject ? n.subject : n.label;
       var alt = escapeHtml(n.label) + (n.subject ? ' &mdash; ' + escapeHtml(n.subject) : '');
-      return '<li><a href="/prompt-o-verse/' + encodeURIComponent(n.slug) + '/">' +
+      var li = document.createElement('li');
+      li.innerHTML = '<a href="/prompt-o-verse/' + encodeURIComponent(n.slug) + '/">' +
         '<figure><img src="' + thumb + '" alt="' + alt + '" loading="lazy" ' +
         'onerror="this.onerror=null;this.src=\'' + original + '\';">' +
         '<figcaption><span class="kind-tag">' + escapeHtml(n.kind) + '</span>' +
-        '<h3>' + escapeHtml(title) + '</h3></figcaption></figure></a></li>';
+        '<h3>' + escapeHtml(title) + '</h3></figcaption></figure></a>';
+      return li;
     }
 
-    function render(nodes) {
-      // Group by Label, preserving first-appearance order -- same logic as
-      // Renderer.RenderIndex in Go (nodes already arrive published_at DESC).
-      var order = [];
-      var byLabel = {};
+    function updateCategoryCount(section, count) {
+      var el = section.querySelector('.category-count');
+      if (el) el.textContent = count + ' ' + (count === 1 ? 'variant' : 'variants');
+    }
+
+    function ensureCategorySection(label) {
+      var slug = styleSlug(label);
+      var existing = document.getElementById('cat-' + slug);
+      if (existing) return existing.closest('section.category');
+      var section = document.createElement('section');
+      section.className = 'category';
+      section.setAttribute('aria-labelledby', 'cat-' + slug);
+      section.innerHTML = '<h2 id="cat-' + slug + '"><a href="/prompt-o-verse/style/' + slug + '/">' +
+        escapeHtml(label) + '</a><span class="category-count"></span></h2><ul class="gallery"></ul>';
+      root.appendChild(section);
+      return section;
+    }
+
+    // insertNewCards is a real incremental patch, not a re-render --
+    // founder-reported flicker (2026-08-18): "there is a page flicker now
+    // it randomly flickers the first image in each tag" and, after an
+    // earlier fix that only skipped re-rendering on ticks with NO change
+    // at all, "im still getting a flicker." Root cause of the second
+    // report: publishing was happening roughly every 90-130s during this
+    // session's heavy concurrent use, well inside the 10s poll window, so
+    // "skip when nothing changed" barely helped -- almost every tick DID
+    // have a real change, and the old code still tore down and rebuilt
+    // the ENTIRE grid (every existing <img>, not just the new one) for
+    // that one new card. This only ever touches DOM for nodes not already
+    // known; every existing card's <img> element is never recreated, so
+    // it can never flicker regardless of how often something new lands.
+    function insertNewCards(nodes) {
+      var countBySlugified = {};
       nodes.forEach(function (n) {
-        if (!byLabel[n.label]) {
-          byLabel[n.label] = [];
-          order.push(n.label);
-        }
-        byLabel[n.label].push(n);
+        var s = styleSlug(n.label);
+        countBySlugified[s] = (countBySlugified[s] || 0) + 1;
       });
 
-      var html = order.map(function (label) {
-        var items = byLabel[label];
-        var slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-        var count = items.length + ' ' + (items.length === 1 ? 'variant' : 'variants');
-        return '<section class="category" aria-labelledby="cat-' + slug + '">' +
-          '<h2 id="cat-' + slug + '"><a href="/prompt-o-verse/style/' + slug + '/">' + escapeHtml(label) + '</a><span class="category-count">' + count + '</span></h2>' +
-          '<ul class="gallery">' + items.map(cardHtml).join('') + '</ul></section>';
-      }).join('');
+      var touchedSections = {};
+      nodes.forEach(function (n) {
+        if (knownSlugs[n.slug]) return;
+        knownSlugs[n.slug] = true;
+        var section = ensureCategorySection(n.label);
+        section.querySelector('ul.gallery').appendChild(cardEl(n));
+        touchedSections[styleSlug(n.label)] = section;
+      });
 
-      root.innerHTML = html;
+      Object.keys(touchedSections).forEach(function (slug) {
+        updateCategoryCount(touchedSections[slug], countBySlugified[slug] || 0);
+      });
     }
 
     function poll() {
@@ -276,24 +317,7 @@ const indexTemplate = `<!DOCTYPE html>
         .then(function (res) { return res.json(); })
         .then(function (data) {
           var nodes = data && data.nodes ? data.nodes : [];
-          if (nodes.length === 0) return;
-          // Founder-reported bug (2026-08-18): "there is a page flicker
-          // now it randomly flickers the first image in each tag on the
-          // home page." Root cause: this used to rebuild the ENTIRE grid
-          // from scratch every tick regardless of whether anything
-          // actually changed -- with a lot of concurrent publish activity,
-          // most 10s ticks had no real change, but the full innerHTML
-          // replacement still tore down and recreated every <img>,
-          // forcing a re-decode/repaint (visible as flicker) for no
-          // reason. A slug-order signature is enough to detect "nothing
-          // changed" cheaply and skip the re-render entirely on those
-          // ticks -- order matters here (not just membership), since the
-          // whole point is catching a category's first-card position
-          // shifting even when the node SET is identical.
-          var signature = nodes.map(function (n) { return n.slug; }).join('|');
-          if (signature === lastSignature) return;
-          lastSignature = signature;
-          render(nodes);
+          if (nodes.length > 0) insertNewCards(nodes);
         })
         .catch(function () {
           // Silent -- the server-rendered page underneath is still fully
