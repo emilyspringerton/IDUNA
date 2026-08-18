@@ -1,0 +1,20 @@
+# Runs promptoverse-thumbnails.service every 15 minutes.
+#
+# Founder direction (2026-08-18): "imagemagic goes on a cron and adds
+# thumbnails and optimized versions." The service itself is idempotent
+# (skips any node that already has both files), so a missed or overlapping
+# fire is a safe no-op, not a bug -- 15 minutes is just often enough that a
+# freshly-published node gets its thumbnail/optimized version generated
+# and re-rendered into the live pages without a long visible gap at full
+# original size.
+
+[Unit]
+Description=15-minute timer for Prompt-o-verse thumbnail/optimized image generation
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

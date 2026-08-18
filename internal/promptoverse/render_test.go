@@ -263,3 +263,76 @@ func TestRenderer_RenderIndex_CategoryHeadingLinksToStylePage(t *testing.T) {
 		t.Errorf("expected the index category heading to link to the style page: %s", data)
 	}
 }
+
+func TestRenderer_UsesThumbnailAndOptimizedFilesWhenPresent(t *testing.T) {
+	// Founder: "our webapp loads the optimized or the thumbnail optimized
+	// versions if they are available and falls back to full size if they
+	// arent." cmd/promptoverse-thumbnails writes these alongside the
+	// original -- the renderer must notice them at render time.
+	dir := t.TempDir()
+	r := &Renderer{OutputDir: dir}
+	n := Node{
+		Slug: "duck-claymation", Label: "claymation", Subject: "a duck", Kind: "surreal",
+		EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "duck-claymation.png", PublishedAt: time.Now(),
+	}
+
+	// Simulate the thumbnail tool having already run for this node.
+	nodeDir := filepath.Join(dir, n.Slug)
+	if err := os.MkdirAll(nodeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeDir, ThumbFileName(n.Slug)), []byte("thumb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeDir, OptimizedFileName(n.Slug)), []byte("optimized"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.RenderAll([]Node{n}); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+
+	leaf, err := os.ReadFile(filepath.Join(nodeDir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(leaf), `src="`+OptimizedFileName(n.Slug)+`"`) {
+		t.Errorf("expected the leaf page's hero image to use the optimized file, got: %s", leaf)
+	}
+
+	index, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(index), n.Slug+"/"+ThumbFileName(n.Slug)) {
+		t.Errorf("expected the index gallery card to use the thumbnail file, got: %s", index)
+	}
+}
+
+func TestRenderer_FallsBackToOriginalWhenNoGeneratedFilesExist(t *testing.T) {
+	dir := t.TempDir()
+	r := &Renderer{OutputDir: dir}
+	n := Node{
+		Slug: "duck-claymation", Label: "claymation", Subject: "a duck", Kind: "surreal",
+		EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "duck-claymation.png", PublishedAt: time.Now(),
+	}
+	if err := r.RenderAll([]Node{n}); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+
+	leaf, err := os.ReadFile(filepath.Join(dir, n.Slug, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(leaf), `src="duck-claymation.png"`) {
+		t.Errorf("expected the leaf page to fall back to the original image, got: %s", leaf)
+	}
+
+	index, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(index), n.Slug+"/duck-claymation.png") {
+		t.Errorf("expected the index gallery card to fall back to the original image, got: %s", index)
+	}
+}

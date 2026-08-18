@@ -1,0 +1,25 @@
+# Prompt-o-verse thumbnail/optimized-image generator -- user-level systemd
+# unit (no sudo required). Oneshot: runs cmd/promptoverse-thumbnails once,
+# triggered on a schedule by promptoverse-thumbnails.timer, not run
+# continuously. See that tool's own doc comment for the full design
+# (idempotent, ImageMagick `convert`, re-renders every page afterward so
+# newly-generated files show up immediately).
+#
+# Deploy:
+#   go build -o ~/.local/bin/promptoverse-thumbnails ./cmd/promptoverse-thumbnails
+#   cp scripts/promptoverse-thumbnails.service scripts/promptoverse-thumbnails.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now promptoverse-thumbnails.timer
+
+[Unit]
+Description=Prompt-o-verse thumbnail/optimized image generation (ImageMagick)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/fatbaby/IDUNA
+ExecStart=/home/fatbaby/.local/bin/promptoverse-thumbnails \
+    -db /home/fatbaby/IDUNA/var/promptoverse.db \
+    -out /var/www/okemily/prompt-o-verse
+StandardOutput=append:/home/fatbaby/EMILY/var/logs/promptoverse-thumbnails.log
+StandardError=append:/home/fatbaby/EMILY/var/logs/promptoverse-thumbnails.log

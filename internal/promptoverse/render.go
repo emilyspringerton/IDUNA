@@ -104,7 +104,7 @@ const pageTemplate = `<!DOCTYPE html>
     </header>
 
     <figure class="node-image">
-      <img src="{{.ImageFile}}" alt="{{.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}} &mdash; generated image" width="1024" height="1024" loading="lazy">
+      <img src="{{.HeroImageFile}}" alt="{{.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}} &mdash; generated image" width="1024" height="1024" loading="lazy">
       <figcaption>Generated output for this taxonomy leaf node.</figcaption>
     </figure>
 
@@ -192,7 +192,7 @@ const indexTemplate = `<!DOCTYPE html>
       {{range .Nodes}}<li>
         <a href="/prompt-o-verse/{{.Slug}}/">
           <figure>
-            <img src="{{.Slug}}/{{.ImageFile}}" alt="{{.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}}" loading="lazy">
+            <img src="{{.Slug}}/{{.GalleryImageFile}}" alt="{{.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}}" loading="lazy">
             <figcaption>
               <span class="kind-tag">{{.Kind}}</span>
               <h3>{{if .Subject}}{{.Subject}}{{else}}{{.Label}}{{end}}</h3>
@@ -226,11 +226,21 @@ const indexTemplate = `<!DOCTYPE html>
     }
 
     function cardHtml(n) {
-      var img = '/prompt-o-verse/' + encodeURIComponent(n.slug) + '/' + encodeURIComponent(n.slug) + '.png';
+      // Try the thumbnail cmd/promptoverse-thumbnails generates first; if
+      // it doesn't exist yet (a brand-new node, or the cron hasn't run
+      // since it published) the 404 falls back to the full original once,
+      // via onerror -- the client-side equivalent of the Go renderer's own
+      // os.Stat check for statically-rendered pages, since JS can't stat
+      // the filesystem directly. Founder: "falls back to full size if they
+      // arent [available]."
+      var base = '/prompt-o-verse/' + encodeURIComponent(n.slug) + '/' + encodeURIComponent(n.slug);
+      var thumb = base + '-thumb.jpg';
+      var original = base + '.png';
       var title = n.subject ? n.subject : n.label;
       var alt = escapeHtml(n.label) + (n.subject ? ' &mdash; ' + escapeHtml(n.subject) : '');
       return '<li><a href="/prompt-o-verse/' + encodeURIComponent(n.slug) + '/">' +
-        '<figure><img src="' + img + '" alt="' + alt + '" loading="lazy">' +
+        '<figure><img src="' + thumb + '" alt="' + alt + '" loading="lazy" ' +
+        'onerror="this.onerror=null;this.src=\'' + original + '\';">' +
         '<figcaption><span class="kind-tag">' + escapeHtml(n.kind) + '</span>' +
         '<h3>' + escapeHtml(title) + '</h3></figcaption></figure></a></li>';
     }
@@ -333,7 +343,7 @@ const subjectTemplate = `<!DOCTYPE html>
     {{range .Nodes}}<li>
       <a href="/prompt-o-verse/{{.Slug}}/">
         <figure>
-          <img src="/prompt-o-verse/{{.Slug}}/{{.ImageFile}}" alt="{{.Label}} &mdash; {{$.Subject}}" loading="lazy">
+          <img src="/prompt-o-verse/{{.Slug}}/{{.GalleryImageFile}}" alt="{{.Label}} &mdash; {{$.Subject}}" loading="lazy">
           <figcaption>
             <span class="kind-tag">{{.Kind}}</span>
             <h2>{{.Label}}</h2>
@@ -405,7 +415,7 @@ const styleTemplate = `<!DOCTYPE html>
     {{range .Nodes}}<li>
       <a href="/prompt-o-verse/{{.Slug}}/">
         <figure>
-          <img src="/prompt-o-verse/{{.Slug}}/{{.ImageFile}}" alt="{{$.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}}" loading="lazy">
+          <img src="/prompt-o-verse/{{.Slug}}/{{.GalleryImageFile}}" alt="{{$.Label}}{{if .Subject}} &mdash; {{.Subject}}{{end}}" loading="lazy">
           <figcaption>
             <span class="kind-tag">{{.Kind}}</span>
             <h2>{{if .Subject}}{{.Subject}}{{else}}{{.Label}}{{end}}</h2>
@@ -435,10 +445,18 @@ type nodeView struct {
 	Kind           string
 	EZPrompt       string
 	ExpandedPrompt string
-	ImageFile      string
-	PublishedISO   string
-	PublishedDate  string
-	TagPairs       []tagPair
+	ImageFile      string // the original -- kept for anything that still wants it directly
+	// GalleryImageFile / HeroImageFile resolve to the thumbnail/optimized
+	// version if cmd/promptoverse-thumbnails has generated one, else fall
+	// back to ImageFile -- founder: "our webapp loads the optimized or the
+	// thumbnail optimized versions if they are available and falls back to
+	// full size if they arent." Gallery grids (index/subject/style pages)
+	// use GalleryImageFile; a leaf page's own hero image uses HeroImageFile.
+	GalleryImageFile string
+	HeroImageFile    string
+	PublishedISO     string
+	PublishedDate    string
+	TagPairs         []tagPair
 }
 
 type subjectPageView struct {
@@ -460,7 +478,23 @@ type categoryView struct {
 	Nodes []nodeView
 }
 
-func toView(n Node) nodeView {
+// ThumbFileName / OptimizedFileName are the filenames
+// cmd/promptoverse-thumbnails writes alongside a node's original image --
+// shared here so the renderer and the thumbnail generator can never drift
+// on the naming convention.
+func ThumbFileName(slug string) string     { return slug + "-thumb.jpg" }
+func OptimizedFileName(slug string) string { return slug + "-optimized.jpg" }
+
+// hasGeneratedFile checks the filesystem, not the DB -- thumbnails are
+// generated by a separate cron-driven tool (cmd/promptoverse-thumbnails)
+// on its own schedule, so "does one exist yet" is a real on-disk question
+// at render time, not something the Node/Store model tracks.
+func (r *Renderer) hasGeneratedFile(slug, name string) bool {
+	_, err := os.Stat(filepath.Join(r.OutputDir, slug, name))
+	return err == nil
+}
+
+func (r *Renderer) toView(n Node) nodeView {
 	keys := make([]string, 0, len(n.Tags))
 	for k := range n.Tags {
 		keys = append(keys, k)
@@ -470,18 +504,30 @@ func toView(n Node) nodeView {
 	for _, k := range keys {
 		pairs = append(pairs, tagPair{Key: k, Value: n.Tags[k]})
 	}
+
+	galleryImage := n.ImageFile
+	if r.hasGeneratedFile(n.Slug, ThumbFileName(n.Slug)) {
+		galleryImage = ThumbFileName(n.Slug)
+	}
+	heroImage := n.ImageFile
+	if r.hasGeneratedFile(n.Slug, OptimizedFileName(n.Slug)) {
+		heroImage = OptimizedFileName(n.Slug)
+	}
+
 	return nodeView{
-		Slug:           n.Slug,
-		Label:          n.Label,
-		StyleLink:      "/prompt-o-verse/style/" + slugify(n.Label) + "/",
-		Subject:        n.Subject,
-		Kind:           n.Kind,
-		EZPrompt:       n.EZPrompt,
-		ExpandedPrompt: n.ExpandedPrompt,
-		ImageFile:      n.ImageFile,
-		PublishedISO:   n.PublishedAt.Format("2006-01-02"),
-		PublishedDate:  n.PublishedAt.Format("January 2, 2006"),
-		TagPairs:       pairs,
+		Slug:             n.Slug,
+		Label:            n.Label,
+		StyleLink:        "/prompt-o-verse/style/" + slugify(n.Label) + "/",
+		Subject:          n.Subject,
+		Kind:             n.Kind,
+		EZPrompt:         n.EZPrompt,
+		ExpandedPrompt:   n.ExpandedPrompt,
+		ImageFile:        n.ImageFile,
+		GalleryImageFile: galleryImage,
+		HeroImageFile:    heroImage,
+		PublishedISO:     n.PublishedAt.Format("2006-01-02"),
+		PublishedDate:    n.PublishedAt.Format("January 2, 2006"),
+		TagPairs:         pairs,
 	}
 }
 
@@ -507,7 +553,7 @@ func (r *Renderer) renderNodePage(n Node, subjectLink string) error {
 		return err
 	}
 	defer f.Close()
-	v := toView(n)
+	v := r.toView(n)
 	v.SubjectLink = subjectLink
 	return tmpl.Execute(f, v)
 }
@@ -536,7 +582,7 @@ func (r *Renderer) RenderIndex(nodes []Node) error {
 	order := make([]string, 0)
 	byLabel := make(map[string][]nodeView)
 	for _, n := range nodes {
-		v := toView(n)
+		v := r.toView(n)
 		if _, seen := byLabel[n.Label]; !seen {
 			order = append(order, n.Label)
 		}
@@ -606,7 +652,7 @@ func (r *Renderer) renderSubjectPages(nodes []Node, subjectCounts map[string]int
 		if _, seen := bySubject[n.Subject]; !seen {
 			order = append(order, n.Subject)
 		}
-		bySubject[n.Subject] = append(bySubject[n.Subject], toView(n))
+		bySubject[n.Subject] = append(bySubject[n.Subject], r.toView(n))
 	}
 
 	tmpl, err := template.New("subject").Parse(subjectTemplate)
@@ -646,7 +692,7 @@ func (r *Renderer) renderStylePages(nodes []Node) error {
 		if _, seen := byLabel[n.Label]; !seen {
 			order = append(order, n.Label)
 		}
-		byLabel[n.Label] = append(byLabel[n.Label], toView(n))
+		byLabel[n.Label] = append(byLabel[n.Label], r.toView(n))
 	}
 
 	tmpl, err := template.New("style").Parse(styleTemplate)
