@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-18
+- Mashup nomination social tool: authenticated (Google ID-token) users nominate combining two subjects, admin-only approve/reject via new promptoverse.mashups.review permission, autocomplete widget on every subject page (sess-20260813-2154-dda37e8b)
 - Fixed stale live-reload JS: iduna.service was running a binary built 21s before the incremental-DOM-patch fix landed, restarted with current code (sess-20260813-2154-dda37e8b)
 - Renderer shows Mashups cross-links on subject/style pages, reading the new LLM-judgment cache from emily.cli (sess-20260813-2154-dda37e8b)
 - fix(promptoverse): gallery index no longer re-renders on every live-update poll tick when the node list hasn't actually changed -- was causing visible flicker, especially the first card in each category (sess-20260813-2154-dda37e8b)
