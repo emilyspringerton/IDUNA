@@ -69,6 +69,17 @@ const authStripCSS = `
   .auth-pill:hover { color: var(--accent); border-color: var(--accent); }
 `
 
+// cardEntranceCSS is shared the same way -- founder, real-time
+// (2026-08-18): "the live reload kind of snaps a bunch in when it loads
+// a bunch in can we animate them in... on a jitter?" The JS side staggers
+// WHEN each card/section gets inserted (see indexTemplate's
+// insertNewCards and leafPollScript); this is what makes each individual
+// insertion look like an arrival instead of a snap once it happens.
+const cardEntranceCSS = `
+  @keyframes cardFadeIn { from { opacity: 0; transform: translateY(10px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  ul.gallery li.card-entering { animation: cardFadeIn 550ms ease-out; }
+`
+
 const authStripHTML = `<div class="auth-strip" id="po-auth-strip" data-google-client-id="{{.GoogleClientID}}">
     <span class="auth-pill" id="po-auth-pill" style="display:none"></span>
     <div id="po-auth-signin"></div>
@@ -182,6 +193,12 @@ const leafPollScript = `<script>
     return li;
   }
 
+  // New cards stagger in one at a time with a jittered delay rather than
+  // snapping in together -- founder, real-time (2026-08-18): "the live
+  // reload kind of snaps a bunch in when it loads a bunch in can we
+  // animate them in like every 10-15-40 seconds on a jitter?"
+  var STAGGER_MIN_MS = 1500, STAGGER_JITTER_MS = 3500;
+
   function poll() {
     fetch('/api/v1/promptoverse/nodes')
       .then(function (res) { return res.json(); })
@@ -189,17 +206,23 @@ const leafPollScript = `<script>
         var nodes = (data && data.nodes ? data.nodes : []).filter(function (n) {
           return n[filterKey] === filterValue;
         });
-        var added = 0;
-        nodes.forEach(function (n) {
-          if (knownSlugs[n.slug]) return;
-          knownSlugs[n.slug] = true;
-          list.appendChild(cardEl(n));
-          added++;
+        var toAdd = nodes.filter(function (n) { return !knownSlugs[n.slug]; });
+        toAdd.forEach(function (n) { knownSlugs[n.slug] = true; });
+        if (toAdd.length === 0) return;
+
+        var delay = 0;
+        toAdd.forEach(function (n) {
+          setTimeout(function () {
+            var card = cardEl(n);
+            card.classList.add('card-entering');
+            list.appendChild(card);
+            if (countEl) {
+              knownCount += 1;
+              countEl.textContent = knownCount + ' ' + (knownCount === 1 ? countNoun : countNoun + 's');
+            }
+          }, delay);
+          delay += STAGGER_MIN_MS + Math.random() * STAGGER_JITTER_MS;
         });
-        if (added > 0 && countEl) {
-          knownCount += added;
-          countEl.textContent = knownCount + ' ' + (knownCount === 1 ? countNoun : countNoun + 's');
-        }
       })
       .catch(function () {});
   }
@@ -387,7 +410,7 @@ const indexTemplate = `<!DOCTYPE html>
   .kind-tag { display: inline-block; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.3rem; }
   ul.gallery h3 { font-size: 0.92rem; font-weight: 600; margin: 0; }
   ul.gallery a:hover h3 { color: var(--accent); }
-` + authStripCSS + `
+` + authStripCSS + cardEntranceCSS + `
 </style>
 </head>
 <body>
@@ -505,6 +528,18 @@ const indexTemplate = `<!DOCTYPE html>
     // that one new card. This only ever touches DOM for nodes not already
     // known; every existing card's <img> element is never recreated, so
     // it can never flicker regardless of how often something new lands.
+    // insertNewCards stopped tearing down the whole grid a while ago (see
+    // the flicker fix above), but every new card was still inserted into
+    // every touched section in the SAME synchronous pass -- founder,
+    // real-time (2026-08-18): "the live reload kind of snaps a bunch in
+    // when it loads a bunch in... like the newly updated section kinda
+    // drops in" / "but section by section not snapping all 3 sections in
+    // at once." Correct incremental DOM patch, jarring arrival. Now
+    // staggers section-by-section with a jittered delay between each
+    // (founder: "animate them in like every 10-15-40 seconds on a
+    // jitter" -- read as the target STAGGER window, not a single card's
+    // transition length; card-level fade-in is its own short CSS
+    // transition, see .card-entering).
     function insertNewCards(nodes) {
       var countBySlugified = {};
       nodes.forEach(function (n) {
@@ -512,17 +547,30 @@ const indexTemplate = `<!DOCTYPE html>
         countBySlugified[s] = (countBySlugified[s] || 0) + 1;
       });
 
-      var touchedSections = {};
+      var byLabel = {};
+      var labelOrder = [];
       nodes.forEach(function (n) {
         if (knownSlugs[n.slug]) return;
         knownSlugs[n.slug] = true;
-        var section = ensureCategorySection(n.label);
-        section.querySelector('ul.gallery').appendChild(cardEl(n));
-        touchedSections[styleSlug(n.label)] = section;
+        if (!byLabel[n.label]) { byLabel[n.label] = []; labelOrder.push(n.label); }
+        byLabel[n.label].push(n);
       });
+      if (labelOrder.length === 0) return;
 
-      Object.keys(touchedSections).forEach(function (slug) {
-        updateCategoryCount(touchedSections[slug], countBySlugified[slug] || 0);
+      var STAGGER_MIN_MS = 1500, STAGGER_JITTER_MS = 3500;
+      var delay = 0;
+      labelOrder.forEach(function (label) {
+        setTimeout(function () {
+          var section = ensureCategorySection(label);
+          var list = section.querySelector('ul.gallery');
+          byLabel[label].forEach(function (n) {
+            var card = cardEl(n);
+            card.classList.add('card-entering');
+            list.appendChild(card);
+          });
+          updateCategoryCount(section, countBySlugified[styleSlug(label)] || byLabel[label].length);
+        }, delay);
+        delay += STAGGER_MIN_MS + Math.random() * STAGGER_JITTER_MS;
       });
     }
 
@@ -601,7 +649,7 @@ const subjectTemplate = `<!DOCTYPE html>
   .nominate button:disabled { opacity: 0.5; cursor: default; }
   .nominate .status { margin-top: 0.7rem; font-size: 0.82rem; color: var(--text-soft); }
   .nominate .g-signin { margin-bottom: 0.9rem; }
-` + authStripCSS + `
+` + authStripCSS + cardEntranceCSS + `
 </style>
 </head>
 <body>
@@ -745,7 +793,7 @@ const styleTemplate = `<!DOCTYPE html>
   .mashups ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; }
   .mashups a { display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--text-soft); text-decoration: none; font-size: 0.85rem; }
   .mashups a:hover { color: var(--accent); border-color: var(--accent); }
-` + authStripCSS + `
+` + authStripCSS + cardEntranceCSS + `
 </style>
 </head>
 <body>
