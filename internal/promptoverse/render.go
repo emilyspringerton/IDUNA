@@ -21,6 +21,20 @@ import (
 
 type Renderer struct {
 	OutputDir string // e.g. /var/www/okemily/prompt-o-verse
+	// EmilyRoot locates EMILY_ROOT/var/promptoverse-mashup-judgments.json
+	// and promptoverse-style-mashup-judgments.json, written by `emily
+	// promptoverse mashups` (internal/mashupjudge in emily.cli) --
+	// defaults to emilyRootDefault() if empty, same cross-repo "known
+	// shared location on the same box" pattern as
+	// handlers.DiscoveryHandler.
+	EmilyRoot string
+}
+
+func (r *Renderer) emilyRoot() string {
+	if r.EmilyRoot != "" {
+		return r.EmilyRoot
+	}
+	return emilyRootDefault()
 }
 
 const pageTemplate = `<!DOCTYPE html>
@@ -374,6 +388,11 @@ const subjectTemplate = `<!DOCTYPE html>
   nav.back { margin-top: 3rem; }
   nav.back a { font-size: 0.85rem; color: var(--text-whisper); text-decoration: none; }
   nav.back a:hover { color: var(--accent); }
+  .mashups { margin-top: 2.6rem; padding-top: 1.8rem; border-top: 1px solid var(--rule); }
+  .mashups h2 { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-whisper); margin: 0 0 0.9rem; }
+  .mashups ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .mashups a { display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--text-soft); text-decoration: none; font-size: 0.85rem; }
+  .mashups a:hover { color: var(--accent); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -395,6 +414,13 @@ const subjectTemplate = `<!DOCTYPE html>
     </li>
     {{end}}
   </ul>
+  {{if .Mashups}}<section class="mashups">
+    <h2>Mashups featuring {{.Subject}}</h2>
+    <ul>
+      {{range .Mashups}}<li><a href="{{.Link}}">{{.Label}}</a></li>
+      {{end}}
+    </ul>
+  </section>{{end}}
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
 </body>
@@ -446,6 +472,11 @@ const styleTemplate = `<!DOCTYPE html>
   nav.back { margin-top: 3rem; }
   nav.back a { font-size: 0.85rem; color: var(--text-whisper); text-decoration: none; }
   nav.back a:hover { color: var(--accent); }
+  .mashups { margin-top: 2.6rem; padding-top: 1.8rem; border-top: 1px solid var(--rule); }
+  .mashups h2 { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-whisper); margin: 0 0 0.9rem; }
+  .mashups ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .mashups a { display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--text-soft); text-decoration: none; font-size: 0.85rem; }
+  .mashups a:hover { color: var(--accent); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -467,6 +498,13 @@ const styleTemplate = `<!DOCTYPE html>
     </li>
     {{end}}
   </ul>
+  {{if .Mashups}}<section class="mashups">
+    <h2>Mashups featuring {{.Label}}</h2>
+    <ul>
+      {{range .Mashups}}<li><a href="{{.Link}}">{{.Label}}</a></li>
+      {{end}}
+    </ul>
+  </section>{{end}}
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
 </body>
@@ -501,16 +539,25 @@ type nodeView struct {
 	TagPairs         []tagPair
 }
 
+// mashupLinkView is one cross-link to another subject/style page shown
+// under a "Mashups" section -- see mashups.go for how these get computed.
+type mashupLinkView struct {
+	Label string
+	Link  string
+}
+
 type subjectPageView struct {
 	Subject string
 	Count   int
 	Nodes   []nodeView
+	Mashups []mashupLinkView
 }
 
 type stylePageView struct {
-	Label string
-	Count int
-	Nodes []nodeView
+	Label   string
+	Count   int
+	Nodes   []nodeView
+	Mashups []mashupLinkView
 }
 
 type categoryView struct {
@@ -697,6 +744,15 @@ func (r *Renderer) renderSubjectPages(nodes []Node, subjectCounts map[string]int
 		bySubject[n.Subject] = append(bySubject[n.Subject], r.toView(n))
 	}
 
+	// Only cross-link to a subject that actually has its own page --
+	// mashupCrossLinks can name a subject with <2 nodes (no page yet),
+	// which would be a dead link.
+	hasPage := make(map[string]bool, len(order))
+	for _, s := range order {
+		hasPage[s] = true
+	}
+	crossLinks := r.subjectMashupCrossLinks()
+
 	tmpl, err := template.New("subject").Parse(subjectTemplate)
 	if err != nil {
 		return err
@@ -710,7 +766,12 @@ func (r *Renderer) renderSubjectPages(nodes []Node, subjectCounts map[string]int
 		if err != nil {
 			return err
 		}
-		view := subjectPageView{Subject: subject, Count: len(bySubject[subject]), Nodes: bySubject[subject]}
+		view := subjectPageView{
+			Subject: subject,
+			Count:   len(bySubject[subject]),
+			Nodes:   bySubject[subject],
+			Mashups: buildMashupLinks(crossLinks[subject], hasPage, "/prompt-o-verse/subject/"),
+		}
 		err = tmpl.Execute(f, view)
 		f.Close()
 		if err != nil {
@@ -718,6 +779,24 @@ func (r *Renderer) renderSubjectPages(nodes []Node, subjectCounts map[string]int
 		}
 	}
 	return nil
+}
+
+// buildMashupLinks turns a raw related-label list into stable, sorted
+// {Label, Link} view entries, dropping any label that doesn't actually
+// have a page to link to.
+func buildMashupLinks(related []string, hasPage map[string]bool, urlPrefix string) []mashupLinkView {
+	labels := make([]string, 0, len(related))
+	for _, r := range related {
+		if hasPage[r] {
+			labels = append(labels, r)
+		}
+	}
+	sort.Strings(labels)
+	links := make([]mashupLinkView, 0, len(labels))
+	for _, l := range labels {
+		links = append(links, mashupLinkView{Label: l, Link: urlPrefix + slugify(l) + "/"})
+	}
+	return links
 }
 
 // renderStylePages writes /prompt-o-verse/style/<slug>/index.html for every
@@ -737,6 +816,14 @@ func (r *Renderer) renderStylePages(nodes []Node) error {
 		byLabel[n.Label] = append(byLabel[n.Label], r.toView(n))
 	}
 
+	// Every style label has a page (no >=2 threshold, unlike subjects),
+	// so every label in `order` is always a valid cross-link target.
+	hasPage := make(map[string]bool, len(order))
+	for _, l := range order {
+		hasPage[l] = true
+	}
+	crossLinks := r.styleMashupCrossLinks()
+
 	tmpl, err := template.New("style").Parse(styleTemplate)
 	if err != nil {
 		return err
@@ -750,7 +837,12 @@ func (r *Renderer) renderStylePages(nodes []Node) error {
 		if err != nil {
 			return err
 		}
-		view := stylePageView{Label: label, Count: len(byLabel[label]), Nodes: byLabel[label]}
+		view := stylePageView{
+			Label:   label,
+			Count:   len(byLabel[label]),
+			Nodes:   byLabel[label],
+			Mashups: buildMashupLinks(crossLinks[label], hasPage, "/prompt-o-verse/style/"),
+		}
 		err = tmpl.Execute(f, view)
 		f.Close()
 		if err != nil {
