@@ -184,6 +184,37 @@ func (s *Store) GetBySlug(slug string) (Node, error) {
 	return scanNode(row)
 }
 
+// MergeTags overlays extra onto a node's existing Tags (extra wins on key
+// collisions) and persists the result. Used for backfilling metadata onto
+// already-published nodes without touching image/prompt data -- e.g.
+// stamping a "pre_annotation" marker onto generations of a subject that
+// existed before a subject-level prompt annotation was introduced for it
+// (founder, real-time: "gens that did not include the annotation need to
+// be marked as pre annotated with a link to the annotation now attached
+// to the top level subject" -- see emily.cli's `promptoverse
+// backfill-annotation`). Returns sql.ErrNoRows if the slug doesn't exist.
+func (s *Store) MergeTags(slug string, extra Tags) (Tags, error) {
+	n, err := s.GetBySlug(slug)
+	if err != nil {
+		return nil, err
+	}
+	merged := Tags{}
+	for k, v := range n.Tags {
+		merged[k] = v
+	}
+	for k, v := range extra {
+		merged[k] = v
+	}
+	tagsJSON, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tags: %w", err)
+	}
+	if _, err := s.db.Exec(`UPDATE nodes SET tags_json = ? WHERE slug = ?`, string(tagsJSON), slug); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
 // NodeVariant is an ADDITIONAL generated image for an existing leaf node,
 // e.g. a correction like "red hoodie instead of grey" -- "regenerate with
 // variation" (S176-30). Founder, real-time, correcting an earlier

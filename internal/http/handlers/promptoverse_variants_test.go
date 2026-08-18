@@ -30,7 +30,7 @@ func TestPromptOVerseHandler_AddVariant_Succeeds(t *testing.T) {
 
 	h := &handlers.PromptOVerseHandler{Store: store, Renderer: &promptoverse.Renderer{OutputDir: outDir, Store: store}}
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant))
+	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant), http.HandlerFunc(h.MergeTags))
 
 	body, _ := json.Marshal(map[string]string{
 		"ez_prompt":       "paper-craft Lil Wayne red hoodie",
@@ -80,7 +80,7 @@ func TestPromptOVerseHandler_AddVariant_UnknownSlugReturns404(t *testing.T) {
 
 	h := &handlers.PromptOVerseHandler{Store: store, Renderer: &promptoverse.Renderer{OutputDir: outDir, Store: store}}
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant))
+	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant), http.HandlerFunc(h.MergeTags))
 
 	body, _ := json.Marshal(map[string]string{
 		"ez_prompt": "p", "expanded_prompt": "p", "image_base64": base64.StdEncoding.EncodeToString([]byte("x")),
@@ -107,7 +107,7 @@ func TestPromptOVerseHandler_AddVariant_MissingFieldsReturns400(t *testing.T) {
 
 	h := &handlers.PromptOVerseHandler{Store: store, Renderer: &promptoverse.Renderer{OutputDir: outDir, Store: store}}
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant))
+	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant), http.HandlerFunc(h.MergeTags))
 
 	body, _ := json.Marshal(map[string]string{"ez_prompt": "p"})
 	req := httptest.NewRequest("POST", "/api/v1/promptoverse/nodes/n1/variants", bytes.NewReader(body))
@@ -116,5 +116,88 @@ func TestPromptOVerseHandler_AddVariant_MissingFieldsReturns400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing fields, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPromptOVerseHandler_MergeTags_Succeeds(t *testing.T) {
+	outDir := t.TempDir()
+	store, err := promptoverse.Open(filepath.Join(t.TempDir(), "promptoverse.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Create(promptoverse.Node{
+		Slug: "paimon-emo", Label: "emo", Subject: "Paimon", Kind: "surreal",
+		EZPrompt: "emo Paimon", ExpandedPrompt: "p", ImageFile: "paimon-emo.png",
+		Tags: promptoverse.Tags{"style": "emo", "subject": "Paimon"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &handlers.PromptOVerseHandler{Store: store, Renderer: &promptoverse.Renderer{OutputDir: outDir, Store: store}}
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant), http.HandlerFunc(h.MergeTags))
+
+	body, _ := json.Marshal(map[string]any{"tags": map[string]string{"pre_annotation": "true"}})
+	req := httptest.NewRequest("PATCH", "/api/v1/promptoverse/nodes/paimon-emo/tags", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := store.GetBySlug("paimon-emo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tags["pre_annotation"] != "true" || got.Tags["style"] != "emo" {
+		t.Errorf("expected merged tags to include both old and new, got %+v", got.Tags)
+	}
+}
+
+func TestPromptOVerseHandler_MergeTags_UnknownSlugReturns404(t *testing.T) {
+	outDir := t.TempDir()
+	store, err := promptoverse.Open(filepath.Join(t.TempDir(), "promptoverse.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	h := &handlers.PromptOVerseHandler{Store: store, Renderer: &promptoverse.Renderer{OutputDir: outDir, Store: store}}
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant), http.HandlerFunc(h.MergeTags))
+
+	body, _ := json.Marshal(map[string]any{"tags": map[string]string{"a": "b"}})
+	req := httptest.NewRequest("PATCH", "/api/v1/promptoverse/nodes/does-not-exist/tags", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPromptOVerseHandler_MergeTags_EmptyTagsReturns400(t *testing.T) {
+	outDir := t.TempDir()
+	store, err := promptoverse.Open(filepath.Join(t.TempDir(), "promptoverse.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Create(promptoverse.Node{Slug: "n1", Label: "l", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &handlers.PromptOVerseHandler{Store: store, Renderer: &promptoverse.Renderer{OutputDir: outDir, Store: store}}
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, http.NotFoundHandler(), http.HandlerFunc(h.AddVariant), http.HandlerFunc(h.MergeTags))
+
+	body, _ := json.Marshal(map[string]any{"tags": map[string]string{}})
+	req := httptest.NewRequest("PATCH", "/api/v1/promptoverse/nodes/n1/tags", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

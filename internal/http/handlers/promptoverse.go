@@ -22,11 +22,12 @@ type PromptOVerseHandler struct {
 	Renderer *promptoverse.Renderer
 }
 
-func (h *PromptOVerseHandler) RegisterRoutes(mux *http.ServeMux, createProtected, addVariantProtected http.Handler) {
+func (h *PromptOVerseHandler) RegisterRoutes(mux *http.ServeMux, createProtected, addVariantProtected, mergeTagsProtected http.Handler) {
 	mux.Handle("POST /api/v1/promptoverse/nodes", createProtected)
 	mux.HandleFunc("GET /api/v1/promptoverse/nodes", h.list)
 	mux.HandleFunc("GET /api/v1/promptoverse/nodes/{slug}", h.get)
 	mux.Handle("POST /api/v1/promptoverse/nodes/{slug}/variants", addVariantProtected)
+	mux.Handle("PATCH /api/v1/promptoverse/nodes/{slug}/tags", mergeTagsProtected)
 }
 
 type createNodeRequest struct {
@@ -170,6 +171,49 @@ func (h *PromptOVerseHandler) AddVariant(w http.ResponseWriter, r *http.Request)
 		"variant_id": id,
 		"slug":       slug,
 		"url":        "https://okemily.com/prompt-o-verse/" + slug + "/",
+	})
+}
+
+type mergeTagsRequest struct {
+	Tags map[string]string `json:"tags"`
+}
+
+// MergeTags overlays extra tag key/values onto an existing node without
+// touching its image/prompt data -- backfilling metadata onto a node
+// published before some later piece of context existed (e.g. a subject-
+// level prompt annotation added after the fact -- see emily.cli's
+// `promptoverse backfill-annotation`). Reuses the same generic Tags
+// table already rendered per-node rather than adding new schema.
+func (h *PromptOVerseHandler) MergeTags(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+
+	var req mergeTagsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+		return
+	}
+	if len(req.Tags) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "tags is required and must be non-empty"})
+		return
+	}
+
+	merged, err := h.Store.MergeTags(slug, req.Tags)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "node not found: " + err.Error()})
+		return
+	}
+
+	nodes, err := h.Store.List()
+	if err != nil {
+		log.Printf("[promptoverse] list nodes for render failed: %v", err)
+	} else if err := h.Renderer.RenderAll(nodes); err != nil {
+		log.Printf("[promptoverse] render all failed: %v", err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "tags merged",
+		"slug":   slug,
+		"tags":   merged,
 	})
 }
 

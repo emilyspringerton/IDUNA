@@ -406,7 +406,8 @@ func main() {
 	// Prompt-o-verse gallery -- posting/adding-variants both require promptoverse.write; reading is public.
 	promptoverseCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.Create)))
 	promptoverseAddVariantProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.AddVariant)))
-	promptoverseH.RegisterRoutes(mux, promptoverseCreateProtected, promptoverseAddVariantProtected)
+	promptoverseMergeTagsProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.MergeTags)))
+	promptoverseH.RegisterRoutes(mux, promptoverseCreateProtected, promptoverseAddVariantProtected, promptoverseMergeTagsProtected)
 
 	// Mashup nominations -- the social layer for Prompt-o-verse (S176-27,
 	// "build out mashup nomination as a social tool"). Nominating requires

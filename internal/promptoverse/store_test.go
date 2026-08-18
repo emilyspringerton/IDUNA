@@ -108,6 +108,60 @@ func TestStore_EmptyTagsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStore_MergeTags_OverlaysWithoutClobberingExisting(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Create(Node{
+		Slug: "paimon-emo", Label: "emo", Subject: "Paimon", Kind: "surreal",
+		EZPrompt: "emo Paimon", ExpandedPrompt: "p", ImageFile: "paimon-emo.png",
+		Tags: Tags{"style": "emo", "subject": "Paimon"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := s.MergeTags("paimon-emo", Tags{"pre_annotation": "true", "annotation_subject": "Paimon"})
+	if err != nil {
+		t.Fatalf("MergeTags: %v", err)
+	}
+	if merged["style"] != "emo" || merged["subject"] != "Paimon" {
+		t.Errorf("expected existing tags preserved, got %+v", merged)
+	}
+	if merged["pre_annotation"] != "true" || merged["annotation_subject"] != "Paimon" {
+		t.Errorf("expected new tags merged in, got %+v", merged)
+	}
+
+	got, err := s.GetBySlug("paimon-emo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tags["pre_annotation"] != "true" {
+		t.Errorf("expected merge to persist, got %+v", got.Tags)
+	}
+}
+
+func TestStore_MergeTags_OverwritesCollidingKey(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Create(Node{
+		Slug: "test-node-2", Label: "L", Kind: "historical", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "x.png",
+		Tags: Tags{"note": "old"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := s.MergeTags("test-node-2", Tags{"note": "new"})
+	if err != nil {
+		t.Fatalf("MergeTags: %v", err)
+	}
+	if merged["note"] != "new" {
+		t.Errorf("expected extra to win on collision, got %+v", merged)
+	}
+}
+
+func TestStore_MergeTags_UnknownSlugErrors(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.MergeTags("does-not-exist", Tags{"a": "b"}); err == nil {
+		t.Error("expected an error for an unknown slug")
+	}
+}
+
 func TestStore_TwoSubjectsUnderSameLabel(t *testing.T) {
 	// Regression for the "style is the subcategory, subject varies within
 	// it" model: two nodes can share a Label (e.g. "Renaissance oil
