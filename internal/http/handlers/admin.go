@@ -53,6 +53,8 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/dragonsnshit/create", h.dragonsnshitCreate)
 	h.mux.HandleFunc("/admin/gm", h.gmSearch)
 	h.mux.HandleFunc("/admin/gm/", h.gmAccountAction)
+	h.mux.HandleFunc("/admin/promptoverse-queue", h.promptoverseQueue)
+	h.mux.HandleFunc("/admin/promptoverse-queue/remove", h.promptoverseQueueRemove)
 }
 
 // ServeHTTP dispatches admin routes. Mount at /admin and /admin/ with auth middleware.
@@ -484,6 +486,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/saga">SAGA</a>
   <a href="/admin/dragonsnshit/create">DragonsNShit</a>
   <a href="/admin/gm">GM Tools</a>
+  <a href="/admin/promptoverse-queue">Prompt-o-verse Queue</a>
   <span style="flex:1"></span>
   <a href="/admin/logout" style="font-size:11px;color:#888">Sign out</a>
 </nav>
