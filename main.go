@@ -279,7 +279,7 @@ func main() {
 	if promptoverseOutputDir == "" {
 		promptoverseOutputDir = "/var/www/okemily/prompt-o-verse"
 	}
-	promptoverseH := &handlers.PromptOVerseHandler{Store: promptoverseStore, Renderer: &promptoverse.Renderer{OutputDir: promptoverseOutputDir}}
+	promptoverseH := &handlers.PromptOVerseHandler{Store: promptoverseStore, Renderer: &promptoverse.Renderer{OutputDir: promptoverseOutputDir, GoogleClientID: googleClientID}}
 
 	// Status page — real health checks against the services that actually
 	// have a reachable public endpoint (see statuspage.DefaultTargets doc
@@ -406,6 +406,16 @@ func main() {
 	// Prompt-o-verse gallery -- posting requires promptoverse.write; reading is public.
 	promptoverseCreateProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.write")(http.HandlerFunc(promptoverseH.Create)))
 	promptoverseH.RegisterRoutes(mux, promptoverseCreateProtected)
+
+	// Mashup nominations -- the social layer for Prompt-o-verse (S176-27,
+	// "build out mashup nomination as a social tool"). Nominating requires
+	// only a valid logged-in user (honor-code check happens inside the
+	// handler, since it needs a store lookup middleware alone can't do);
+	// reviewing (approve/reject) requires promptoverse.mashups.review.
+	mashupNominationsH := &handlers.MashupNominationsHandler{Store: promptoverseStore, IAMStore: iamStore}
+	mashupNominationsCreateProtected := middleware.RequireAuth(keys)(http.HandlerFunc(mashupNominationsH.Create))
+	mashupNominationsReviewProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("promptoverse.mashups.review")(http.HandlerFunc(mashupNominationsH.Review)))
+	mashupNominationsH.RegisterRoutes(mux, mashupNominationsCreateProtected, mashupNominationsReviewProtected)
 
 	// Prompt-o-verse discovery page data -- style registry + GPT-2-harvested
 	// candidates + content-block dead-letter dataset, read-only, public.

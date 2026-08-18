@@ -104,6 +104,60 @@ func TestRenderer_SubjectPage_ShowsMashupsSection(t *testing.T) {
 	}
 }
 
+func TestRenderer_SubjectPage_NominationWidget_NoClientIDShowsUnavailable(t *testing.T) {
+	outDir := t.TempDir()
+	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir()}
+	nodes := []Node{
+		{Slug: "fractal-1", Label: "a", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+		{Slug: "fractal-2", Label: "b", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "b.png", PublishedAt: time.Now()},
+	}
+	if err := r.RenderAll(nodes); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "subject", "fractal", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(data)
+	if !strings.Contains(html, "not yet available") {
+		t.Errorf("expected the 'not yet available' sign-in fallback with no GoogleClientID: %s", html)
+	}
+	if strings.Contains(html, "accounts.google.com/gsi/client") {
+		t.Errorf("did not expect the GSI script tag when GoogleClientID is empty: %s", html)
+	}
+}
+
+func TestRenderer_SubjectPage_NominationWidget_WithClientIDShowsSignIn(t *testing.T) {
+	outDir := t.TempDir()
+	r := &Renderer{OutputDir: outDir, EmilyRoot: t.TempDir(), GoogleClientID: "test-client-id.apps.googleusercontent.com"}
+	nodes := []Node{
+		{Slug: "fractal-1", Label: "a", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+		{Slug: "fractal-2", Label: "b", Subject: "Fractal", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "b.png", PublishedAt: time.Now()},
+		{Slug: "raccoon-1", Label: "a", Subject: "Raccoon", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "a.png", PublishedAt: time.Now()},
+		{Slug: "raccoon-2", Label: "b", Subject: "Raccoon", Kind: "surreal", EZPrompt: "p", ExpandedPrompt: "p", ImageFile: "b.png", PublishedAt: time.Now()},
+	}
+	if err := r.RenderAll(nodes); err != nil {
+		t.Fatalf("RenderAll: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "subject", "fractal", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(data)
+	if !strings.Contains(html, "accounts.google.com/gsi/client") {
+		t.Errorf("expected the GSI script tag when GoogleClientID is set: %s", html)
+	}
+	if !strings.Contains(html, `data-google-client-id="test-client-id.apps.googleusercontent.com"`) {
+		t.Errorf("expected the client id embedded in the widget's data attribute: %s", html)
+	}
+	if !strings.Contains(html, `<option value="Raccoon">`) {
+		t.Errorf("expected Raccoon (the other subject with a page) in the autocomplete datalist: %s", html)
+	}
+	if strings.Contains(html, `<option value="Fractal">`) {
+		t.Errorf("did not expect Fractal's own page listed as a mashup partner for itself: %s", html)
+	}
+}
+
 func TestRenderer_SubjectPage_LinksRealCompoundMashup(t *testing.T) {
 	outDir := t.TempDir()
 	emilyRoot := t.TempDir()

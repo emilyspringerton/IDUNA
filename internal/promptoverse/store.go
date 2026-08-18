@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -78,6 +79,31 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE INDEX IF NOT EXISTS idx_nodes_published_at ON nodes(published_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
 CREATE INDEX IF NOT EXISTS idx_nodes_label ON nodes(label);
+
+-- mashup_nominations: "build out mashup nomination as a social tool" --
+-- a logged-in (Google OAuth via IDUNA), honor-code-accepted user proposes
+-- combining two EXISTING subjects into a new mashup subject. This is a
+-- real generation-spend request once approved, so nominations sit pending
+-- until an EINHORN_INDUSTRIAL admin reviews them -- matches the founder's
+-- own rule ("all promotion approvals run through admins before hitting
+-- the gen pipeline until we have revenue from promptoverse"). Approval
+-- itself does NOT auto-trigger generation -- an admin still runs the
+-- existing 'emily promptoverse promote-subject' command by hand, same as
+-- any other subject promotion; this table only tracks the social layer
+-- (who asked for what, and whether it's been reviewed).
+CREATE TABLE IF NOT EXISTS mashup_nominations (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	subject_a       TEXT     NOT NULL,
+	subject_b       TEXT     NOT NULL,
+	nominated_by    TEXT     NOT NULL,
+	status          TEXT     NOT NULL DEFAULT 'pending',
+	reviewed_by     TEXT     NOT NULL DEFAULT '',
+	reviewed_at     DATETIME,
+	created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(subject_a, subject_b, nominated_by)
+);
+CREATE INDEX IF NOT EXISTS idx_nominations_status ON mashup_nominations(status);
+CREATE INDEX IF NOT EXISTS idx_nominations_nominated_by ON mashup_nominations(nominated_by);
 `
 
 func Open(path string) (*Store, error) {
@@ -137,6 +163,137 @@ func (s *Store) List() ([]Node, error) {
 func (s *Store) GetBySlug(slug string) (Node, error) {
 	row := s.db.QueryRow(`SELECT id, slug, label, subject, kind, ez_prompt, expanded_prompt, image_file, tags_json, published_at, created_at FROM nodes WHERE slug = ?`, slug)
 	return scanNode(row)
+}
+
+// DistinctSubjects returns every distinct non-empty Subject that has at
+// least 2 published nodes -- the same >=2 threshold render.go's
+// renderSubjectPages already uses for "has a real page." Nominations are
+// only accepted between subjects that actually have a page to combine.
+func (s *Store) DistinctSubjects() ([]string, error) {
+	rows, err := s.db.Query(`SELECT subject FROM nodes WHERE subject != '' GROUP BY subject HAVING COUNT(*) >= 2 ORDER BY subject`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var subjects []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		subjects = append(subjects, s)
+	}
+	return subjects, rows.Err()
+}
+
+// MashupNomination is a user's proposal to combine two existing subjects
+// into a new mashup subject -- see the mashup_nominations schema comment
+// for the full design rationale.
+type MashupNomination struct {
+	ID          int64
+	SubjectA    string
+	SubjectB    string
+	NominatedBy string
+	Status      string // "pending" | "approved" | "rejected"
+	ReviewedBy  string
+	ReviewedAt  *time.Time
+	CreatedAt   time.Time
+}
+
+const maxPendingNominationsPerUser = 5
+
+// CreateMashupNomination inserts a pending nomination. Returns a distinct
+// sentinel error if the user already has too many pending nominations
+// (abuse/spam guard, per the open question flagged when S176-27 was
+// originally scoped) or already nominated this exact pair (UNIQUE
+// constraint on subject_a, subject_b, nominated_by).
+var (
+	ErrTooManyPendingNominations = fmt.Errorf("too many pending nominations")
+	ErrDuplicateNomination       = fmt.Errorf("already nominated this pair")
+)
+
+func (s *Store) CreateMashupNomination(subjectA, subjectB, nominatedBy string) (int64, error) {
+	var pending int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM mashup_nominations WHERE nominated_by = ? AND status = 'pending'`,
+		nominatedBy,
+	).Scan(&pending); err != nil {
+		return 0, err
+	}
+	if pending >= maxPendingNominationsPerUser {
+		return 0, ErrTooManyPendingNominations
+	}
+
+	res, err := s.db.Exec(
+		`INSERT INTO mashup_nominations (subject_a, subject_b, nominated_by, status) VALUES (?, ?, ?, 'pending')`,
+		subjectA, subjectB, nominatedBy,
+	)
+	if err != nil {
+		if isUniqueConstraintErr(err) {
+			return 0, ErrDuplicateNomination
+		}
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListMashupNominations returns nominations, most recent first, optionally
+// filtered by status ("" means all).
+func (s *Store) ListMashupNominations(status string) ([]MashupNomination, error) {
+	query := `SELECT id, subject_a, subject_b, nominated_by, status, reviewed_by, reviewed_at, created_at FROM mashup_nominations`
+	args := []any{}
+	if status != "" {
+		query += ` WHERE status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []MashupNomination
+	for rows.Next() {
+		var n MashupNomination
+		var reviewedAt sql.NullTime
+		if err := rows.Scan(&n.ID, &n.SubjectA, &n.SubjectB, &n.NominatedBy, &n.Status, &n.ReviewedBy, &reviewedAt, &n.CreatedAt); err != nil {
+			return nil, err
+		}
+		if reviewedAt.Valid {
+			t := reviewedAt.Time
+			n.ReviewedAt = &t
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// ReviewMashupNomination sets a pending nomination's status to "approved"
+// or "rejected" and records who reviewed it. Returns sql.ErrNoRows if the
+// nomination doesn't exist or isn't currently pending (an admin can't
+// re-review something already decided).
+func (s *Store) ReviewMashupNomination(id int64, status, reviewedBy string) error {
+	res, err := s.db.Exec(
+		`UPDATE mashup_nominations SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'`,
+		status, reviewedBy, time.Now().UTC(), id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func isUniqueConstraintErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 type scannable interface {

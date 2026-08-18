@@ -28,6 +28,14 @@ type Renderer struct {
 	// shared location on the same box" pattern as
 	// handlers.DiscoveryHandler.
 	EmilyRoot string
+	// GoogleClientID enables the mashup-nomination widget's "Sign in with
+	// Google" button (Google Identity Services client-side flow, POSTs the
+	// resulting id_token to /api/v1/auth/google -- no server-side OAuth
+	// redirect/callback URL needed, so no gate.farthq.com DNS dependency).
+	// Left empty until a real OAuth Client ID exists (Google Cloud Console,
+	// human action -- see EMILY/BACKLOG.md S176-34); the widget renders a
+	// "not yet available" state instead of a broken button when empty.
+	GoogleClientID string
 }
 
 func (r *Renderer) emilyRoot() string {
@@ -393,6 +401,13 @@ const subjectTemplate = `<!DOCTYPE html>
   .mashups ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; }
   .mashups a { display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--text-soft); text-decoration: none; font-size: 0.85rem; }
   .mashups a:hover { color: var(--accent); border-color: var(--accent); }
+  .nominate { margin-top: 2.6rem; padding: 1.4rem 1.6rem; background: var(--panel-bg); border: 1px solid var(--rule); border-radius: 10px; }
+  .nominate h2 { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-whisper); margin: 0 0 0.9rem; }
+  .nominate input[type=text] { width: 100%; max-width: 340px; padding: 0.55rem 0.7rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--bg); color: var(--text-main); font-size: 0.9rem; }
+  .nominate button { margin-left: 0.6rem; padding: 0.55rem 1rem; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 0.9rem; cursor: pointer; }
+  .nominate button:disabled { opacity: 0.5; cursor: default; }
+  .nominate .status { margin-top: 0.7rem; font-size: 0.82rem; color: var(--text-soft); }
+  .nominate .g-signin { margin-bottom: 0.9rem; }
 </style>
 </head>
 <body>
@@ -421,8 +436,94 @@ const subjectTemplate = `<!DOCTYPE html>
       {{end}}
     </ul>
   </section>{{end}}
+  <section class="nominate" id="nominate-root" data-subject="{{.Subject}}" data-google-client-id="{{.GoogleClientID}}">
+    <h2>Nominate a mashup</h2>
+    <div id="nominate-signin"></div>
+    <div id="nominate-form" style="display:none">
+      <input type="text" id="nominate-partner" list="subject-options" placeholder="Combine {{.Subject}} with&hellip;">
+      <datalist id="subject-options">
+        {{range .OtherSubjects}}<option value="{{.}}">{{end}}
+      </datalist>
+      <button id="nominate-submit">Nominate</button>
+    </div>
+    <p class="status" id="nominate-status"></p>
+  </section>
   <nav class="back"><a href="/prompt-o-verse/">&larr; All nodes</a></nav>
 </div>
+{{if .GoogleClientID}}<script src="https://accounts.google.com/gsi/client" async defer></script>{{end}}
+<script>
+(function () {
+  var root = document.getElementById('nominate-root');
+  var subject = root.getAttribute('data-subject');
+  var clientId = root.getAttribute('data-google-client-id');
+  var signinEl = document.getElementById('nominate-signin');
+  var formEl = document.getElementById('nominate-form');
+  var statusEl = document.getElementById('nominate-status');
+  var TOKEN_KEY = 'promptoverse_access_token';
+
+  function setStatus(msg) { statusEl.textContent = msg; }
+
+  function showForm() {
+    signinEl.style.display = 'none';
+    formEl.style.display = 'block';
+  }
+
+  function handleCredential(response) {
+    setStatus('Signing in…');
+    fetch('/api/v1/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: response.credential })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data.access_token) { setStatus('Sign-in failed.'); return; }
+        localStorage.setItem(TOKEN_KEY, data.access_token);
+        setStatus('Signed in.');
+        showForm();
+      })
+      .catch(function () { setStatus('Sign-in failed.'); });
+  }
+  window.__promptoverseHandleCredential = handleCredential;
+
+  if (!clientId) {
+    signinEl.innerHTML = '<p class="status">Mashup nominations need an account &mdash; sign-in is not yet available on this box.</p>';
+  } else if (localStorage.getItem(TOKEN_KEY)) {
+    showForm();
+  } else {
+    signinEl.innerHTML = '<div class="g-signin" id="g_id_signin"></div>';
+    var tryInit = function () {
+      if (!window.google || !window.google.accounts) { setTimeout(tryInit, 200); return; }
+      window.google.accounts.id.initialize({ client_id: clientId, callback: handleCredential });
+      window.google.accounts.id.renderButton(document.getElementById('g_id_signin'), { theme: 'outline', size: 'medium' });
+    };
+    tryInit();
+  }
+
+  document.getElementById('nominate-submit').addEventListener('click', function () {
+    var partner = document.getElementById('nominate-partner').value.trim();
+    if (!partner) { setStatus('Pick a subject to combine with first.'); return; }
+    var token = localStorage.getItem(TOKEN_KEY);
+    if (!token) { setStatus('Please sign in first.'); return; }
+    setStatus('Nominating…');
+    fetch('/api/v1/promptoverse/mashup-nominations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ subject_a: subject, subject_b: partner })
+    })
+      .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (result) {
+        if (result.ok) {
+          setStatus('Nominated ' + subject + ' × ' + partner + ' — pending review.');
+          document.getElementById('nominate-partner').value = '';
+        } else {
+          setStatus(result.data.error || result.data.message || 'Could not submit that nomination.');
+        }
+      })
+      .catch(function () { setStatus('Could not submit that nomination.'); });
+  });
+})();
+</script>
 </body>
 </html>
 `
@@ -547,10 +648,12 @@ type mashupLinkView struct {
 }
 
 type subjectPageView struct {
-	Subject string
-	Count   int
-	Nodes   []nodeView
-	Mashups []mashupLinkView
+	Subject        string
+	Count          int
+	Nodes          []nodeView
+	Mashups        []mashupLinkView
+	GoogleClientID string   // "" disables the nomination widget's sign-in button
+	OtherSubjects  []string // every other subject with a page, for the autocomplete list
 }
 
 type stylePageView struct {
@@ -766,11 +869,19 @@ func (r *Renderer) renderSubjectPages(nodes []Node, subjectCounts map[string]int
 		if err != nil {
 			return err
 		}
+		otherSubjects := make([]string, 0, len(order)-1)
+		for _, s := range order {
+			if s != subject {
+				otherSubjects = append(otherSubjects, s)
+			}
+		}
 		view := subjectPageView{
-			Subject: subject,
-			Count:   len(bySubject[subject]),
-			Nodes:   bySubject[subject],
-			Mashups: buildMashupLinks(crossLinks[subject], hasPage, "/prompt-o-verse/subject/"),
+			Subject:        subject,
+			Count:          len(bySubject[subject]),
+			Nodes:          bySubject[subject],
+			Mashups:        buildMashupLinks(crossLinks[subject], hasPage, "/prompt-o-verse/subject/"),
+			GoogleClientID: r.GoogleClientID,
+			OtherSubjects:  otherSubjects,
 		}
 		err = tmpl.Execute(f, view)
 		f.Close()
