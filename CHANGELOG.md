@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-18
+- Added Store.MergeTags + PATCH /api/v1/promptoverse/nodes/{slug}/tags for backfilling node metadata (sess-20260813-2154-dda37e8b)
 - Added /admin/promptoverse-queue Back Office page for fixing/queuing Prompt-o-verse generation queue entries without CLI access (sess-20260813-2154-dda37e8b)
 - Auth strip now proactively refreshes its token via IDUNA's existing /api/v1/auth/refresh, plus retries once on a real 401 (sess-20260813-2154-dda37e8b)
 - New cards/sections stagger in with a jittered fade-in instead of snapping in synchronously (sess-20260813-2154-dda37e8b)
