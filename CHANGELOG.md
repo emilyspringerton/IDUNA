@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-20
+
+- Sign every filed Apple with anchor + snowman (⚓ ☃), enforced server-side at POST /api/v1/apples (signAppleBody) per founder standing order (sess-20260820-0649-a3f19d93)
+
+
 ## 2026-08-18
 - Added Store.MergeTags + PATCH /api/v1/promptoverse/nodes/{slug}/tags for backfilling node metadata (sess-20260813-2154-dda37e8b)
 - Added /admin/promptoverse-queue Back Office page for fixing/queuing Prompt-o-verse generation queue entries without CLI access (sess-20260813-2154-dda37e8b)
