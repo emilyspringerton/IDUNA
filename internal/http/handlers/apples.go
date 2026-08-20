@@ -176,6 +176,23 @@ func (h *ApplesHandler) enrich(w http.ResponseWriter, r *http.Request, id int64)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "enriched": true})
 }
 
+// appleSignature is appended to every Apple's body at the single POST /api/v1/apples
+// choke point (rather than in each of emily.cli/emily-agent/obs-watcher/emily observe/
+// emily changelog add) so it's guaranteed on every Apple regardless of which caller filed
+// it — same lesson as the 2026-08-10 session-tag audit (don't rely on independent callers
+// remembering, enforce at the shared point every path already funnels through). Founder
+// real-time standing order, 2026-08-20.
+const appleSignature = "⚓ ☃"
+
+// signAppleBody appends appleSignature to body if not already present (idempotent —
+// PATCH-driven re-syncs to git call syncAppleToGit with an already-signed body).
+func signAppleBody(body string) string {
+	if strings.Contains(body, appleSignature) {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + "\n\n" + appleSignature
+}
+
 // POST /api/v1/apples
 func (h *ApplesHandler) create(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
@@ -225,7 +242,7 @@ func (h *ApplesHandler) create(w http.ResponseWriter, r *http.Request) {
 		RunID:      body.RunID,
 		AppleType:  body.AppleType,
 		Title:      body.Title,
-		Body:       body.Body,
+		Body:       signAppleBody(body.Body),
 		Metadata:   []byte(body.Metadata),
 	}
 	id, err := h.Store.AppendApple(r.Context(), apple)
