@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-25
+- Migrated EDDY admin credential (Back Office iduna.admin secret) from plaintext ~/.ssh/iduna-admin-eddy.txt into IDUNA Vault as api_key item #1; plaintext file deleted. (sess-20260825-0828-cc32a704)
 
 - S191-02: admin session sliding-expiration refresh — fixes silent hard-cutoff logout on the 8h admin cookie (founder-reported 'logged out when i shouldnt be'), reissues on activity once past half the TTL. Apple #15775. (sess-20260825-0828-cc32a704)
 
