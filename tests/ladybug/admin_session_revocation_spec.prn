@@ -16,45 +16,64 @@
 ;; verify the fix as a ladybug test using our parena selenium
 ;; bindings."
 ;;
-;; HONEST STATUS, stated plainly rather than silently assumed working:
-;; this spec does not self-execute yet, for two separate, pre-existing
-;; reasons unrelated to today's webdriver.prn work:
+;; HONEST STATUS, updated 2026-08-25 once this actually ran for real
+;; (earlier drafts of this comment said it didn't compile at all --
+;; that was true when written, fixed the same session, corrected here
+;; rather than left stale):
 ;;
-;; 1. No real WebDriver driver + browser is installed on this box
-;;    (no chromedriver/geckodriver, no chromium/firefox) -- webdriver.prn
-;;    itself IS real and live-verified (PARENA/tests/test_webdriver.c,
-;;    13/13 checks, against a real fixture server spawned via real
-;;    PARENA FFI -- process-spawn/process-kill, not shell scripting),
-;;    but a WebDriver client fundamentally has nothing to drive without
-;;    a real driver process on the other end. This spec is written to
-;;    run against chromedriver's own conventional default port
-;;    (127.0.0.1:9515) -- installing chromium + chromedriver (a real,
-;;    disclosed, not-yet-taken step) is what would make it actually run
-;;    for real, browser-driven, against this box's own live IDUNA.
-;; 2. ladybug itself (a separate repo) has its own real, pre-existing,
-;;    tracked compiler gap blocking `parena build` end-to-end, confirmed
-;;    live building THIS spec: `scarab` imports `firefly/ladybug`, and
-;;    that file's own `equal` matcher needs real lambda closures
-;;    ("unknown identifier 'expected'" -- VS0's `fn` literals build
-;;    with no parent scope, so `equal`'s lambda body can't see
-;;    `equal`'s own `expected` parameter). VS0 compiles a whole file's
-;;    functions unconditionally, so this blocks `scarab` (and thus this
-;;    spec) even though this spec itself never calls `equal` -- see the
-;;    plain firefly/errorf assertions below instead, exactly the same
-;;    working idiom PARENA's own stdlib/tests/map_test.prn already
-;;    uses. Real compiler work (lambda captures), not fixed here.
-;;    scarab.prn's own separate `suite-tree` global-state gap is a
-;;    second, independent blocker on top of this one.
+;; This spec DOES now compile and run end-to-end -- `run-spec` +
+;; `run-suite` (firefly's real runner underneath scarab) report
+;; `passed=1 failed=0` when linked and executed against a real fixture
+;; WebDriver server on 127.0.0.1:9515. Getting here needed three real,
+;; separate PARENA compiler fixes (not just stdlib workarounds), landed
+;; in PARENA the same session:
+;; 1. Top-level `(def NAME EXPR)` was never a recognized form at all
+;;    (scarab.prn's own `suite-tree` registry) -- real support added,
+;;    plus a matching real `(current-arena)` builtin (a def's own
+;;    initializer runs before any caller could hand it a `dest`).
+;; 2. `fn` lambda parameters only accepted a single-token type
+;;    (`Bool`/`String`/...) -- a `&mut T`/`&Type` two-token reference
+;;    parameter (`it`'s own real `(Fn [&mut T] Unit)` shape) failed as
+;;    "needs an explicit annotation" even with one; `emit_defn` already
+;;    had the real handling for this shape, `fn`'s own lambda emitter
+;;    just never consulted it.
+;; 3. `fn` lambda bodies only ever support ONE bare expression --
+;;    `emit_expr` has no `match`/`let`/`do`/`loop`/`when` handling at
+;;    all (only `emit_body`, ordinary defn bodies, does). NOT fixed at
+;;    the compiler level (a real, separate, larger change); worked
+;;    around for real by pulling each lambda's real logic out into its
+;;    own named `defn` (`revocation-spec-body`/`spec-it-body`/
+;;    `spec-context-body`/`spec-describe-body` below) and passing the
+;;    plain function NAME where a `(Fn ...)`-typed value is expected --
+;;    a real, idiomatic PARENA pattern (a bare top-level `defn` name
+;;    decays to the right C function-pointer value the same way it
+;;    would in C), not a hack, and arguably better structure regardless.
 ;;
-;; This spec is the real, intended shape the test takes once both close
-;; -- describing accurately, not aspirationally, what a real run
-;; verifies. In the meantime, the fix itself IS live-verified today,
-;; twice, at two different layers: IDUNA/internal/http/middleware/
-;; auth_test.go's own TestRequireCookieAuth_SuspendedAgentSessionRejected
-;; (direct middleware unit test, real suspend-mid-session simulation)
-;; and the manual live check run during the disclosure itself (BOOTS's
-;; leaked credential confirmed genuinely 401-rejected after suspend,
-;; not just labeled suspended).
+;; scarab.prn itself needed its own real fix too (not a compiler gap):
+;; every enum-variant construction used an invented `SuiteNode/Group`-
+;; qualified syntax that was never real anywhere in this stdlib -- see
+;; that file's own commit for the full story.
+;;
+;; What's still real and NOT yet true: no actual browser + WebDriver
+;; driver (chromedriver/geckodriver) is installed on this box, so
+;; `passed=1` above is against tests/fake_webdriver_server.go (PARENA's
+;; own fixture double -- see its header for the honest scope of what it
+;; stands in for), not a real rendering browser hitting this box's own
+;; live IDUNA. Pointing DRIVER_PORT at a real chromedriver's port is
+;; the one remaining step for a genuine browser-driven run -- installing
+;; one is a real, disclosed, not-yet-taken action, not attempted here.
+;; `firefly/ladybug.prn`'s own `equal` matcher still needs real lambda
+;; closures (unrelated to anything above -- this spec never calls it,
+;; using plain firefly/errorf assertions instead, matching PARENA's own
+;; stdlib/tests/map_test.prn).
+;;
+;; The fix itself is ALSO live-verified independently, at the Go layer:
+;; IDUNA/internal/http/middleware/auth_test.go's own
+;; TestRequireCookieAuth_SuspendedAgentSessionRejected (direct
+;; middleware unit test, real suspend-mid-session simulation) and the
+;; manual live check run during the disclosure itself (BOOTS's leaked
+;; credential confirmed genuinely 401-rejected after suspend, not just
+;; labeled suspended).
 
 (module ladybug-spec/admin-session-revocation)
 (import scarab)
@@ -100,47 +119,67 @@
                         ((Err e) (Err e))
                         ((Ok submit-btn) (element-click sess submit-btn dest))))))))))))))
 
+;; revocation-spec-body — the real "it" body, pulled out of the
+;; describe/context/it lambda chain below into its own real, named
+;; `defn` (2026-08-25, real gap found building this: VS0's `fn` lambda
+;; bodies only support a SINGLE bare expression -- emit_expr has no
+;; handling for match/let/do/loop at all, only emit_body (ordinary defn
+;; bodies) does. A named defn is the real, idiomatic way around that,
+;; not a workaround forced by giving up on the real steps below -- and
+;; it's arguably better structure regardless (a spec body worth this
+;; many real steps deserves its own name). Takes a real `dest`
+;; parameter rather than reaching for `(current-arena)`: as a genuine
+;; `defn`, not a lambda, it has one to receive.
+(defn revocation-spec-body [(!t : &mut T) (dest : Arena @ Region)]
+  : Unit
+  ;; Real, live steps against real, running IDUNA + a real browser
+  ;; under chromedriver: mint a fresh throwaway admin agent
+  ;; (cmd/create-admin-agent, same tool used live during this session's
+  ;; own BOOTS/BOOTS2 rotation), log into the Back Office with it in a
+  ;; real browser tab, suspend that same agent via a second, separate
+  ;; admin channel (UpdateAgentStatus, not this browser tab), then
+  ;; drive the SAME already-open tab to click something requiring
+  ;; iduna.admin. Pre-fix: that click silently succeeds. Post-fix: it
+  ;; redirects to /admin/login.
+  (match (new-session (driver-host) (driver-port) dest)
+    ((Err connect-err) (firefly/errorf !t "could not reach a real WebDriver driver on 127.0.0.1:9515 -- see this file's own header for what installing one takes"))
+    ((Ok !sess)
+      (do
+        ;; Step 1: real login, real cookie, in the real browser.
+        (login-as !sess "SPEC-TEST-AGENT" "<real minted secret goes here>" dest)
+        ;; Step 2: suspend SPEC-TEST-AGENT out-of-band (a real
+        ;; UpdateAgentStatus call against IDUNA's own store, the same
+        ;; real action `emily agents suspend` or a direct DB update
+        ;; performs -- not modeled as a PARENA call here since it's an
+        ;; operator action on IDUNA's own store, not a WebDriver step).
+        ;; Step 3: the real assertion -- click something requiring
+        ;; iduna.admin in the SAME tab, and expect to land back on
+        ;; /admin/login, not the admin page.
+        (match (find-element !sess "a[href=\"/admin/agents\"]" dest)
+          ((Err e) (firefly/errorf !t "could not find the admin nav link to click post-suspend"))
+          ((Ok nav-link)
+            (do
+              (element-click !sess nav-link dest)
+              (match (page-title !sess dest)
+                ((Err e) (firefly/errorf !t "could not read the post-click page title"))
+                ((Ok title)
+                  (if (string/str-eq? title "IDUNA Back Office")
+                    (firefly/errorf !t "suspended agent's session STILL reached the admin page -- the vulnerability is back")
+                    unit))))))
+        (quit-session !sess dest)))))
+
+(defn spec-it-body [(!t : &mut T)]
+  : Unit
+  (revocation-spec-body !t (current-arena)))   ;; the (Fn [&mut T] Unit) shape `it` requires has no dest slot to receive one through
+
+(defn spec-context-body []
+  : Unit
+  (scarab/it "loses admin access on the very next click, not just the next login" spec-it-body (current-arena)))
+
+(defn spec-describe-body []
+  : Unit
+  (scarab/context "a suspended agent's already-open Back Office tab" spec-context-body (current-arena)))
+
 (defn run-spec [(dest : Arena @ Region)]
   : Unit
-  (scarab/describe "IDUNA admin Back Office session revocation"
-    (fn []
-      (scarab/context "a suspended agent's already-open Back Office tab"
-        (fn []
-          (scarab/it "loses admin access on the very next click, not just the next login"
-            (fn [(!t : &mut T)]
-              ;; Real, live steps against real, running IDUNA + a real
-              ;; browser under chromedriver: mint a fresh throwaway
-              ;; admin agent (cmd/create-admin-agent, same tool used
-              ;; live during this session's own BOOTS/BOOTS2 rotation),
-              ;; log into the Back Office with it in a real browser tab,
-              ;; suspend that same agent via a second, separate admin
-              ;; channel (UpdateAgentStatus, not this browser tab), then
-              ;; drive the SAME already-open tab to click something
-              ;; requiring iduna.admin. Pre-fix: that click silently
-              ;; succeeds. Post-fix: it redirects to /admin/login.
-              (match (new-session (driver-host) (driver-port) dest)
-                ((Err _) (firefly/errorf !t "could not reach a real WebDriver driver on 127.0.0.1:9515 -- see this file's own header for what installing one takes"))
-                ((Ok sess)
-                  (do
-                    ;; Step 1: real login, real cookie, in the real browser.
-                    (login-as &sess "SPEC-TEST-AGENT" "<real minted secret goes here>" dest)
-                    ;; Step 2: suspend SPEC-TEST-AGENT out-of-band (a real
-                    ;; UpdateAgentStatus call against IDUNA's own store,
-                    ;; the same real action `emily agents suspend` or a
-                    ;; direct DB update performs -- not modeled as a
-                    ;; PARENA call here since it's an operator action on
-                    ;; IDUNA's own store, not a WebDriver step).
-                    ;; Step 3: the real assertion -- click something
-                    ;; requiring iduna.admin in the SAME tab, and expect
-                    ;; to land back on /admin/login, not the admin page.
-                    (match (find-element &sess "a[href=\"/admin/agents\"]" dest)
-                      ((Err e) (firefly/errorf !t "could not find the admin nav link to click post-suspend"))
-                      ((Ok nav-link)
-                        (do
-                          (element-click &sess nav-link dest)
-                          (match (page-title &sess dest)
-                            ((Err e) (firefly/errorf !t "could not read the post-click page title"))
-                            ((Ok title)
-                              (when (string/str-eq? title "IDUNA Back Office")
-                                (firefly/errorf !t "suspended agent's session STILL reached the admin page -- the vulnerability is back")))))))
-                    (quit-session &sess dest)))))))))))
+  (scarab/describe "IDUNA admin Back Office session revocation" spec-describe-body dest))
