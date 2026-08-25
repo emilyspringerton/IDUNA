@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"iduna/internal/auth/jwt"
 )
@@ -37,7 +38,14 @@ func RequireAuth(keys *jwt.Keys) func(http.Handler) http.Handler {
 
 // RequireCookieAuth is like RequireAuth but also accepts an iduna_session cookie.
 // When auth fails for a browser request (Accept: text/html), it redirects to loginURL.
-func RequireCookieAuth(keys *jwt.Keys, loginURL string) func(http.Handler) http.Handler {
+//
+// sessionTTL enables sliding-expiration refresh: once less than half of sessionTTL
+// remains before the cookie's JWT expires, a fresh cookie with a new full-TTL expiry
+// is issued transparently on the response. Without this, a still-active admin session
+// hits a silent hard cutoff at exactly sessionTTL after login — the next click just
+// bounces to the login page with no explanation, which reads as an unexplained/
+// "unexpected" logout during a long working session. Pass 0 to disable refresh.
+func RequireCookieAuth(keys *jwt.Keys, loginURL string, sessionTTL time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerOrCookie(r)
@@ -50,10 +58,51 @@ func RequireCookieAuth(keys *jwt.Keys, loginURL string) func(http.Handler) http.
 				redirectOrJSON(w, r, loginURL)
 				return
 			}
+			if sessionTTL > 0 {
+				refreshCookieIfStale(w, keys, claims, sessionTTL)
+			}
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// refreshCookieIfStale re-signs claims with a fresh sessionTTL expiry and sets a new
+// iduna_session cookie when less than half of sessionTTL remains on the current token.
+// Silently no-ops on any error — a failed refresh just means the original cookie's own
+// (still-valid) expiry applies, never a hard failure for the request in flight.
+func refreshCookieIfStale(w http.ResponseWriter, keys *jwt.Keys, claims map[string]any, sessionTTL time.Duration) {
+	exp, ok := claims["exp"]
+	if !ok {
+		return
+	}
+	var expUnix int64
+	switch v := exp.(type) {
+	case float64:
+		expUnix = int64(v)
+	case int64:
+		expUnix = v
+	default:
+		return
+	}
+	remaining := time.Until(time.Unix(expUnix, 0))
+	if remaining <= 0 || remaining > sessionTTL/2 {
+		return
+	}
+	newExp := time.Now().UTC().Add(sessionTTL)
+	claims["exp"] = newExp.Unix()
+	token, err := jwt.Sign(keys, claims)
+	if err != nil {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "iduna_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(sessionTTL.Seconds()),
+	})
 }
 
 func bearerOrCookie(r *http.Request) string {

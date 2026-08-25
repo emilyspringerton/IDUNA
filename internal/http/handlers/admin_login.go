@@ -11,6 +11,10 @@ import (
 	"iduna/internal/store"
 )
 
+// AdminSessionTTL is the admin session cookie/JWT lifetime. Shared with
+// middleware.RequireCookieAuth's sliding-refresh window so the two stay in sync.
+const AdminSessionTTL = 8 * time.Hour
+
 // AdminLoginHandler serves /admin/login (GET + POST) and /admin/logout.
 // These routes are public (no auth middleware) so the browser can reach them.
 type AdminLoginHandler struct {
@@ -77,7 +81,7 @@ func (h *AdminLoginHandler) login(w http.ResponseWriter, r *http.Request) {
 	if issuer == "" {
 		issuer = "https://iam.farthq.internal"
 	}
-	exp := time.Now().UTC().Add(8 * time.Hour)
+	exp := time.Now().UTC().Add(AdminSessionTTL)
 	claims := map[string]any{
 		"sub":         agent.ID,
 		"agent_name":  agent.Name,
@@ -99,7 +103,7 @@ func (h *AdminLoginHandler) login(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   8 * 3600,
+		MaxAge:   int(AdminSessionTTL.Seconds()),
 	})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }

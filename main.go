@@ -431,7 +431,7 @@ func main() {
 	mux.Handle("/admin/logout", adminLoginH)
 
 	// Admin UI — requires iduna.admin permission; cookie auth for browser navigation.
-	adminProtected := middleware.RequireCookieAuth(keys, "/admin/login")(middleware.RequirePermission("iduna.admin")(adminH))
+	adminProtected := middleware.RequireCookieAuth(keys, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(adminH))
 	mux.Handle("/admin", adminProtected)
 	mux.Handle("/admin/", adminProtected)
 
