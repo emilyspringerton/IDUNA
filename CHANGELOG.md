@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-25
+- SECURITY FIX: suspended agent's live Back Office session is now actually revoked -- RequireCookieAuth re-checks live agent status+permissions every request, not just at login. Apple #15908. (sess-20260825-0828-cc32a704)
 - Drive slurp feature (S187-03/S188-05/S189-10): OAuth-based Back Office Drive browse+slurp, background job queue with idempotency, SSE progress (sess-20260825-0828-cc32a704)
 - Migrated EDDY admin credential (Back Office iduna.admin secret) from plaintext ~/.ssh/iduna-admin-eddy.txt into IDUNA Vault as api_key item #1; plaintext file deleted. (sess-20260825-0828-cc32a704)
 
