@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-25
+- New developer notebook portal: GET /portal/login (Google SSO) + GET /portal (gated by new devportal.access permission, granted to nobody by default) -- lists Jupyter and SARENA_NOTEBOOK, both not-yet-available (Apple #15924) (sess-20260825-0828-cc32a704)
 - Fix: RequireCookieAuth no longer treats human Google-login cookie sessions as agent sessions during the live-status recheck (was bouncing every human session to login) (sess-20260825-0828-cc32a704)
 - GoogleAuthHandler sets HttpOnly iduna_session cookie on login; RefreshHandler accepts/refreshes it -- auth foundation for the planned Jupyter/SARENA notebook portal (Apple #15918) (sess-20260825-0828-cc32a704)
 - The ladybug admin-session-revocation regression spec now actually compiles, links, and runs (passed=1 failed=0) against a real fixture WebDriver server. Apple #15914. (sess-20260825-0828-cc32a704)
