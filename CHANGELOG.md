@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-25
+
+- S191-02: admin session sliding-expiration refresh — fixes silent hard-cutoff logout on the 8h admin cookie (founder-reported 'logged out when i shouldnt be'), reissues on activity once past half the TTL. Apple #15775. (sess-20260825-0828-cc32a704)
+
+
 ## 2026-08-20
 
 - Sign every filed Apple with anchor + snowman (⚓ ☃), enforced server-side at POST /api/v1/apples (signAppleBody) per founder standing order (sess-20260820-0649-a3f19d93)
