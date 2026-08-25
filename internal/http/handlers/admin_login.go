@@ -125,39 +125,112 @@ func renderLoginPage(w http.ResponseWriter, data map[string]any) {
 	}
 }
 
+// adminLoginPageTmpl -- restyled 2026-08-25 to the real IDUNA style guide
+// (IDUNA/index.html + IDUNA/styles.css: cream/gold ceremony aesthetic,
+// Cormorant Garamond over Spectral), matching the notebook portal's own
+// login page (portal.go's portalLoginTmpl) so the two agent/human login
+// surfaces read as one system rather than two unrelated designs. Founder:
+// "update iduna back office login page similar to your last login page
+// redesign use promptoverse assets." Art is real Prompt-o-verse gallery
+// output (eye-of-providence-robot -- an oversight/authority motif, fitting
+// an admin surface), served as a real static file (main.go's
+// /portal/images/ route). Designed via /design first (canvas "IDUNA Back
+// Office Login"), then ported here so the live page matches.
 var adminLoginPageTmpl = template.Must(template.New("admin-login").Parse(`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Admin Login — IDUNA Back Office</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Spectral:wght@400;500&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:"Georgia","Times New Roman",serif;background:#f5f2ee;color:#1a1a1a;display:flex;min-height:100vh;align-items:center;justify-content:center;font-size:14px}
-.frame{width:min(420px,100%);padding:2rem 2.5rem;border:1px solid #c0b8b0;background:#fff}
-h1{font-size:20px;font-weight:normal;margin-bottom:4px;letter-spacing:.02em}
-.sub{font-size:12px;color:#888;margin-bottom:24px;line-height:1.5}
-label{display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#666;margin-bottom:5px;margin-top:18px}
-input[type=text],input[type=password]{width:100%;padding:8px 10px;border:1px solid #bbb;font-size:13px;font-family:inherit;background:#fafafa}
-input[type=text]:focus,input[type=password]:focus{outline:1px solid #999;background:#fff}
-input[type=submit]{margin-top:22px;width:100%;padding:10px;background:#1a1a1a;color:#fff;border:none;font-size:13px;cursor:pointer;font-family:inherit;letter-spacing:.05em;text-transform:uppercase}
-input[type=submit]:hover{background:#333}
-.err{background:#f8d7da;color:#7a1a1a;padding:10px;font-size:12px;margin-bottom:16px;border-left:3px solid #c0392b}
+  :root {
+    --bg: #f4f1ea; --bg-soft: #ede7dc; --panel: #ebe4d8; --line-soft: #d2c7b8;
+    --gold: #c6a75e; --gold-soft: #bfa062; --gold-highlight: #d6bc7a;
+    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093; --rose: #b76e79;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at top, color-mix(in srgb, var(--bg) 84%, #fff 16%), var(--bg-soft));
+    color: var(--text-main); font-family: "Spectral", Georgia, serif; line-height: 1.45;
+  }
+  a { color: var(--gold-soft); }
+  a:hover { color: var(--gold-highlight); }
+  .shell { min-height: 100vh; display: grid; place-items: center; padding: 3.5rem 1.5rem; }
+  .frame {
+    width: min(460px, 100%);
+    border: 1px solid color-mix(in srgb, var(--gold) 60%, var(--line-soft) 40%);
+    border-radius: 8px; background: color-mix(in srgb, var(--panel) 92%, white 8%);
+    overflow: hidden;
+  }
+  .art { position: relative; height: 210px; overflow: hidden; }
+  .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .art::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(to bottom, rgba(20,18,14,0.05) 0%, color-mix(in srgb, var(--panel) 92%, white 8%) 96%);
+  }
+  .body { padding: 0 2.1rem 2.3rem; text-align: center; }
+  .label { letter-spacing: 0.35em; text-transform: uppercase; font-size: 0.66rem; color: var(--text-muted); margin-top: -1.4rem; position: relative; }
+  h1 { margin: 0.7rem 0 0; font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 2.05rem; letter-spacing: 0.01em; }
+  .sub { margin: 0.6rem 0 0; color: var(--text-muted); font-size: 0.9rem; }
+  .sub code { font-style: italic; }
+  .err {
+    margin-top: 1.4rem; text-align: left; font-size: 0.85rem;
+    padding: 0.75rem 1rem; border-radius: 5px; color: var(--rose);
+    background: color-mix(in srgb, var(--panel) 90%, var(--rose) 10%);
+    border: 1px solid color-mix(in srgb, var(--rose) 55%, var(--line-soft) 45%);
+  }
+  .field { margin-top: 1.2rem; text-align: left; }
+  .field label {
+    display: block; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); margin-bottom: 0.4rem;
+  }
+  .field input {
+    width: 100%; padding: 0.72rem 0.9rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 68%, var(--line-soft) 32%);
+    background: color-mix(in srgb, var(--panel) 97%, white 3%);
+    color: var(--text-main); border-radius: 4px; font: inherit; font-size: 0.92rem;
+  }
+  .field input:focus { outline: none; border-color: var(--gold-highlight); }
+  .field input::placeholder { color: var(--text-faint); }
+  .submit {
+    margin-top: 1.9rem; width: 100%; padding: 0.78rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 80%, #7b6640 20%);
+    background: color-mix(in srgb, var(--panel) 88%, #e5dac7 12%);
+    color: var(--text-main); border-radius: 5px; font: inherit; font-size: 0.95rem;
+    letter-spacing: 0.02em; cursor: pointer;
+  }
+  .submit:hover { border-color: #c7ac72; }
+  .footnote { margin-top: 1.9rem; font-size: 0.76rem; color: var(--text-faint); }
 </style>
 </head>
 <body>
-<div class="frame">
-  <h1>IDUNA Back Office</h1>
-  <p class="sub">Sign in with an agent account that has the <code>iduna.admin</code> permission.</p>
-  {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
-  <form method="POST" action="/admin/login">
-    <input type="hidden" name="next" value="{{.Next}}">
-    <label for="an">Agent Name</label>
-    <input type="text" id="an" name="agent_name" placeholder="EMILY" autocomplete="off" required>
-    <label for="as">Agent Secret</label>
-    <input type="password" id="as" name="agent_secret" required>
-    <input type="submit" value="Sign In">
-  </form>
+<div class="shell">
+  <div class="frame">
+    <div class="art"><img src="/portal/images/eye-of-providence-robot.jpg" alt=""></div>
+    <div class="body">
+      <p class="label">EINHORN_INDUSTRIAL &middot; IDUNA</p>
+      <h1>Back Office</h1>
+      <p class="sub">Sign in with an agent account that has the <code>iduna.admin</code> permission.</p>
+      {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+      <form method="POST" action="/admin/login">
+        <input type="hidden" name="next" value="{{.Next}}">
+        <div class="field">
+          <label for="an">Agent Name</label>
+          <input type="text" id="an" name="agent_name" placeholder="EMILY" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="as">Agent Secret</label>
+          <input type="password" id="as" name="agent_secret" required>
+        </div>
+        <button class="submit" type="submit">Sign In</button>
+      </form>
+      <p class="footnote">Agent credentials only &mdash; this is not the <a href="/portal/login">Developer Portal</a> sign-in.</p>
+    </div>
+  </div>
 </div>
 </body>
 </html>`))

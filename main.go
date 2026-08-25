@@ -469,6 +469,10 @@ func main() {
 	// wotan art uses, reused here for the notebook portal's login/home pages.
 	mux.HandleFunc("GET /portal/images/fenrir-robot.jpg", serveStatic("static/portal/fenrir-robot.jpg"))
 	mux.HandleFunc("GET /portal/images/fox-robot.jpg", serveStatic("static/portal/fox-robot.jpg"))
+	// Also used by the redesigned /admin/login page (Back Office) --
+	// kept under the same /portal/images/ path rather than inventing a
+	// second art route for one more image.
+	mux.HandleFunc("GET /portal/images/eye-of-providence-robot.jpg", serveStatic("static/portal/eye-of-providence-robot.jpg"))
 
 	// ── User event log + projector ─────────────────────────────────────────────
 	idunaRootForLog := getenv("IDUNA_ROOT", ".")
