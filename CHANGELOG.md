@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-25
+- Restyled /admin/login to the real IDUNA cream/gold style guide with Prompt-o-verse art (eye-of-providence-robot), cross-linked with /portal/login (sess-20260825-0828-cc32a704)
 - Restyled /portal login + home to the real IDUNA cream/gold style guide with Prompt-o-verse art (fenrir-robot, fox-robot); added /portal/logout (sess-20260825-0828-cc32a704)
 - New developer notebook portal: GET /portal/login (Google SSO) + GET /portal (gated by new devportal.access permission, granted to nobody by default) -- lists Jupyter and SARENA_NOTEBOOK, both not-yet-available (Apple #15924) (sess-20260825-0828-cc32a704)
 - Fix: RequireCookieAuth no longer treats human Google-login cookie sessions as agent sessions during the live-status recheck (was bouncing every human session to login) (sess-20260825-0828-cc32a704)
