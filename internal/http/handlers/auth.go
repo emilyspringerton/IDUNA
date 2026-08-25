@@ -96,6 +96,27 @@ func (h *GoogleAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Also set a real, HttpOnly iduna_session cookie -- the same cookie
+	// name/shape admin_login.go's own agent flow already uses, so
+	// RequireCookieAuth (internal/http/middleware/auth.go) works
+	// identically for a human Google session as it already does for an
+	// agent Back Office session, no new middleware needed. Existing
+	// bearer-token consumers (Prompt-o-verse's own localStorage-based
+	// widget, internal/promptoverse/render.go) are unaffected -- the
+	// JSON body below is unchanged, this is additive. Real, concrete
+	// need: gating a whole reverse-proxied multi-page app (the
+	// notebook portal) behind login has to survive a plain browser
+	// navigation/nginx auth_request subrequest, which only a cookie
+	// does -- a bearer token in localStorage is invisible to both.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "iduna_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   3600,
+	})
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"token_type":   "Bearer",

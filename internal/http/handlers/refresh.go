@@ -31,6 +31,21 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokenStr := bearerToken(r)
+	usedCookie := false
+	if tokenStr == "" {
+		// Cookie-only sessions (the notebook portal's Google SSO flow --
+		// see auth.go's GoogleAuthHandler) have no localStorage bearer
+		// token to put in an Authorization header in the first place;
+		// the iduna_session cookie IS the credential there. Fall back to
+		// it so a cookie-only browser session can still refresh itself
+		// on the same 20-minute timer the promptoverse widget already
+		// uses for its bearer-token sessions, rather than silently
+		// expiring after 1 hour with no way to renew.
+		if c, err := r.Cookie("iduna_session"); err == nil && c.Value != "" {
+			tokenStr = c.Value
+			usedCookie = true
+		}
+	}
 	if tokenStr == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{
 			"code":    "MISSING_TOKEN",
@@ -67,6 +82,35 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"message": "failed to sign token",
 		})
 		return
+	}
+
+	// Keep the iduna_session cookie (auth.go's GoogleAuthHandler is what
+	// first sets it) in sync with the refreshed token -- a cookie-only
+	// notebook-portal session (usedCookie above) has no other way to
+	// renew itself, and a browser session that also carries the cookie
+	// alongside its bearer token would otherwise have the cookie expire
+	// out from under it 1 hour in while the bearer token stays valid via
+	// this same endpoint. Only touch the cookie when one was actually
+	// presented -- a pure bearer client (an agent, a script) that never
+	// had a cookie session shouldn't be handed one it never asked for.
+	if usedCookie {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "iduna_session",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(time.Until(exp).Seconds()),
+		})
+	} else if c, err := r.Cookie("iduna_session"); err == nil && c.Value != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "iduna_session",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(time.Until(exp).Seconds()),
+		})
 	}
 
 	writeJSON(w, http.StatusOK, refreshResponse{
