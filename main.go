@@ -449,6 +449,7 @@ func main() {
 	// for the full design rationale.
 	portalH := &handlers.PortalHandler{GoogleClientID: googleClientID}
 	mux.HandleFunc("GET /portal/login", portalH.Login)
+	mux.HandleFunc("GET /portal/logout", portalH.Logout)
 	portalProtected := middleware.RequireCookieAuth(keys, iamStore, "/portal/login", handlers.AdminSessionTTL)(middleware.RequirePermission("devportal.access")(http.HandlerFunc(portalH.Home)))
 	mux.Handle("/portal", portalProtected)
 
@@ -463,6 +464,11 @@ func main() {
 	mux.HandleFunc("GET /app.js", serveStatic("app.js"))
 	mux.HandleFunc("GET /styles.css", serveStatic("styles.css"))
 	mux.HandleFunc("GET /event-stream/{$}", serveStatic("event-stream/index.html"))
+	// Portal art — Prompt-o-verse gallery images (fenrir-robot, fox-robot),
+	// same "downsample + serve as a real static file" pattern OKEMILY's own
+	// wotan art uses, reused here for the notebook portal's login/home pages.
+	mux.HandleFunc("GET /portal/images/fenrir-robot.jpg", serveStatic("static/portal/fenrir-robot.jpg"))
+	mux.HandleFunc("GET /portal/images/fox-robot.jpg", serveStatic("static/portal/fox-robot.jpg"))
 
 	// ── User event log + projector ─────────────────────────────────────────────
 	idunaRootForLog := getenv("IDUNA_ROOT", ".")

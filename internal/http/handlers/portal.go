@@ -3,6 +3,8 @@ package handlers
 import (
 	"html/template"
 	"net/http"
+
+	"iduna/internal/http/middleware"
 )
 
 // PortalHandler serves the developer notebook portal -- a Linode-Cloud-
@@ -56,11 +58,38 @@ func (h *PortalHandler) Home(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	email, _ := claims["email"].(string)
 	renderHTML(w, portalHomeTmpl, map[string]any{
 		"Title": "Developer Portal",
+		"Email": email,
 	})
 }
 
+// Logout clears the iduna_session cookie and returns to the portal login
+// page -- same clearing shape as admin_login.go's own logout, duplicated
+// (not called directly) so a portal sign-out lands back on /portal/login
+// rather than /admin/login.
+func (h *PortalHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:   "iduna_session",
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
+	})
+	http.Redirect(w, r, "/portal/login", http.StatusSeeOther)
+}
+
+// portalLoginTmpl/portalHomeTmpl are styled on the real IDUNA style guide
+// (IDUNA/index.html + IDUNA/styles.css: cream/gold ceremony aesthetic,
+// Cormorant Garamond headlines over Spectral body text, gold-bordered
+// panels) -- not an invented dark-tech theme. Art is real Prompt-o-verse
+// gallery output (fenrir-robot, fox-robot), served as real static files
+// (see main.go's /portal/images/ routes), same "downsample + serve" move
+// as OKEMILY's own wotan art. Designed via /design (canvas published
+// 2026-08-25) then ported here so the live page matches, not just a
+// preview -- founder pattern established earlier this session ("finish
+// the wotan stuff first i want to see that online first").
 var portalLoginTmpl = template.Must(template.New("portal_login").Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -68,22 +97,57 @@ var portalLoginTmpl = template.Must(template.New("portal_login").Parse(`<!doctyp
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in — Developer Portal</title>
 <meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Spectral:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg: #0b0d10; --panel: #14171c; --rule: #262b33; --text: #e7ebf0; --text-soft: #9aa4b2; --accent: #5b8def; }
+  :root {
+    --bg: #f4f1ea; --bg-soft: #ede7dc; --panel: #ebe4d8; --line-soft: #d2c7b8;
+    --gold: #c6a75e; --gold-soft: #bfa062; --gold-highlight: #d6bc7a;
+    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-  .card { width: 100%; max-width: 360px; padding: 2.5rem 2rem; background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; text-align: center; }
-  h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 0.35rem; }
-  p { font-size: 0.86rem; color: var(--text-soft); margin: 0 0 1.75rem; }
-  #g_id_signin { display: flex; justify-content: center; }
-  .fallback { font-size: 0.8rem; color: var(--text-soft); opacity: 0.7; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at top, color-mix(in srgb, var(--bg) 84%, #fff 16%), var(--bg-soft));
+    color: var(--text-main); font-family: "Spectral", Georgia, serif; line-height: 1.45;
+  }
+  a { color: var(--gold-soft); }
+  a:hover { color: var(--gold-highlight); }
+  .shell { min-height: 100vh; display: grid; place-items: center; padding: 3.5rem 1.5rem; }
+  .frame {
+    width: min(460px, 100%);
+    border: 1px solid color-mix(in srgb, var(--gold) 60%, var(--line-soft) 40%);
+    border-radius: 8px; background: color-mix(in srgb, var(--panel) 92%, white 8%);
+    overflow: hidden;
+  }
+  .art { position: relative; height: 230px; overflow: hidden; }
+  .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .art::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(to bottom, rgba(20,18,14,0.05) 0%, color-mix(in srgb, var(--panel) 92%, white 8%) 96%);
+  }
+  .body { padding: 0 2.1rem 2.3rem; text-align: center; }
+  .label { letter-spacing: 0.35em; text-transform: uppercase; font-size: 0.66rem; color: var(--text-muted); margin-top: -1.4rem; position: relative; }
+  h1 { margin: 0.7rem 0 0; font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 2.15rem; letter-spacing: 0.01em; }
+  .sub { margin: 0.6rem 0 0; color: var(--text-muted); font-size: 0.92rem; }
+  #g_id_signin { margin-top: 1.9rem; display: flex; justify-content: center; min-height: 44px; }
+  .fallback { font-size: 0.85rem; color: var(--text-muted); }
+  .footnote { margin-top: 1.9rem; font-size: 0.76rem; color: var(--text-faint); }
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Developer Portal</h1>
-    <p>Sign in with the Google account tied to your IDUNA identity.</p>
-    <div id="g_id_signin" data-google-client-id="{{.GoogleClientID}}" data-next="{{.Next}}"></div>
+  <div class="shell">
+    <div class="frame">
+      <div class="art"><img src="/portal/images/fenrir-robot.jpg" alt=""></div>
+      <div class="body">
+        <p class="label">EINHORN_INDUSTRIAL &middot; IDUNA</p>
+        <h1>Developer Portal</h1>
+        <p class="sub">Sign in with the Google account tied to your IDUNA identity.</p>
+        <div id="g_id_signin" data-google-client-id="{{.GoogleClientID}}" data-next="{{.Next}}"></div>
+        <p class="footnote">Access is granted per-account. Signing in does not automatically<br>grant portal access &mdash; ask an IDUNA administrator.</p>
+      </div>
+    </div>
   </div>
 {{if .GoogleClientID}}<script src="https://accounts.google.com/gsi/client" async defer></script>{{end}}
 <script>
@@ -136,44 +200,121 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
 <meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Spectral:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg: #0b0d10; --panel: #14171c; --rule: #262b33; --text: #e7ebf0; --text-soft: #9aa4b2; --accent: #5b8def; --amber: #d9a441; }
+  :root {
+    --bg: #f4f1ea; --bg-soft: #ede7dc; --panel: #ebe4d8; --line-soft: #d2c7b8;
+    --gold: #c6a75e; --gold-soft: #bfa062; --gold-highlight: #d6bc7a;
+    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093; --amber: #9c6b1f;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-  header { padding: 1.5rem 2rem; border-bottom: 1px solid var(--rule); }
-  header h1 { font-size: 1.15rem; font-weight: 600; margin: 0; }
-  main { max-width: 880px; margin: 2rem auto; padding: 0 2rem; }
-  ul.tool-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
-  ul.tool-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.4rem; border-bottom: 1px solid var(--rule); background: var(--panel); }
-  ul.tool-list li:last-child { border-bottom: none; }
-  .tool-name { font-weight: 600; font-size: 0.95rem; }
-  .tool-desc { font-size: 0.8rem; color: var(--text-soft); margin-top: 0.15rem; }
-  .tool-status { font-size: 0.72rem; padding: 0.25rem 0.65rem; border-radius: 999px; white-space: nowrap; }
-  .status-pending { color: var(--amber); border: 1px solid var(--amber); }
-  .status-link { color: var(--accent); border: 1px solid var(--accent); text-decoration: none; }
-  .status-link:hover { background: var(--accent); color: var(--bg); }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at top, color-mix(in srgb, var(--bg) 84%, #fff 16%), var(--bg-soft));
+    color: var(--text-main); font-family: "Spectral", Georgia, serif; line-height: 1.45;
+  }
+  a { color: var(--gold-soft); }
+  a:hover { color: var(--gold-highlight); }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.6rem clamp(1.5rem, 5vw, 3.5rem) 1.2rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--gold) 35%, var(--line-soft) 65%);
+  }
+  .wordmark { letter-spacing: 0.3em; text-transform: uppercase; font-size: 0.68rem; color: var(--text-muted); }
+  .wordmark strong { color: var(--text-main); }
+  .session { display: flex; align-items: center; gap: 0.9rem; font-size: 0.82rem; color: var(--text-muted); }
+  .session a { text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--gold) 65%, transparent 35%); padding-bottom: 1px; }
+  .hero { position: relative; height: 260px; overflow: hidden; }
+  .hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .hero::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(to bottom, rgba(20,18,14,0.12) 0%, color-mix(in srgb, var(--bg-soft) 96%, #fff 4%) 97%);
+  }
+  .hero-text { position: absolute; left: clamp(1.5rem, 5vw, 3.5rem); bottom: 2.2rem; z-index: 1; }
+  .hero-text .label { letter-spacing: 0.32em; text-transform: uppercase; font-size: 0.66rem; color: rgba(244,241,234,0.85); }
+  .hero-text h1 {
+    margin: 0.5rem 0 0; font-family: "Cormorant Garamond", serif; font-weight: 500;
+    font-size: clamp(2rem, 4vw, 2.7rem); color: #f4f1ea; text-shadow: 0 2px 18px rgba(0,0,0,0.45);
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 2.4rem clamp(1.5rem, 5vw, 3.5rem) 4rem; }
+  .section-label { font-size: 0.78rem; color: var(--text-muted); margin: 0 0 1rem; }
+  .tool-list { display: grid; gap: 0.9rem; }
+  .tool-row {
+    display: flex; align-items: center; gap: 1.1rem; padding: 1.15rem 1.35rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--line-soft) 45%);
+    border-radius: 6px; background: color-mix(in srgb, var(--panel) 94%, white 6%);
+    text-decoration: none; color: var(--text-main); transition: border-color 160ms ease;
+  }
+  .tool-row:hover { border-color: var(--gold-highlight); }
+  .tool-icon {
+    flex: none; width: 44px; height: 44px; display: grid; place-items: center;
+    border-radius: 6px; border: 1px solid color-mix(in srgb, var(--gold) 60%, var(--line-soft) 40%);
+    background: color-mix(in srgb, var(--panel) 97%, white 3%);
+  }
+  .tool-main { flex: 1; min-width: 0; }
+  .tool-name { font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 1.25rem; }
+  .tool-desc { margin-top: 0.15rem; font-size: 0.85rem; color: var(--text-muted); }
+  .tool-status {
+    flex: none; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 0.28rem 0.6rem; border-radius: 999px; white-space: nowrap;
+  }
+  .status-pending { color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--line-soft) 45%); }
+  .chevron { flex: none; color: var(--text-faint); }
+  footer { max-width: 760px; margin: 0 auto; padding: 0 clamp(1.5rem, 5vw, 3.5rem) 2.5rem; font-size: 0.76rem; color: var(--text-faint); }
 </style>
 </head>
 <body>
-  <header><h1>Developer Portal</h1></header>
-  <main>
-    <ul class="tool-list">
-      <li>
-        <div>
-          <div class="tool-name">Jupyter</div>
-          <div class="tool-desc">PARENA Jupyter kernel -- notebook environment for interactive PARENA/compiled work.</div>
-        </div>
-        <span class="tool-status status-pending">install pending</span>
-      </li>
-      <li>
-        <div>
-          <div class="tool-name">SARENA_NOTEBOOK</div>
-          <div class="tool-desc">Native PARENA notebook GUI (TYLER-style title cards, built-in note rendering, libplot).</div>
-        </div>
-        <span class="tool-status status-pending">not yet built</span>
-      </li>
-    </ul>
-  </main>
+<header>
+  <div class="wordmark">EINHORN_INDUSTRIAL &nbsp;/&nbsp; <strong>IDUNA</strong></div>
+  <div class="session">
+    {{if .Email}}<span>{{.Email}}</span>{{end}}
+    <a href="/portal/logout">Sign out</a>
+  </div>
+</header>
+
+<div class="hero">
+  <img src="/portal/images/fox-robot.jpg" alt="">
+  <div class="hero-text">
+    <p class="label">Developer Portal</p>
+    <h1>Internal Tools</h1>
+  </div>
+</div>
+
+<main>
+  <p class="section-label">Signed in &mdash; select a tool below.</p>
+  <div class="tool-list">
+    <a class="tool-row" href="#">
+      <div class="tool-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7a7368" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h16v12H4z"/><path d="M8 20h8"/><path d="M12 16v4"/><path d="M8 9l2.5 2.5L8 14"/><path d="M13 14h3"/>
+        </svg>
+      </div>
+      <div class="tool-main">
+        <div class="tool-name">Jupyter</div>
+        <div class="tool-desc">PARENA Jupyter kernel &mdash; interactive notebook environment for compiled PARENA work.</div>
+      </div>
+      <span class="tool-status status-pending">Install pending</span>
+      <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </a>
+    <a class="tool-row" href="#">
+      <div class="tool-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7a7368" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M9 3v18"/><path d="M13 8h3"/><path d="M13 12h3"/><path d="M13 16h3"/>
+        </svg>
+      </div>
+      <div class="tool-main">
+        <div class="tool-name">SARENA_NOTEBOOK</div>
+        <div class="tool-desc">Native PARENA notebook GUI &mdash; title cards, built-in note rendering, libplot.</div>
+      </div>
+      <span class="tool-status status-pending">Not yet built</span>
+      <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </a>
+  </div>
+</main>
+
+<footer>Access requires the <code>devportal.access</code> permission, granted per-account by an IDUNA administrator.</footer>
 </body>
 </html>
 `))
