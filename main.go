@@ -441,6 +441,17 @@ func main() {
 	mux.Handle("/admin", adminProtected)
 	mux.Handle("/admin/", adminProtected)
 
+	// Developer notebook portal — human Google SSO (not agent login), gated
+	// by devportal.access, a new permission granted to nobody by default
+	// (see migrations/truestore/202608250001_devportal_permissions.sql).
+	// /portal/login is public; /portal itself requires a live cookie
+	// session AND the permission grant. See internal/http/handlers/portal.go
+	// for the full design rationale.
+	portalH := &handlers.PortalHandler{GoogleClientID: googleClientID}
+	mux.HandleFunc("GET /portal/login", portalH.Login)
+	portalProtected := middleware.RequireCookieAuth(keys, iamStore, "/portal/login", handlers.AdminSessionTTL)(middleware.RequirePermission("devportal.access")(http.HandlerFunc(portalH.Home)))
+	mux.Handle("/portal", portalProtected)
+
 	// Static files (registration SPA + event stream).
 	idunaRoot := getenv("IDUNA_ROOT", ".")
 	serveStatic := func(name string) http.HandlerFunc {
