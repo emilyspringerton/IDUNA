@@ -122,6 +122,7 @@ const indexTemplate = `<!DOCTYPE html>
   .post { padding: 1rem 0; border-bottom: 1px solid var(--border); }
   .post h2 { font-size: 1.2rem; margin: 0 0 0.3rem; }
   .post .meta { color: var(--fg-dim); font-size: 0.85rem; }
+  footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--fg-dim); }
 </style>
 </head>
 <body>
@@ -134,6 +135,7 @@ const indexTemplate = `<!DOCTYPE html>
     <div class="meta">By {{.Author}} &middot; {{.PublishedDate}}</div>
   </div>
   {{end}}
+  <footer><a href="/blog-manifest.txt" rel="nofollow">Full-text manifest</a> (plain text, all posts, not for search indexing)</footer>
 </div>
 </body>
 </html>
