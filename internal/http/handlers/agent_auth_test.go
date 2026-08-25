@@ -120,6 +120,14 @@ func (s *stubAgentStore) UpsertClusterHeartbeat(context.Context, auth.ClusterHea
 func (s *stubAgentStore) ListActiveClusterHeartbeats(context.Context, time.Duration) ([]auth.ClusterHeartbeat, error) {
 	return nil, nil
 }
+func (s *stubAgentStore) GetAgentByID(_ context.Context, agentID string) (*auth.Agent, error) {
+	for _, a := range s.agents {
+		if a.ID == agentID {
+			return a, nil
+		}
+	}
+	return nil, errors.New("agent not found")
+}
 
 func TestAgentAuthHandler_Success(t *testing.T) {
 	k, err := jwt.GenerateKeys()

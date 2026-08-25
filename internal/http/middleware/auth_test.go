@@ -1,14 +1,32 @@
 package middleware_test
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"iduna/internal/auth"
 	"iduna/internal/auth/jwt"
 	"iduna/internal/http/middleware"
 )
+
+// fakeAgentStatus is a minimal middleware.AgentStatusChecker fake -- an
+// in-memory agent-ID -> agent map, for exercising RequireCookieAuth's live
+// status re-check without a full store.IAMStore implementation.
+type fakeAgentStatus struct {
+	agents map[string]*auth.Agent // agent ID -> agent
+}
+
+func (f *fakeAgentStatus) GetAgentByID(_ context.Context, agentID string) (*auth.Agent, error) {
+	a, ok := f.agents[agentID]
+	if !ok {
+		return nil, errors.New("agent not found")
+	}
+	return a, nil
+}
 
 func TestRequireAuth_NoHeader(t *testing.T) {
 	k, _ := jwt.GenerateKeys()
@@ -76,7 +94,7 @@ func TestRequireCookieAuth_NoRefreshWhenFresh(t *testing.T) {
 	}
 	token, _ := jwt.Sign(k, claims)
 
-	handler := middleware.RequireCookieAuth(k, "/admin/login", sessionTTL)(
+	handler := middleware.RequireCookieAuth(k, nil, "/admin/login", sessionTTL)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 
 	req := httptest.NewRequest("GET", "/admin", nil)
@@ -102,7 +120,7 @@ func TestRequireCookieAuth_RefreshesWhenStale(t *testing.T) {
 	}
 	token, _ := jwt.Sign(k, claims)
 
-	handler := middleware.RequireCookieAuth(k, "/admin/login", sessionTTL)(
+	handler := middleware.RequireCookieAuth(k, nil, "/admin/login", sessionTTL)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 
 	req := httptest.NewRequest("GET", "/admin", nil)
@@ -138,7 +156,7 @@ func TestRequireCookieAuth_NoRefreshWhenTTLZero(t *testing.T) {
 	}
 	token, _ := jwt.Sign(k, claims)
 
-	handler := middleware.RequireCookieAuth(k, "/admin/login", 0)(
+	handler := middleware.RequireCookieAuth(k, nil, "/admin/login", 0)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 
 	req := httptest.NewRequest("GET", "/admin", nil)
@@ -159,7 +177,7 @@ func TestRequireCookieAuth_ExpiredRedirects(t *testing.T) {
 	}
 	token, _ := jwt.Sign(k, claims)
 
-	handler := middleware.RequireCookieAuth(k, "/admin/login", time.Hour)(
+	handler := middleware.RequireCookieAuth(k, nil, "/admin/login", time.Hour)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 
 	req := httptest.NewRequest("GET", "/admin", nil)
@@ -194,5 +212,97 @@ func TestRequirePermission_Present(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
+// TestRequireCookieAuth_SuspendedAgentSessionRejected is the regression test
+// for the vulnerability disclosed 2026-08-25 ("Mid-Piano Presents: The Memory
+// Ceremony"): a suspend correctly blocked new logins, but did nothing to a
+// session already handed out -- a suspended admin with an open tab could
+// keep clicking, including using that same admin access to un-suspend
+// itself right back. This test fails against the pre-fix RequireCookieAuth
+// (which never re-checked live agent status) and passes against the fix.
+func TestRequireCookieAuth_SuspendedAgentSessionRejected(t *testing.T) {
+	k, _ := jwt.GenerateKeys()
+	agentID := "agent-boots"
+	claims := map[string]any{
+		"sub":         agentID,
+		"agent_name":  "BOOTS",
+		"permissions": []any{"iduna.admin"},
+		"exp":         float64(time.Now().Add(time.Hour).Unix()),
+	}
+	token, _ := jwt.Sign(k, claims)
+
+	store := &fakeAgentStatus{agents: map[string]*auth.Agent{
+		agentID: {ID: agentID, Name: "BOOTS", Status: "ACTIVE", Permissions: []string{"iduna.admin"}},
+	}}
+	handler := middleware.RequireCookieAuth(k, store, "/admin/login", time.Hour)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
+
+	// Step 1: the session is issued while the agent is ACTIVE -- it works,
+	// same as any normal admin request.
+	req := httptest.NewRequest("GET", "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "iduna_session", Value: token})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("expected 200 while agent is ACTIVE, got %d", rr.Code)
+	}
+
+	// Step 2: the agent gets suspended (e.g. its secret leaked) -- but the
+	// browser still holds the exact same, still-cryptographically-valid
+	// session cookie from step 1. Nothing about the token itself changed.
+	store.agents[agentID].Status = "SUSPENDED"
+
+	req2 := httptest.NewRequest("GET", "/admin", nil)
+	req2.AddCookie(&http.Cookie{Name: "iduna_session", Value: token})
+	rr2 := httptest.NewRecorder()
+	handler.ServeHTTP(rr2, req2)
+
+	if rr2.Code == 200 {
+		t.Fatalf("suspended agent's pre-existing session must NOT still work (this is the vulnerability) -- got 200")
+	}
+	// Also confirm the dead session's cookie gets cleared, not just this one
+	// request rejected, so the browser stops re-presenting it.
+	cleared := false
+	for _, c := range rr2.Result().Cookies() {
+		if c.Name == "iduna_session" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Errorf("expected the dead session cookie to be cleared on rejection, got %+v", rr2.Result().Cookies())
+	}
+}
+
+// TestRequireCookieAuth_RevokedPermissionTakesEffectImmediately covers the
+// related half of the same fix: permissions are re-derived from live grants
+// on every request, not trusted from the token's snapshot at login, so a
+// revoked permission also stops working on the very next click.
+func TestRequireCookieAuth_RevokedPermissionTakesEffectImmediately(t *testing.T) {
+	k, _ := jwt.GenerateKeys()
+	agentID := "agent-x"
+	claims := map[string]any{
+		"sub":         agentID,
+		"permissions": []any{"iduna.admin"}, // stale snapshot from login time
+		"exp":         float64(time.Now().Add(time.Hour).Unix()),
+	}
+	token, _ := jwt.Sign(k, claims)
+
+	store := &fakeAgentStatus{agents: map[string]*auth.Agent{
+		// Live grants no longer include iduna.admin, even though the token does.
+		agentID: {ID: agentID, Name: "X", Status: "ACTIVE", Permissions: []string{}},
+	}}
+	handler := middleware.RequireCookieAuth(k, store, "/admin/login", time.Hour)(
+		middleware.RequirePermission("iduna.admin")(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })))
+
+	req := httptest.NewRequest("GET", "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "iduna_session", Value: token})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 once the live grant is gone (even though the token's own claims still say iduna.admin), got %d", rr.Code)
 	}
 }

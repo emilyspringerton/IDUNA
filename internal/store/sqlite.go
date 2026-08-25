@@ -584,6 +584,24 @@ func (s *SQLiteStore) AuthenticateAgent(ctx context.Context, agentName, plaintex
 	return &a, nil
 }
 
+func (s *SQLiteStore) GetAgentByID(ctx context.Context, agentID string) (*auth.Agent, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, owner_user_id, name, type, status FROM agents WHERE id=?`, agentID)
+	var a auth.Agent
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Type, &a.Status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("agent not found")
+		}
+		return nil, err
+	}
+	perms, err := s.GetAgentPermissions(ctx, a.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get agent permissions: %w", err)
+	}
+	a.Permissions = perms
+	return &a, nil
+}
+
 func (s *SQLiteStore) AppendApple(ctx context.Context, apple auth.AppleRecord) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -7,8 +7,17 @@ import (
 	"strings"
 	"time"
 
+	"iduna/internal/auth"
 	"iduna/internal/auth/jwt"
 )
+
+// AgentStatusChecker is the minimal slice of store.IAMStore RequireCookieAuth
+// needs -- a narrow interface rather than the full store, so callers (and
+// tests) don't need a complete IAMStore implementation just to check one
+// agent's live status. store.IAMStore satisfies this automatically.
+type AgentStatusChecker interface {
+	GetAgentByID(ctx context.Context, agentID string) (*auth.Agent, error)
+}
 
 type contextKey string
 
@@ -45,7 +54,16 @@ func RequireAuth(keys *jwt.Keys) func(http.Handler) http.Handler {
 // hits a silent hard cutoff at exactly sessionTTL after login — the next click just
 // bounces to the login page with no explanation, which reads as an unexplained/
 // "unexpected" logout during a long working session. Pass 0 to disable refresh.
-func RequireCookieAuth(keys *jwt.Keys, loginURL string, sessionTTL time.Duration) func(http.Handler) http.Handler {
+//
+// iamStore, when non-nil, re-verifies the session against LIVE agent state on every
+// request: signature/expiry alone only prove who was ACTIVE at login, not who is
+// ACTIVE now. Without this check, suspending an agent blocks new logins but does
+// nothing to a session it already handed out — a suspended agent with an open tab
+// keeps working, and (holding iduna.admin) can un-suspend itself right back. Found
+// and disclosed 2026-08-25 (see the "Mid-Piano Presents: The Memory Ceremony" blog
+// post published ahead of this fix). Pass nil only from tests that don't exercise
+// this path; every real caller must pass the live store.
+func RequireCookieAuth(keys *jwt.Keys, iamStore AgentStatusChecker, loginURL string, sessionTTL time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerOrCookie(r)
@@ -57,6 +75,22 @@ func RequireCookieAuth(keys *jwt.Keys, loginURL string, sessionTTL time.Duration
 			if err != nil {
 				redirectOrJSON(w, r, loginURL)
 				return
+			}
+			if iamStore != nil {
+				agentID, _ := claims["sub"].(string)
+				agent, err := iamStore.GetAgentByID(r.Context(), agentID)
+				if err != nil || agent.Status != "ACTIVE" {
+					// The session outlived the agent's real standing -- kill the
+					// cookie too, not just this request, so the browser stops
+					// re-presenting a dead session on every subsequent click.
+					clearSessionCookie(w)
+					redirectOrJSON(w, r, loginURL)
+					return
+				}
+				// Re-derive permissions from live grants, not the token's
+				// snapshot-at-login -- a revoked permission should stop working
+				// on the next click too, same as a suspension.
+				claims["permissions"] = agent.Permissions
 			}
 			if sessionTTL > 0 {
 				refreshCookieIfStale(w, keys, claims, sessionTTL)
@@ -102,6 +136,18 @@ func refreshCookieIfStale(w http.ResponseWriter, keys *jwt.Keys, claims map[stri
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(sessionTTL.Seconds()),
+	})
+}
+
+// clearSessionCookie expires the iduna_session cookie immediately -- same
+// shape as AdminLoginHandler.logout, duplicated rather than imported to
+// avoid a handlers<->middleware import cycle.
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:   "iduna_session",
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
 	})
 }
 

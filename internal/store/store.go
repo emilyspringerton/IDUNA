@@ -118,6 +118,13 @@ type IAMStore interface {
 	// no credential set, wrong secret, or agent not ACTIVE).
 	AuthenticateAgent(ctx context.Context, agentName, plaintextSecret string) (*auth.Agent, error)
 
+	// GetAgentByID returns an agent's CURRENT status and permissions by ID, no
+	// secret check. Used to re-verify a still-active admin session against
+	// live state on every request (a session cookie only proves who was
+	// ACTIVE at issuance -- it says nothing about now). Returns a non-nil
+	// error when the agent no longer exists at all.
+	GetAgentByID(ctx context.Context, agentID string) (*auth.Agent, error)
+
 	// ListIAMEvents returns the most recent limit events from iam_event_stream.
 	ListIAMEvents(ctx context.Context, limit int) ([]auth.IAMEvent, error)
 

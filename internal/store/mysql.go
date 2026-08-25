@@ -594,6 +594,24 @@ func (s *MySQLStore) AuthenticateAgent(ctx context.Context, agentName, plaintext
 	return &a, nil
 }
 
+func (s *MySQLStore) GetAgentByID(ctx context.Context, agentID string) (*auth.Agent, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, owner_user_id, name, type, status FROM agents WHERE id=?`, agentID)
+	var a auth.Agent
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Type, &a.Status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("agent not found")
+		}
+		return nil, err
+	}
+	perms, err := s.GetAgentPermissions(ctx, a.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get agent permissions: %w", err)
+	}
+	a.Permissions = perms
+	return &a, nil
+}
+
 // --- Apples (HQ-SPEC-IAM-096) ---
 
 // AppendApple inserts a golden documentation record and emits ApplePublished to iam_event_stream.

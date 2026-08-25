@@ -135,6 +135,9 @@ func (s *stubApplesStore) SetAgentCredential(context.Context, string, string, st
 func (s *stubApplesStore) AuthenticateAgent(context.Context, string, string) (*auth.Agent, error) {
 	return nil, nil
 }
+func (s *stubApplesStore) GetAgentByID(context.Context, string) (*auth.Agent, error) {
+	return nil, nil
+}
 func (s *stubApplesStore) UpsertPushToken(context.Context, auth.PushToken) error { return nil }
 func (s *stubApplesStore) GetPushToken(context.Context, string) (*auth.PushToken, error) {
 	return nil, nil
