@@ -118,7 +118,13 @@ func main() {
 	}
 	jwksH := &handlers.JWKSHandler{Keys: keys}
 	healthH := &handlers.HealthHandler{}
-	adminH := &handlers.AdminHandler{Store: iamStore, DB: db}
+	driveSlurpH := &handlers.DriveSlurpHandler{
+		GoogleClientID:     googleClientID,
+		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		RedirectURI:        getenv("DRIVE_SLURP_OAUTH_REDIRECT_URI", baseURL+"/admin/drive-slurp/oauth/callback"),
+		IdunaRoot:          getenv("IDUNA_ROOT", "."),
+	}
+	adminH := &handlers.AdminHandler{Store: iamStore, DB: db, DriveSlurp: driveSlurpH}
 	adminH.Init()
 	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer}
 	applesH := &handlers.ApplesHandler{Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}

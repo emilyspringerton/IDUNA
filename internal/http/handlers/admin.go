@@ -24,6 +24,7 @@ type AdminHandler struct {
 	Store       store.IAMStore
 	Mailinglist *mailinglist.Store // optional -- nil is handled gracefully (dashboard just omits the signup stats card)
 	DB          *sql.DB            // raw truestore handle, for player/character queries not exposed via IAMStore (dragonsnshit account creation, GM tools)
+	DriveSlurp  *DriveSlurpHandler // OAuth-based Drive browse+slurp feature, S187-03/S188-05/S189-10
 	mux         *http.ServeMux
 }
 
@@ -55,6 +56,12 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/gm/", h.gmAccountAction)
 	h.mux.HandleFunc("/admin/promptoverse-queue", h.promptoverseQueue)
 	h.mux.HandleFunc("/admin/promptoverse-queue/remove", h.promptoverseQueueRemove)
+	h.mux.HandleFunc("/admin/drive-slurp", h.DriveSlurp.page)
+	h.mux.HandleFunc("/admin/drive-slurp/oauth/start", h.DriveSlurp.oauthStart)
+	h.mux.HandleFunc("/admin/drive-slurp/oauth/callback", h.DriveSlurp.oauthCallback)
+	h.mux.HandleFunc("/admin/drive-slurp/oauth/disconnect", h.DriveSlurp.oauthDisconnect)
+	h.mux.HandleFunc("/admin/drive-slurp/enqueue", h.DriveSlurp.enqueue)
+	h.mux.HandleFunc("/admin/drive-slurp/events", h.DriveSlurp.events)
 }
 
 // ServeHTTP dispatches admin routes. Mount at /admin and /admin/ with auth middleware.
@@ -487,6 +494,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/dragonsnshit/create">DragonsNShit</a>
   <a href="/admin/gm">GM Tools</a>
   <a href="/admin/promptoverse-queue">Prompt-o-verse Queue</a>
+  <a href="/admin/drive-slurp">Drive Slurp</a>
   <span style="flex:1"></span>
   <a href="/admin/logout" style="font-size:11px;color:#888">Sign out</a>
 </nav>
