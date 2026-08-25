@@ -306,3 +306,43 @@ func TestRequireCookieAuth_RevokedPermissionTakesEffectImmediately(t *testing.T)
 		t.Errorf("expected 403 once the live grant is gone (even though the token's own claims still say iduna.admin), got %d", rr.Code)
 	}
 }
+
+// TestRequireCookieAuth_HumanGoogleSessionNotTreatedAsAgent is the
+// regression test for a real bug found wiring up the notebook portal's
+// human SSO cookie login the same session as the two tests above: a human
+// Google-login session (GoogleAuthHandler's own claims -- "sub" is a user
+// ID, never an agent ID, and always carries "email") was being run through
+// the SAME iamStore.GetAgentByID live-recheck built for agent sessions.
+// GetAgentByID only looks in the agents table, so it always misses for a
+// human user's "sub" -- every human cookie session would be incorrectly
+// bounced back to login on every single request, indistinguishable from a
+// suspended agent. This test fails against that version (302/303 + cleared
+// cookie instead of 200) and passes against the fix (iamStore is only
+// consulted when the session claims don't carry "email").
+func TestRequireCookieAuth_HumanGoogleSessionNotTreatedAsAgent(t *testing.T) {
+	k, _ := jwt.GenerateKeys()
+	userID := "user-founder"
+	claims := map[string]any{
+		"sub":         userID,
+		"email":       "founder@example.com",
+		"permissions": []any{"devportal.access"},
+		"exp":         float64(time.Now().Add(time.Hour).Unix()),
+	}
+	token, _ := jwt.Sign(k, claims)
+
+	// Deliberately empty -- no agent named userID exists (nor should one:
+	// this is a human user ID, not an agent ID). If RequireCookieAuth ever
+	// calls GetAgentByID for this session, it MUST miss.
+	store := &fakeAgentStatus{agents: map[string]*auth.Agent{}}
+	handler := middleware.RequireCookieAuth(k, store, "/portal/login", time.Hour)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
+
+	req := httptest.NewRequest("GET", "/portal", nil)
+	req.AddCookie(&http.Cookie{Name: "iduna_session", Value: token})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != 200 {
+		t.Fatalf("human Google-login session must not be treated as an agent session (no matching agent row exists to find) -- got %d", rr.Code)
+	}
+}

@@ -76,7 +76,18 @@ func RequireCookieAuth(keys *jwt.Keys, iamStore AgentStatusChecker, loginURL str
 				redirectOrJSON(w, r, loginURL)
 				return
 			}
-			if iamStore != nil {
+			// Live-status re-check only applies to AGENT sessions (the
+			// admin Back Office flow this was built for). GetAgentByID
+			// only looks in the agents table, so calling it with a human
+			// Google-login user's "sub" would always miss and
+			// incorrectly bounce every human cookie session to the
+			// login page -- found wiring up the notebook portal's own
+			// human SSO cookie login the same session this live-recheck
+			// was added. Only GoogleAuthHandler's claims carry "email";
+			// no agent-issued token (admin_login.go, AgentAuthHandler)
+			// ever does, so its presence is the real discriminator here.
+			_, isHumanSession := claims["email"]
+			if iamStore != nil && !isHumanSession {
 				agentID, _ := claims["sub"].(string)
 				agent, err := iamStore.GetAgentByID(r.Context(), agentID)
 				if err != nil || agent.Status != "ACTIVE" {
