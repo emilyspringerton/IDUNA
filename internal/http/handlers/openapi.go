@@ -98,6 +98,18 @@ var idunaOpenAPISpec = map[string]any{
 					"created_time":  map[string]any{"type": "string", "format": "date-time"},
 				},
 			},
+			"KanbanCard": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":              map[string]any{"type": "integer"},
+					"backlog_item_id": map[string]any{"type": "string", "example": "S202-27", "description": "The real EMILY/BACKLOG.md item id -- this table never duplicates that item's own text/status"},
+					"title":           map[string]any{"type": "string"},
+					"queue":           map[string]any{"type": "string", "enum": []string{"backlog", "priority", "cruise"}},
+					"position":        map[string]any{"type": "integer"},
+					"created_at":      map[string]any{"type": "string", "format": "date-time"},
+					"updated_at":      map[string]any{"type": "string", "format": "date-time"},
+				},
+			},
 			"SprintItem": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -1008,6 +1020,126 @@ var idunaOpenAPISpec = map[string]any{
 				},
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Updated observation"},
+				},
+			},
+		},
+		// ── Kanban (prioritization layer over EMILY/BACKLOG.md, S202-26) ────────
+		"/admin/kanban": map[string]any{
+			"get": map[string]any{
+				"summary":     "Kanban board HTML — 3 columns (Backlog/Priority/Cruise), drag-and-drop",
+				"tags":        []string{"kanban"},
+				"description": "Cookie-authenticated (same session as the rest of /admin/*). Backlog item ids stay authoritative in EMILY/BACKLOG.md -- this only tracks which column a card sits in.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Kanban board (text/html)"},
+					"403": errorResponse("Missing iduna.admin permission"),
+				},
+			},
+		},
+		"/api/v1/kanban/cards": map[string]any{
+			"get": map[string]any{
+				"summary": "List kanban cards",
+				"tags":    []string{"kanban"},
+				"parameters": []map[string]any{
+					{"name": "queue", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"backlog", "priority", "cruise"}}, "description": "Filter to one column; omit for all columns"},
+				},
+				"security": []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Card list", "content": jsonSchemaArray("KanbanCard")},
+					"403": errorResponse("Missing kanban.access permission"),
+				},
+			},
+			"post": map[string]any{
+				"summary":     "Create a kanban card",
+				"tags":        []string{"kanban"},
+				"description": "Defaults to the backlog column, lands at the end of it.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":     "object",
+								"required": []string{"backlog_item_id", "title"},
+								"properties": map[string]any{
+									"backlog_item_id": map[string]any{"type": "string", "example": "S202-27"},
+									"title":           map[string]any{"type": "string"},
+									"queue":           map[string]any{"type": "string", "enum": []string{"backlog", "priority", "cruise"}},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"201": map[string]any{"description": "Card created", "content": map[string]any{
+						"application/json": map[string]any{"schema": map[string]any{
+							"type":       "object",
+							"properties": map[string]any{"id": map[string]any{"type": "integer"}},
+						}},
+					}},
+					"400": errorResponse("Missing backlog_item_id or title"),
+				},
+			},
+		},
+		"/api/v1/kanban/cards/{id}": map[string]any{
+			"parameters": []map[string]any{
+				{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+			},
+			"patch": map[string]any{
+				"summary":     "Move/rename a kanban card (the drag action)",
+				"tags":        []string{"kanban"},
+				"description": "queue and/or position and/or title -- at least one required.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"requestBody": map[string]any{
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"queue":    map[string]any{"type": "string", "enum": []string{"backlog", "priority", "cruise"}},
+									"position": map[string]any{"type": "integer"},
+									"title":    map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Updated"},
+					"404": errorResponse("Card not found"),
+				},
+			},
+			"delete": map[string]any{
+				"summary":     "Remove a kanban card",
+				"tags":        []string{"kanban"},
+				"description": "BACKLOG.md itself is never touched -- this only affects this tracking layer.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"204": map[string]any{"description": "Deleted"},
+					"404": errorResponse("Card not found"),
+				},
+			},
+		},
+		// ── Developer notebook portal ────────────────────────────────────────────
+		"/portal/login": map[string]any{
+			"get": map[string]any{
+				"summary":  "Developer notebook portal — Sign in with Google",
+				"tags":     []string{"portal"},
+				"security": []map[string]any{},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Login page (text/html)"},
+				},
+			},
+		},
+		"/portal": map[string]any{
+			"get": map[string]any{
+				"summary":     "Developer notebook portal home (Jupyter/SARENA_NOTEBOOK entry points)",
+				"tags":        []string{"portal"},
+				"description": "Requires devportal.access, granted to no role by default (including super_admin) -- functionally inaccessible until explicitly granted via /admin/users.",
+				"security":    []map[string]any{{"bearerAuth": []string{}}},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Portal home (text/html)"},
+					"403": errorResponse("Missing devportal.access permission"),
 				},
 			},
 		},

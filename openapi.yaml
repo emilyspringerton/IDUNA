@@ -33,6 +33,8 @@ tags:
   - name: Identity
   - name: Apples
   - name: BackOffice
+  - name: Kanban
+  - name: DevPortal
 
 paths:
   /health:
@@ -356,7 +358,171 @@ paths:
         404:
           description: "Apple not found"
 
+  /admin/kanban:
+    get:
+      tags: [Kanban]
+      summary: "Kanban board HTML — 3 columns (Backlog/Priority/Cruise), drag-and-drop"
+      description: >
+        Prioritization layer over EMILY/BACKLOG.md — backlog item ids (e.g. "S202-27") stay
+        the authoritative reference in BACKLOG.md itself; this only tracks which of the 3
+        columns a card sits in. Cookie-authenticated (same session as the rest of /admin/*).
+      security:
+        - BearerAuth: []
+      produces:
+        - text/html
+      responses:
+        200:
+          description: "Kanban board"
+        403:
+          description: "Missing iduna.admin permission"
+
+  /api/v1/kanban/cards:
+    get:
+      tags: [Kanban]
+      summary: "List kanban cards"
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: queue
+          in: query
+          type: string
+          enum: [backlog, priority, cruise]
+          required: false
+          description: "Filter to one column; omit for all columns"
+      responses:
+        200:
+          description: "Card list"
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/KanbanCard"
+        403:
+          description: "Missing kanban.access permission"
+    post:
+      tags: [Kanban]
+      summary: "Create a kanban card"
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            required: [backlog_item_id, title]
+            properties:
+              backlog_item_id:
+                type: string
+                example: "S202-27"
+              title:
+                type: string
+              queue:
+                type: string
+                enum: [backlog, priority, cruise]
+                description: "Defaults to backlog if omitted"
+      responses:
+        201:
+          description: "Card created"
+          schema:
+            type: object
+            properties:
+              id:
+                type: integer
+        400:
+          description: "Missing backlog_item_id or title"
+
+  /api/v1/kanban/cards/{id}:
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+    patch:
+      tags: [Kanban]
+      summary: "Move/rename a kanban card (the drag action)"
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              queue:
+                type: string
+                enum: [backlog, priority, cruise]
+              position:
+                type: integer
+              title:
+                type: string
+      responses:
+        200:
+          description: "Updated"
+        404:
+          description: "Card not found"
+    delete:
+      tags: [Kanban]
+      summary: "Remove a kanban card (BACKLOG.md itself is never touched)"
+      security:
+        - BearerAuth: []
+      responses:
+        204:
+          description: "Deleted"
+        404:
+          description: "Card not found"
+
+  /portal/login:
+    get:
+      tags: [DevPortal]
+      summary: "Developer notebook portal — Sign in with Google"
+      produces:
+        - text/html
+      responses:
+        200:
+          description: "Login page"
+
+  /portal:
+    get:
+      tags: [DevPortal]
+      summary: "Developer notebook portal home (Jupyter/SARENA_NOTEBOOK entry points)"
+      description: >
+        Requires devportal.access, granted to no role by default (including super_admin) --
+        functionally inaccessible until explicitly granted via /admin/users.
+      security:
+        - BearerAuth: []
+      produces:
+        - text/html
+      responses:
+        200:
+          description: "Portal home"
+        403:
+          description: "Missing devportal.access permission"
+
 definitions:
+  KanbanCard:
+    type: object
+    properties:
+      id:
+        type: integer
+      backlog_item_id:
+        type: string
+        example: "S202-27"
+      title:
+        type: string
+      queue:
+        type: string
+        enum: [backlog, priority, cruise]
+      position:
+        type: integer
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
+    required: [id, backlog_item_id, title, queue, position]
+
   HealthResponse:
     type: object
     properties:
