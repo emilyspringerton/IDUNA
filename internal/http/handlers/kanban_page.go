@@ -1,0 +1,272 @@
+package handlers
+
+import (
+	"net/http"
+)
+
+// KanbanPageHandler serves the GUI half of the kanban prioritization layer
+// (see kanban.go's own doc comment for the full founder-quote chain and
+// design reasoning): a 3-column board (Backlog | Priority | Cruise) with
+// real drag-and-drop, backed by kanban.go's own JSON API at
+// /admin/kanban/api/cards (same-origin fetch, cookie-authenticated --
+// browser attaches the /admin session cookie automatically, no separate
+// bearer token needed here). The CLI/agent path ("i can ask the ai agent
+// to work from the priority or cruise backlog") uses the SAME KanbanHandler
+// struct mounted separately at /api/v1/kanban/cards under bearer auth --
+// see main.go's route wiring, not duplicated logic.
+//
+// Same cream/gold ceremony style guide as /portal and /admin/login
+// (Cormorant Garamond + Spectral, gold-bordered panels) -- copied token
+// values directly from portal.go rather than reinvented.
+type KanbanPageHandler struct{}
+
+func (h *KanbanPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(kanbanPageHTML))
+}
+
+const kanbanPageHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanban — Back Office</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Spectral:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg-soft: #ede7dc; --panel: #ebe4d8; --line-soft: #d2c7b8;
+    --gold: #c6a75e; --gold-soft: #bfa062; --gold-highlight: #d6bc7a;
+    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at top, color-mix(in srgb, var(--bg) 84%, #fff 16%), var(--bg-soft));
+    color: var(--text-main); font-family: "Spectral", Georgia, serif; line-height: 1.45;
+  }
+  a { color: var(--gold-soft); }
+  a:hover { color: var(--gold-highlight); }
+  header {
+    padding: 1.6rem 2rem 1.2rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--gold) 35%, var(--line-soft) 65%);
+    display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.6rem;
+  }
+  h1 { margin: 0; font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 2rem; letter-spacing: 0.01em; }
+  .sub { color: var(--text-muted); font-size: 0.85rem; }
+  main { padding: 1.6rem 2rem 3rem; }
+  .board { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); gap: 1.2rem; align-items: start; }
+  .col {
+    border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line-soft) 55%);
+    border-radius: 8px; background: color-mix(in srgb, var(--panel) 92%, white 8%);
+    min-height: 200px; padding: 0.9rem;
+  }
+  .col.dragover { border-color: var(--gold-highlight); background: color-mix(in srgb, var(--panel) 84%, white 16%); }
+  .col h2 {
+    margin: 0 0 0.8rem; font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 1.15rem;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .col h2 .count { font-family: "Spectral", serif; font-weight: 400; font-size: 0.85rem; color: var(--text-faint); }
+  .card {
+    border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--line-soft) 45%);
+    border-radius: 6px; background: color-mix(in srgb, var(--panel) 97%, white 3%);
+    padding: 0.65rem 0.8rem; margin-bottom: 0.6rem; cursor: grab;
+    box-shadow: 0 1px 2px rgba(20,18,14,0.06);
+  }
+  .card:active { cursor: grabbing; }
+  .card.dragging { opacity: 0.4; }
+  .card .id { font-size: 0.72rem; letter-spacing: 0.05em; color: var(--gold-soft); font-weight: 600; }
+  .card .title { font-size: 0.92rem; margin-top: 0.15rem; }
+  .card .del { float: right; color: var(--text-faint); text-decoration: none; font-size: 0.85rem; }
+  .card .del:hover { color: #a24; }
+  .empty { color: var(--text-faint); font-size: 0.85rem; font-style: italic; padding: 0.4rem 0; }
+  .add-row {
+    margin-top: 1.4rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
+    border-top: 1px solid color-mix(in srgb, var(--gold) 30%, var(--line-soft) 70%); padding-top: 1.2rem;
+  }
+  input {
+    font-family: "Spectral", serif; font-size: 0.9rem; padding: 0.45rem 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 50%, var(--line-soft) 50%); border-radius: 5px;
+    background: color-mix(in srgb, var(--panel) 97%, white 3%); color: var(--text-main);
+  }
+  input[name="backlog_item_id"] { width: 9rem; }
+  input[name="title"] { flex: 1; min-width: 220px; }
+  button {
+    font-family: "Spectral", serif; font-size: 0.88rem; padding: 0.48rem 1.1rem; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--gold) 60%, var(--line-soft) 40%); border-radius: 5px;
+    background: color-mix(in srgb, var(--gold) 22%, var(--panel) 78%); color: var(--text-main);
+  }
+  button:hover { background: color-mix(in srgb, var(--gold) 32%, var(--panel) 68%); }
+  #status { font-size: 0.82rem; color: var(--text-muted); min-height: 1.2em; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Kanban</h1>
+    <div class="sub">Priority layer over EMILY/BACKLOG.md — drag a card between columns; backlog item ids stay authoritative in BACKLOG.md itself.</div>
+  </div>
+  <div class="sub"><a href="/admin">← Back Office</a></div>
+</header>
+<main>
+  <div class="board">
+    <div class="col" data-queue="backlog" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <h2>Backlog <span class="count" id="count-backlog">0</span></h2>
+      <div class="cards" id="cards-backlog"></div>
+    </div>
+    <div class="col" data-queue="priority" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <h2>Priority <span class="count" id="count-priority">0</span></h2>
+      <div class="cards" id="cards-priority"></div>
+    </div>
+    <div class="col" data-queue="cruise" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <h2>Cruise <span class="count" id="count-cruise">0</span></h2>
+      <div class="cards" id="cards-cruise"></div>
+    </div>
+  </div>
+  <form class="add-row" id="add-form">
+    <input type="text" name="backlog_item_id" placeholder="S202-27" maxlength="32" required>
+    <input type="text" name="title" placeholder="Short card title" maxlength="200" required>
+    <button type="submit">+ Add card</button>
+  </form>
+  <div id="status"></div>
+</main>
+<script>
+const API = '/admin/kanban/api/cards';
+let dragId = null;
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg || '';
+  el.style.color = isError ? '#a24' : '';
+}
+
+async function loadCards() {
+  setStatus('Loading…');
+  try {
+    const res = await fetch(API, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const cards = await res.json();
+    render(cards);
+    setStatus('');
+  } catch (e) {
+    setStatus('Failed to load cards: ' + e.message, true);
+  }
+}
+
+function render(cards) {
+  const byQueue = { backlog: [], priority: [], cruise: [] };
+  for (const c of cards) {
+    (byQueue[c.queue] || byQueue.backlog).push(c);
+  }
+  for (const q of ['backlog', 'priority', 'cruise']) {
+    const list = byQueue[q].sort((a, b) => a.position - b.position);
+    document.getElementById('count-' + q).textContent = list.length;
+    const container = document.getElementById('cards-' + q);
+    container.innerHTML = '';
+    if (list.length === 0) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'No cards.';
+      container.appendChild(e);
+      continue;
+    }
+    for (const c of list) {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.draggable = true;
+      el.dataset.id = c.id;
+      el.ondragstart = onDragStart;
+      el.ondragend = onDragEnd;
+      el.innerHTML = '<a href="#" class="del" title="Remove card" onclick="removeCard(' + c.id + '); return false;">✕</a>' +
+        '<div class="id">' + esc(c.backlog_item_id) + '</div>' +
+        '<div class="title">' + esc(c.title) + '</div>';
+      container.appendChild(el);
+    }
+  }
+}
+
+function onDragStart(e) {
+  dragId = e.currentTarget.dataset.id;
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+function onDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  dragId = null;
+}
+function onDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.classList.add('dragover');
+}
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('dragover');
+}
+async function onDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  if (!dragId) return;
+  const queue = e.currentTarget.dataset.queue;
+  try {
+    const res = await fetch(API + '/' + dragId, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queue: queue })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await loadCards();
+  } catch (e2) {
+    setStatus('Failed to move card: ' + e2.message, true);
+  }
+}
+
+async function removeCard(id) {
+  if (!confirm('Remove this card from the kanban board? (BACKLOG.md itself is untouched.)')) return;
+  try {
+    const res = await fetch(API + '/' + id, { method: 'DELETE', credentials: 'same-origin' });
+    if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+    await loadCards();
+  } catch (e) {
+    setStatus('Failed to remove card: ' + e.message, true);
+  }
+}
+
+document.getElementById('add-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const backlogItemId = form.backlog_item_id.value.trim();
+  const title = form.title.value.trim();
+  if (!backlogItemId || !title) return;
+  try {
+    const res = await fetch(API, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backlog_item_id: backlogItemId, title: title })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    form.reset();
+    await loadCards();
+  } catch (e2) {
+    setStatus('Failed to add card: ' + e2.message, true);
+  }
+});
+
+loadCards();
+</script>
+</body>
+</html>
+`

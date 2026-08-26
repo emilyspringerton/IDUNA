@@ -453,6 +453,31 @@ func main() {
 	portalProtected := middleware.RequireCookieAuth(keys, iamStore, "/portal/login", handlers.AdminSessionTTL)(middleware.RequirePermission("devportal.access")(http.HandlerFunc(portalH.Home)))
 	mux.Handle("/portal", portalProtected)
 
+	// Kanban prioritization layer (S200-04-adjacent tooling, 2026-08-26) --
+	// see internal/http/handlers/kanban.go's own doc comment for the full
+	// founder-quote chain. The browser board (/admin/kanban and its own
+	// /admin/kanban/api/cards) reuses iduna.admin, same gate as every other
+	// /admin/* page -- a human who can already reach the Back Office needs
+	// no separate grant. The bearer-gated /api/v1/kanban/cards (CLI/agent
+	// access -- "i can ask the ai agent to work from the priority or cruise
+	// backlog") uses a NEW, narrower kanban.access permission instead of
+	// iduna.admin -- principle of least privilege: an automated agent that
+	// reads/writes the kanban queue has no business also holding full Back
+	// Office admin rights (migrations/truestore/202608260002_kanban_access_permission.sql,
+	// granted to EMILY-PRIME in config/agents.json). Two mounts of the SAME
+	// KanbanHandler either way -- zero duplicated logic, just two
+	// middleware chains (and two different permissions) in front of one
+	// handler instance.
+	kanbanH := &handlers.KanbanHandler{DB: db}
+	kanbanPageProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.KanbanPageHandler{}))
+	mux.Handle("/admin/kanban", kanbanPageProtected)
+	kanbanAdminAPIProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanH))
+	mux.Handle("/admin/kanban/api/cards", kanbanAdminAPIProtected)
+	mux.Handle("/admin/kanban/api/cards/", kanbanAdminAPIProtected)
+	kanbanAPIProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("kanban.access")(kanbanH))
+	mux.Handle("/api/v1/kanban/cards", kanbanAPIProtected)
+	mux.Handle("/api/v1/kanban/cards/", kanbanAPIProtected)
+
 	// Static files (registration SPA + event stream).
 	idunaRoot := getenv("IDUNA_ROOT", ".")
 	serveStatic := func(name string) http.HandlerFunc {

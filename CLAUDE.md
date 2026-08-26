@@ -23,7 +23,9 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | POST | `/api/v1/intelligence/observations` | Camera observations from MJOLNIR |
 | POST | `/api/v1/subscriptions` | Provision Emily+ subscription (requires subscriptions.admin) |
 | GET | `/api/v1/subscriptions/me` | Get caller's subscription status (requires JWT) |
+| GET/POST/PATCH/DELETE | `/api/v1/kanban/cards[/:id]` | Kanban prioritization layer over EMILY/BACKLOG.md (requires kanban.access) |
 | GET | `/admin/` | Back Office UI (admin role required) |
+| GET | `/admin/kanban` | Kanban board UI (3 columns: Backlog/Priority/Cruise, drag-and-drop; admin role required) |
 | GET | `/health` | Health check |
 
 ## Auth Model

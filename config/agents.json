@@ -22,7 +22,8 @@
         "blog.write",
         "intelligence.read",
         "tyler.write",
-        "promptoverse.write"
+        "promptoverse.write",
+        "kanban.access"
       ]
     },
     {
