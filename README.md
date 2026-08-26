@@ -1,12 +1,19 @@
 # IDUNA — Platform IAM & Governance Service
 
-## Current Status (2026-08-04)
+## Current Status (2026-08-26)
 
 Live user account creation exists at **okemily.com/** (Google OAuth → honor code → permanent
 gamertag, real end-to-end, `internal/http/handlers/web_ceremony.go`) for the platform-wide
 identity system. Separately, `POST /api/v1/auth/email/register` now takes an optional
 `character_name` and atomically creates a real DragonsNShit test account (real login + a real
 playable character in one call) — see `CHANGELOG.md` 2026-08-04. Both are real, tested, and live.
+
+**New since (see `CHANGELOG.md` for the full trail)**: a real developer notebook portal
+(`/portal`, Google-SSO-gated, `devportal.access`); a **kanban prioritization layer** over
+`EMILY/BACKLOG.md` — a real 3-column drag-and-drop board at `/admin/kanban` (`iduna.admin`) plus
+a bearer-gated agent/CLI API at `/api/v1/kanban/cards` (`kanban.access`, see `emily.cli`'s own
+`emily kanban` command); `/admin/login` and `/portal` both restyled to the real IDUNA cream/gold
+ceremony design system (Cormorant Garamond + Spectral).
 
 ---
 
@@ -191,6 +198,10 @@ Migrations live in `migrations/truestore/` named `YYYYMMDDNNNN_description.sql`.
 | `POST` | `/api/v1/device/exchange` | user | Exchange device code for JWT |
 | `GET` | `/api/v1/me` | JWT | Own identity + permissions |
 | `GET` | `/admin/...` | JWT (iduna.admin) | Admin UI |
+| `GET` | `/admin/kanban` | cookie (iduna.admin) | Kanban board — 3 columns (Backlog/Priority/Cruise), drag-and-drop, over `EMILY/BACKLOG.md` |
+| `GET/POST/PATCH/DELETE` | `/api/v1/kanban/cards[/:id]` | JWT (kanban.access) | Kanban board, agent/CLI half |
+| `GET` | `/portal` | cookie (devportal.access) | Developer notebook portal (Jupyter/SARENA_NOTEBOOK) |
+| `GET/POST` | `/api/v1/blog/posts[/:slug]` | none (GET) / JWT (POST, blog.write) | okemily.com blog |
 | `GET/POST` | `/api/v1/apples/...` | JWT | Golden documentation log |
 
 ---
