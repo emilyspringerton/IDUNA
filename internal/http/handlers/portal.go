@@ -207,7 +207,7 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
   :root {
     --bg: #f4f1ea; --bg-soft: #ede7dc; --panel: #ebe4d8; --line-soft: #d2c7b8;
     --gold: #c6a75e; --gold-soft: #bfa062; --gold-highlight: #d6bc7a;
-    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093; --amber: #9c6b1f;
+    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093; --amber: #9c6b1f; --sage: #5c7a4f;
   }
   * { box-sizing: border-box; }
   body {
@@ -261,6 +261,7 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
     padding: 0.28rem 0.6rem; border-radius: 999px; white-space: nowrap;
   }
   .status-pending { color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--line-soft) 45%); }
+  .status-live { color: var(--sage); border: 1px solid color-mix(in srgb, var(--sage) 55%, var(--line-soft) 45%); }
   .chevron { flex: none; color: var(--text-faint); }
   footer { max-width: 760px; margin: 0 auto; padding: 0 clamp(1.5rem, 5vw, 3.5rem) 2.5rem; font-size: 0.76rem; color: var(--text-faint); }
 </style>
@@ -285,17 +286,17 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
 <main>
   <p class="section-label">Signed in &mdash; select a tool below.</p>
   <div class="tool-list">
-    <a class="tool-row" href="#">
+    <a class="tool-row" href="https://okemily.com/jewel/lab" target="_blank" rel="noopener">
       <div class="tool-icon">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7a7368" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 4h16v12H4z"/><path d="M8 20h8"/><path d="M12 16v4"/><path d="M8 9l2.5 2.5L8 14"/><path d="M13 14h3"/>
         </svg>
       </div>
       <div class="tool-main">
-        <div class="tool-name">Jupyter</div>
-        <div class="tool-desc">PARENA Jupyter kernel &mdash; interactive notebook environment for compiled PARENA work.</div>
+        <div class="tool-name">Jupyter (JEWEL)</div>
+        <div class="tool-desc">PARENA Jupyter kernel &mdash; interactive notebook environment for compiled PARENA work. HTTP Basic Auth for now, pending Google OAuth.</div>
       </div>
-      <span class="tool-status status-pending">Install pending</span>
+      <span class="tool-status status-live">Live</span>
       <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
     </a>
     <a class="tool-row" href="#">
