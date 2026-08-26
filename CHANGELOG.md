@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-26
+
+- Kanban prioritization layer shipped: kanban_cards table (backlog_item_id/queue/position, an overlay over BACKLOG.md, not a replacement), KanbanHandler (GET/POST/PATCH/DELETE /api/v1/kanban/cards, mounted cookie-gated under /admin/kanban/api/ for the GUI and bearer-gated under /api/v1/ with a new kanban.access permission for CLI/agent access), KanbanPageHandler (3-column drag-and-drop GUI at /admin/kanban, cream/gold style). 9 new tests. Live-verified table+permission already applied to production; binary swap queued (sudo-queue/29). Apple #16053. (sess-20260825-1938-f6bd411e)
+
+
 ## 2026-08-25
 - Restyled /admin/login to the real IDUNA cream/gold style guide with Prompt-o-verse art (eye-of-providence-robot), cross-linked with /portal/login (sess-20260825-0828-cc32a704)
 - Restyled /portal login + home to the real IDUNA cream/gold style guide with Prompt-o-verse art (fenrir-robot, fox-robot); added /portal/logout (sess-20260825-0828-cc32a704)
