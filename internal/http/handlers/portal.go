@@ -299,7 +299,7 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
       <span class="tool-status status-live">Live</span>
       <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
     </a>
-    <a class="tool-row" href="#">
+    <a class="tool-row" href="https://okemily.com/sarena/" target="_blank" rel="noopener">
       <div class="tool-icon">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7a7368" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M9 3v18"/><path d="M13 8h3"/><path d="M13 12h3"/><path d="M13 16h3"/>
@@ -307,9 +307,9 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
       </div>
       <div class="tool-main">
         <div class="tool-name">SARENA_NOTEBOOK</div>
-        <div class="tool-desc">Native PARENA notebook GUI &mdash; title cards, built-in note rendering, libplot.</div>
+        <div class="tool-desc">Native PARENA notebook GUI &mdash; TYLER-style title cards, built-in note rendering. HTML v0 shipped; libplot/SDL-native are real, later phases.</div>
       </div>
-      <span class="tool-status status-pending">Not yet built</span>
+      <span class="tool-status status-live">Live</span>
       <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
     </a>
   </div>
