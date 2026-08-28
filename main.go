@@ -716,6 +716,15 @@ func main() {
 	mux.Handle("/api/v1/racer/queue/leave", middleware.RequireAuth(keys)(http.HandlerFunc(racerQueue.Leave)))
 	mux.Handle("/api/v1/racer/queue/status", middleware.RequireAuth(keys)(http.HandlerFunc(racerQueue.Status)))
 
+	// PAPERCRAFT connect-ticket (2026-08-28, real Phase 0) -- ticket only, no queue: this is a
+	// real single-node persistent world ("papercraft shouldnt have matches"), so a player mints a
+	// ticket and connects straight to the one always-running server, unlike the racer's own
+	// matchmaking flow just above.
+	papercraftTicketH := middleware.RequireAuth(keys)(&handlers.PapercraftTicketHandler{
+		Secret: []byte(os.Getenv("PAPERCRAFT_TICKET_SECRET")),
+	})
+	mux.Handle("/api/v1/papercraft/ticket", papercraftTicketH)
+
 	// DragonsNShit MMO API (S75-02/03/04/05) — auth required.
 	mmoH := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
 	mux.Handle("/api/v1/characters", mmoH)
