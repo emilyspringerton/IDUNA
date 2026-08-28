@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-08-28
+
+- Portal: SARENA_NOTEBOOK row now links to its real, shipped v0 (was 'Not yet built'). commit 216914b. (sess-20260825-1938-f6bd411e)
+
+
 ## 2026-08-26
 - portal.go: Jupyter tool row now links to the live JEWEL URL instead of href="#" (sess-20260825-1938-f6bd411e)
 - OpenAPI/Swagger spec updated with kanban + dev portal endpoints, both copies (openapi.go live spec + openapi.yaml static copy). New regression test guards against future drift. Apple filed. (sess-20260825-1938-f6bd411e)
