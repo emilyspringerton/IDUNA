@@ -3,8 +3,14 @@ package handlers
 import (
 	"html/template"
 	"net/http"
+	"strings"
+	"time"
 
+	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/http/middleware"
+	"iduna/internal/userlog"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // PortalHandler serves the developer notebook portal -- a Linode-Cloud-
@@ -29,6 +35,17 @@ import (
 // deliberate, not an oversight).
 type PortalHandler struct {
 	GoogleClientID string
+	// Proj/Keys/Issuer power PortalLocalLogin (2026-08-28, founder
+	// real-time: "get the developer portal working with iduna login
+	// instead of just the google oauth" -- Google sign-in stays
+	// blocked on a human-only GCP Console step, so this is the real,
+	// working near-term path, not a stopgap left half-built). Optional:
+	// a nil Proj means the local-login form is simply never rendered
+	// (Login below), matching GoogleClientID's own existing "sign-in
+	// not yet configured" fallback pattern for the Google button.
+	Proj   userlog.UserProjector
+	Keys   *authjwt.Keys
+	Issuer string
 }
 
 // Login renders the sign-in page. Unauthenticated only in practice --
@@ -48,6 +65,102 @@ func (h *PortalHandler) Login(w http.ResponseWriter, r *http.Request) {
 	renderHTML(w, portalLoginTmpl, map[string]any{
 		"GoogleClientID": h.GoogleClientID,
 		"Next":           next,
+		"LocalLogin":     h.Proj != nil,
+	})
+}
+
+// LocalLogin handles POST /portal/login -- real IDUNA (email +
+// password) sign-in for the developer portal, added 2026-08-28
+// alongside the pre-existing Google-button flow above. Founder real-
+// time: "get the developer portal working with iduna login instead of
+// just the google oauth" / "make the whole thing real we will fix
+// oauth once we get some inertia on the portal with a regular iduna
+// login" -- Google sign-in stays blocked on a human-only GCP Console
+// step, so this is the real, working path, not a stopgap.
+//
+// Reuses the exact same real verification LocalAuthHandler's own
+// ServeHTTP already establishes (bcrypt against local_users via the
+// shared userlog.UserProjector, same "invalid credentials" message
+// for both a missing user and a wrong password, no user-enumeration
+// leak) -- the only real difference is the OUTPUT shape: a real,
+// HttpOnly iduna_session COOKIE + redirect (matching AdminLoginHandler's
+// own real cookie-setting flow for /admin/login) instead of a JSON
+// token response, since this is a browser form post, not an API call.
+func (h *PortalHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
+	password := r.FormValue("password")
+	next := r.FormValue("next")
+	if next == "" {
+		next = "/portal"
+	}
+
+	loginErr := "Invalid email or password."
+	if email == "" || password == "" || h.Proj == nil {
+		h.renderLoginError(w, next, loginErr)
+		return
+	}
+
+	user, err := h.Proj.GetByEmail(r.Context(), email)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if user == nil || user.Status == "deleted" || user.Status == "suspended" {
+		h.renderLoginError(w, next, loginErr)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		h.renderLoginError(w, next, loginErr)
+		return
+	}
+
+	issuer := h.Issuer
+	if issuer == "" {
+		issuer = "https://iam.farthq.internal"
+	}
+	exp := time.Now().UTC().Add(AdminSessionTTL)
+	sub := "local:" + itoa(user.LocalUID)
+	claims := map[string]any{
+		"sub":          sub,
+		"local_uid":    user.LocalUID,
+		"email":        user.Email,
+		"display_name": user.DisplayName,
+		"permissions":  localUserPermissions(user),
+		"iss":          issuer,
+		"aud":          "farthq-ecosystem",
+		"exp":          exp.Unix(),
+	}
+	token, err := authjwt.Sign(h.Keys, claims)
+	if err != nil {
+		http.Error(w, "failed to issue session token", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "iduna_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(AdminSessionTTL.Seconds()),
+	})
+	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+func (h *PortalHandler) renderLoginError(w http.ResponseWriter, next, msg string) {
+	renderHTML(w, portalLoginTmpl, map[string]any{
+		"GoogleClientID": h.GoogleClientID,
+		"Next":           next,
+		"LocalLogin":     h.Proj != nil,
+		"Error":          msg,
 	})
 }
 
@@ -134,6 +247,23 @@ var portalLoginTmpl = template.Must(template.New("portal_login").Parse(`<!doctyp
   #g_id_signin { margin-top: 1.9rem; display: flex; justify-content: center; min-height: 44px; }
   .fallback { font-size: 0.85rem; color: var(--text-muted); }
   .footnote { margin-top: 1.9rem; font-size: 0.76rem; color: var(--text-faint); }
+  .local-form { margin-top: 1.8rem; text-align: left; display: grid; gap: 0.85rem; }
+  .local-form label { font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 0.3rem; }
+  .local-form input {
+    width: 100%; padding: 0.6rem 0.75rem; font-family: "Spectral", Georgia, serif; font-size: 0.95rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line-soft) 55%); border-radius: 5px;
+    background: color-mix(in srgb, var(--panel) 97%, white 3%); color: var(--text-main);
+  }
+  .local-form input:focus { outline: none; border-color: var(--gold-highlight); }
+  .local-form button {
+    margin-top: 0.3rem; padding: 0.65rem 1rem; font-family: "Spectral", Georgia, serif; font-size: 0.92rem;
+    border: 1px solid var(--gold); border-radius: 5px; background: color-mix(in srgb, var(--gold) 22%, var(--panel) 78%);
+    color: var(--text-main); cursor: pointer; transition: background 160ms ease;
+  }
+  .local-form button:hover { background: color-mix(in srgb, var(--gold) 34%, var(--panel) 66%); }
+  .error-msg { margin: 1.3rem 0 0; font-size: 0.84rem; color: #a8452f; }
+  .divider { display: flex; align-items: center; gap: 0.8rem; margin: 1.9rem 0 0; color: var(--text-faint); font-size: 0.74rem; letter-spacing: 0.05em; text-transform: uppercase; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
 </style>
 </head>
 <body>
@@ -143,7 +273,23 @@ var portalLoginTmpl = template.Must(template.New("portal_login").Parse(`<!doctyp
       <div class="body">
         <p class="label">EINHORN_INDUSTRIAL &middot; IDUNA</p>
         <h1>Developer Portal</h1>
-        <p class="sub">Sign in with the Google account tied to your IDUNA identity.</p>
+        <p class="sub">Sign in with your IDUNA identity.</p>
+        {{if .Error}}<p class="error-msg">{{.Error}}</p>{{end}}
+        {{if .LocalLogin}}
+        <form class="local-form" method="post" action="/portal/login">
+          <input type="hidden" name="next" value="{{.Next}}">
+          <div>
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required autocomplete="username">
+          </div>
+          <div>
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required autocomplete="current-password">
+          </div>
+          <button type="submit">Sign in</button>
+        </form>
+        {{if .GoogleClientID}}<div class="divider">or</div>{{end}}
+        {{end}}
         <div id="g_id_signin" data-google-client-id="{{.GoogleClientID}}" data-next="{{.Next}}"></div>
         <p class="footnote">Access is granted per-account. Signing in does not automatically<br>grant portal access &mdash; ask an IDUNA administrator.</p>
       </div>

@@ -100,6 +100,19 @@ func (h *LocalAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // localUserPermissions returns the permission set for a local user.
 // uid=0 (webmaster) gets full admin access.
+//
+// devportal.access added here 2026-08-28 (founder real-time: "get the
+// developer portal working with iduna login instead of just the
+// google oauth") -- the devportal permission itself already existed
+// (migration 202608250001_devportal_permissions.sql), but the only
+// real grant path built for it was the Google-OAuth-backed
+// users/user_roles RBAC table, which had zero real rows (nobody had
+// ever actually been granted it, Google sign-in being blocked on a
+// human-only GCP Console step). local_users' own permission set is
+// hardcoded here rather than DB-driven, so this is the real, direct
+// way to grant it to the two local accounts that actually exist
+// (uid=0 webmaster, and uid=1) without inventing a second, parallel
+// grant UI for a one-account, interim need.
 func localUserPermissions(u *userlog.LocalUser) []string {
 	if u.LocalUID == 0 {
 		return []string{
@@ -111,9 +124,10 @@ func localUserPermissions(u *userlog.LocalUser) []string {
 			"drive.read",
 			"drive.write",
 			"subscriptions.admin",
+			"devportal.access",
 		}
 	}
-	return []string{"iduna.me.read", "users.read.self"}
+	return []string{"iduna.me.read", "users.read.self", "devportal.access"}
 }
 
 func itoa(n int) string {

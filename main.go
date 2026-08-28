@@ -447,8 +447,13 @@ func main() {
 	// /portal/login is public; /portal itself requires a live cookie
 	// session AND the permission grant. See internal/http/handlers/portal.go
 	// for the full design rationale.
+	// Proj/Keys/Issuer are wired in below, once userProj exists (it's
+	// declared further down, at the "User event log + projector" block) --
+	// portalH is a pointer, so setting its fields after registration is
+	// fine, request handling only ever reads them at request time.
 	portalH := &handlers.PortalHandler{GoogleClientID: googleClientID}
 	mux.HandleFunc("GET /portal/login", portalH.Login)
+	mux.HandleFunc("POST /portal/login", portalH.LocalLogin)
 	mux.HandleFunc("GET /portal/logout", portalH.Logout)
 	portalProtected := middleware.RequireCookieAuth(keys, iamStore, "/portal/login", handlers.AdminSessionTTL)(middleware.RequirePermission("devportal.access")(http.HandlerFunc(portalH.Home)))
 	mux.Handle("/portal", portalProtected)
@@ -522,6 +527,13 @@ func main() {
 	} else {
 		log.Println("webmaster: uid=0 ready")
 	}
+
+	// Wire the developer portal's real IDUNA login now that userProj exists
+	// (see the portalH declaration above, in the /portal route block, for
+	// why this is set here rather than in the struct literal there).
+	portalH.Proj = userProj
+	portalH.Keys = keys
+	portalH.Issuer = issuer
 
 	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer}
 	registerH := &handlers.RegisterHandler{Keys: keys, Log: uel, Proj: userProj, Store: iamStore, Issuer: issuer}
