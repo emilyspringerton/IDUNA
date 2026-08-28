@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-08-28
+- Real IDUNA email+password login for the developer portal (POST /portal/login) — LocalLogin handler, devportal.access grant for local_users, form added to portalLoginTmpl. Founder real-time pivot: real portal login before fixing Google OAuth. (sess-20260825-1938-f6bd411e)
 
 - Portal: SARENA_NOTEBOOK row now links to its real, shipped v0 (was 'Not yet built'). commit 216914b. (sess-20260825-1938-f6bd411e)
 
