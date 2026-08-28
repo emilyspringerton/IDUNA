@@ -692,6 +692,30 @@ func main() {
 	mux.Handle("/api/v1/shankpit/queue/leave", middleware.RequireAuth(keys)(http.HandlerFunc(shankpitQueue.Leave)))
 	mux.Handle("/api/v1/shankpit/queue/status", middleware.RequireAuth(keys)(http.HandlerFunc(shankpitQueue.Status)))
 
+	// WEAKNIGHT_BEDROCK_RACERS connect-ticket + matchmaking queue (2026-08-28 racer-first pivot,
+	// founder real-time: "build login from the beginning take it from GFD" / "after you login it
+	// drops you into matchmaking queiueueue") -- direct instantiation of the exact same real,
+	// proven SHANKPIT patterns just above (RacerTicketHandler is a straight port of
+	// ShankpitTicketHandler; ShankpitQueue's own type is already generic enough to reuse as-is,
+	// no new queue implementation needed, just a second instance with its own ServerAddr).
+	racerTicketH := middleware.RequireAuth(keys)(&handlers.RacerTicketHandler{
+		Secret: []byte(os.Getenv("RACER_TICKET_SECRET")),
+	})
+	mux.Handle("/api/v1/racer/ticket", racerTicketH)
+
+	racerServerAddr := os.Getenv("RACER_SERVER_ADDR")
+	if racerServerAddr == "" {
+		racerServerAddr = "127.0.0.1:7788" // matches apps/client/src/main.c's own default --server-port
+	}
+	racerQueue := handlers.NewShankpitQueue(racerServerAddr)
+	// Bots already fill every non-human RC_MAX_VEHICLES slot server-side (apps/server/src/main.c)
+	// -- one real human queuing is a real, playable match on its own, unlike SHANKPIT's own
+	// human-vs-human bar. See ShankpitQueue.MinPlayers's own doc comment.
+	racerQueue.MinPlayers = 1
+	mux.Handle("/api/v1/racer/queue/join", middleware.RequireAuth(keys)(http.HandlerFunc(racerQueue.Join)))
+	mux.Handle("/api/v1/racer/queue/leave", middleware.RequireAuth(keys)(http.HandlerFunc(racerQueue.Leave)))
+	mux.Handle("/api/v1/racer/queue/status", middleware.RequireAuth(keys)(http.HandlerFunc(racerQueue.Status)))
+
 	// DragonsNShit MMO API (S75-02/03/04/05) — auth required.
 	mmoH := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
 	mux.Handle("/api/v1/characters", mmoH)

@@ -40,12 +40,28 @@ type ShankpitQueue struct {
 	entries    []*shankpitQueueEntry
 	ServerAddr string // where matched players should connect, e.g. "127.0.0.1:6969"
 
+	// MinPlayers overrides ShankpitQueueMinPlayers for this instance. Zero means "use the
+	// package default" -- added 2026-08-28 for WEAKNIGHT_BEDROCK_RACERS' own reuse of this same
+	// type (main.go's racerQueue): SHANKPIT is human-vs-human, so 2 real players queuing makes
+	// sense as the real bar, but a racer match already auto-fills every other slot with bots
+	// (RC_MAX_VEHICLES-1 of them, see apps/server/src/main.c), so a single real human queuing
+	// should be enough to match -- the queue's own "matched just means go connect now" v0
+	// semantics still hold, this only changes the threshold.
+	MinPlayers int
+
 	// NowFunc is overridable in tests; nil means time.Now.
 	NowFunc func() time.Time
 }
 
 func NewShankpitQueue(serverAddr string) *ShankpitQueue {
 	return &ShankpitQueue{ServerAddr: serverAddr}
+}
+
+func (q *ShankpitQueue) minPlayers() int {
+	if q.MinPlayers > 0 {
+		return q.MinPlayers
+	}
+	return ShankpitQueueMinPlayers
 }
 
 func (q *ShankpitQueue) now() time.Time {
@@ -85,7 +101,7 @@ func (q *ShankpitQueue) matchIfReady(now time.Time) {
 			queuing++
 		}
 	}
-	if queuing < ShankpitQueueMinPlayers {
+	if queuing < q.minPlayers() {
 		return
 	}
 	for _, e := range q.entries {
