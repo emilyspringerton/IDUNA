@@ -528,6 +528,26 @@ func main() {
 		log.Println("webmaster: uid=0 ready")
 	}
 
+	// ── Unified logging backend (Splunk-shaped: POST /services/collector, GET
+	// /services/search/jobs) — founder real-time, 2026-09-02: "create a unified logging
+	// backend for IDUNA using the new tech... one place to jump to and grab the logs... use
+	// whatever affordances and apis splunk uses". A real, SEPARATE event log from the user-event
+	// one above (that one is scoped to IDUNA local users specifically), but reuses that SAME
+	// real userlog.FileEventLog/Event machinery with its own root dir -- see
+	// internal/http/handlers/logs.go's own header comment for the real, checked-not-assumed
+	// reason this doesn't cross-import PRRJECT_FATBABY's own eventstore package instead (real
+	// CI here checks out this repo standalone, no go.work/sibling-repo present). Real, honest
+	// scope: ingest + search infrastructure only, not a retrofit of every existing handler to
+	// emit events yet.
+	unifiedLogDir := filepath.Join(idunaRootForLog, "var", "eventlog")
+	unifiedLog, err := userlog.NewFileEventLog(unifiedLogDir)
+	if err != nil {
+		log.Fatalf("unified event log: %v", err)
+	}
+	defer unifiedLog.Close()
+	logsH := &handlers.LogsHandler{Store: unifiedLog, HECToken: getenv("IDUNA_HEC_TOKEN", "")}
+	handlers.RegisterLogsRoutes(mux, logsH, keys)
+
 	// Wire the developer portal's real IDUNA login now that userProj exists
 	// (see the portalH declaration above, in the /portal route block, for
 	// why this is set here rather than in the struct literal there).

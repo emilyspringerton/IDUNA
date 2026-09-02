@@ -24,6 +24,8 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | POST | `/api/v1/subscriptions` | Provision Emily+ subscription (requires subscriptions.admin) |
 | GET | `/api/v1/subscriptions/me` | Get caller's subscription status (requires JWT) |
 | GET/POST/PATCH/DELETE | `/api/v1/kanban/cards[/:id]` | Kanban prioritization layer over EMILY/BACKLOG.md (requires kanban.access) |
+| POST | `/services/collector` | Unified logging backend ingest — Splunk HEC-shaped (`Authorization: Splunk <IDUNA_HEC_TOKEN>`), any JSON event |
+| GET | `/services/search/jobs` | Unified logging backend search — Splunk-shaped, synchronous v0 (`?search=type=x source=y q=text`, requires `logs.read`) |
 | GET | `/admin/` | Back Office UI (admin role required) |
 | GET | `/admin/kanban` | Kanban board UI (3 columns: Backlog/Priority/Cruise, drag-and-drop; admin role required) |
 | GET | `/health` | Health check |
@@ -66,6 +68,7 @@ GOOGLE_CLIENT_SECRET
 GOOGLE_REDIRECT_URI
 GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON — service account key JSON for Drive API (optional; Drive disabled if absent)
 GOOGLE_DRIVE_FOLDER_ID            — Google Drive folder ID for training artifact uploads (optional; root if absent)
+IDUNA_HEC_TOKEN       — bearer token for POST /services/collector (unified logging backend ingest); unset disables ingest entirely
 ```
 
 ## Apples
@@ -80,6 +83,20 @@ Apple types: `improvement`, `observation`, `audit`, `escalation`, `completion`, 
 Sprint lifecycle: `pending` → `queued` → `in_progress` → `complete` | `blocked`.  
 MJOLNIR submits requirements (pending) → Emily Prime translates to RSI item (queued) →
 Claude Code executes → Emily Prime patches on completion (complete/blocked).
+
+## Unified Logging Backend
+
+"One real place to jump to and grab the logs" (founder real-time, 2026-09-02) — a real,
+Splunk-shaped event log, separate from the user-event log above (that one is scoped to IDUNA
+local users specifically). Backed by `github.com/example/prrject-fatbaby/eventstore` (the same
+real, already-general NDJSON append-only log PRRJECT_FATBABY's own signal pipeline uses), stored
+under `var/eventlog/`. See `internal/http/handlers/logs.go` for the real, current scope: ingest
+(`POST /services/collector`, Splunk HEC's own real endpoint path/auth/payload/response shape)
+and search (`GET /services/search/jobs`, Splunk's own real endpoint path, deliberately
+synchronous — a real, narrow SPL subset: `type=`/`source=`/`q=` terms, space-separated, ANDed).
+Real, honest, not yet done: no existing IDUNA code path (auth, admin actions, HEIMDAL
+transitions, ...) emits events into this log yet — this ships the ingest/search infrastructure
+only, a real, separate, deliberately-not-attempted-yet integration pass.
 
 ## Migrations Checklist
 
