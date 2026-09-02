@@ -69,14 +69,24 @@ const kanbanPageHTML = `<!doctype html>
     border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line-soft) 55%);
     border-radius: 8px; background: color-mix(in srgb, var(--panel) 92%, white 8%);
     min-height: 200px; padding: 0.9rem;
+    /* Bounded, independently-scrollable columns (2026-09-02, real UX bug
+       found live: with 170 real open backlog items, Inbox grew far taller
+       than a viewport, so scrolling down to find one meant the OTHER
+       columns' own drop targets scrolled out of view too -- couldn't drag
+       between them at all). Every column now fits within one screen at
+       once and scrolls on its own, the same real pattern Trello-style
+       boards use -- no column's own length can ever push another
+       column's drop target off-screen again. */
+    display: flex; flex-direction: column; max-height: calc(100vh - 12rem);
   }
   .col.dragover { border-color: var(--gold-highlight); background: color-mix(in srgb, var(--panel) 84%, white 16%); }
   .col h2 {
     margin: 0 0 0.8rem; font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 1.15rem;
     letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
-    display: flex; justify-content: space-between; align-items: baseline;
+    display: flex; justify-content: space-between; align-items: baseline; flex: none;
   }
   .col h2 .count { font-family: "Spectral", serif; font-weight: 400; font-size: 0.85rem; color: var(--text-faint); }
+  .cards { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
   .card {
     border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--line-soft) 45%);
     border-radius: 6px; background: color-mix(in srgb, var(--panel) 97%, white 3%);
@@ -89,6 +99,19 @@ const kanbanPageHTML = `<!doctype html>
   .card .title { font-size: 0.92rem; margin-top: 0.15rem; }
   .card .del { float: right; color: var(--text-faint); text-decoration: none; font-size: 0.85rem; }
   .card .del:hover { color: #a24; }
+  /* "Send to" quick-move (2026-09-02, same UX fix as the scrollable
+     columns above) -- founder: "we need to either extend the columns down
+     or add a right click send to interface." A small always-visible
+     select per card is more reliable than a real right-click context menu
+     (no custom positioning/dismiss-on-click-outside code, works via
+     keyboard, works on touch) and fully covers the same real need: moving
+     a card without dragging it across the screen at all. */
+  .card .move-to { margin-top: 0.4rem; }
+  .card .move-to select {
+    font-family: "Spectral", serif; font-size: 0.78rem; padding: 0.2rem 0.35rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line-soft) 55%); border-radius: 4px;
+    background: color-mix(in srgb, var(--panel) 97%, white 3%); color: var(--text-muted); cursor: pointer;
+  }
   .empty { color: var(--text-faint); font-size: 0.85rem; font-style: italic; padding: 0.4rem 0; }
   .add-row {
     margin-top: 1.4rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
@@ -157,6 +180,23 @@ function esc(s) {
   return d.innerHTML;
 }
 
+const QUEUE_LABELS = { backlog: 'Backlog', priority: 'Priority', cruise: 'Cruise' };
+
+// moveToSelectHTML: the "send to" quick-move control for one card -- see
+// this file's own CSS/JS comments on why this exists alongside drag.
+// excludeQueue omits a card's own current queue from the options (not
+// meaningful for an inbox item, which has no current queue yet).
+function moveToSelectHTML(kind, id, title, excludeQueue) {
+  const titleAttr = title != null ? ' data-title="' + esc(title) + '"' : '';
+  let opts = '<option value="">Send to…</option>';
+  for (const q of ['backlog', 'priority', 'cruise']) {
+    if (q === excludeQueue) continue;
+    opts += '<option value="' + q + '">' + QUEUE_LABELS[q] + '</option>';
+  }
+  return '<div class="move-to"><select data-kind="' + kind + '" data-id="' + esc(id) + '"' + titleAttr +
+    ' onchange="onMoveToSelect(event)" onclick="event.stopPropagation()">' + opts + '</select></div>';
+}
+
 function setStatus(msg, isError) {
   const el = document.getElementById('status');
   el.textContent = msg || '';
@@ -218,7 +258,8 @@ function renderInbox(items) {
     el.ondragend = onDragEnd;
     el.title = 'Drag into a column to sort it';
     el.innerHTML = '<div class="id">' + esc(it.id) + '</div>' +
-      '<div class="title">' + esc(it.title) + '</div>';
+      '<div class="title">' + esc(it.title) + '</div>' +
+      moveToSelectHTML('inbox', it.id, it.title, null);
     container.appendChild(el);
   }
 }
@@ -250,7 +291,8 @@ function render(cards) {
       el.ondragend = onDragEnd;
       el.innerHTML = '<a href="#" class="del" title="Remove card" onclick="removeCard(' + c.id + '); return false;">✕</a>' +
         '<div class="id">' + esc(c.backlog_item_id) + '</div>' +
-        '<div class="title">' + esc(c.title) + '</div>';
+        '<div class="title">' + esc(c.title) + '</div>' +
+        moveToSelectHTML('card', c.id, null, q);
       container.appendChild(el);
     }
   }
@@ -276,24 +318,27 @@ function onDragOver(e) {
 function onDragLeave(e) {
   e.currentTarget.classList.remove('dragover');
 }
-async function onDrop(e) {
-  e.preventDefault();
-  e.currentTarget.classList.remove('dragover');
-  if (!dragId) return;
-  const queue = e.currentTarget.dataset.queue;
+// sendToQueue: the one real place both drag-and-drop (onDrop) and the
+// "send to" quick-select (onMoveToSelect) route through -- either creates
+// a real card from an inbox item, or moves an existing one, then refreshes
+// both panes. Pulled out 2026-09-02 alongside the quick-select itself
+// (real UX bug found live: a card far down a long Inbox column couldn't be
+// dragged to a column scrolled out of view -- see this file's own CSS
+// comment on .col for the other real half of that fix).
+async function sendToQueue(kind, id, title, queue) {
   try {
     let res;
-    if (dragKind === 'inbox') {
-      // Real, un-carded backlog item dragged in -- create the real card
-      // (title comes from the live BACKLOG.md parse, not hand-typed).
+    if (kind === 'inbox') {
+      // Real, un-carded backlog item -- create the real card (title comes
+      // from the live BACKLOG.md parse, not hand-typed).
       res = await fetch(API, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backlog_item_id: dragId, title: dragTitle, queue: queue })
+        body: JSON.stringify({ backlog_item_id: id, title: title, queue: queue })
       });
     } else {
-      res = await fetch(API + '/' + dragId, {
+      res = await fetch(API + '/' + id, {
         method: 'PATCH',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -305,6 +350,21 @@ async function onDrop(e) {
   } catch (e2) {
     setStatus('Failed to move card: ' + e2.message, true);
   }
+}
+
+function onMoveToSelect(e) {
+  const el = e.currentTarget;
+  const queue = el.value;
+  if (!queue) return;
+  sendToQueue(el.dataset.kind, el.dataset.id, el.dataset.title || null, queue);
+  el.value = ''; // reset to the placeholder -- this is an action, not a persistent field
+}
+
+async function onDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  if (!dragId) return;
+  await sendToQueue(dragKind, dragId, dragTitle, e.currentTarget.dataset.queue);
 }
 
 async function removeCard(id) {
