@@ -477,7 +477,7 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 	// our last fetch (e.g. a manual push, or — before gitSyncMu existed — a
 	// racing sync) and try again once. This is the fix for the historical
 	// silent-drop failure mode: a rejected push used to just log and return.
-	if err := gitPushWithRetry(gitDir, gitEnv); err != nil {
+	if err := gitPushWithRetry("apples-git", gitDir, gitEnv); err != nil {
 		log.Printf("[apples-git] git push failed after retry: %v", err)
 		return
 	}
@@ -486,14 +486,19 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 
 // gitPushWithRetry pushes gitDir's current branch. On rejection (most likely
 // non-fast-forward), it pulls with --rebase and retries once. Caller must
-// already hold gitSyncMu.
-func gitPushWithRetry(gitDir string, gitEnv []string) error {
+// already hold its own real sync mutex (gitSyncMu for apples, backlogFileMu
+// for kanban -- two distinct working trees, never the same lock). logPrefix
+// names which real caller this is for in the log line (real bug found
+// writing kanban.go's own tests: this used to hardcode "[apples-git]"
+// unconditionally, so a kanban-triggered push failure logged under the
+// wrong subsystem's name).
+func gitPushWithRetry(logPrefix, gitDir string, gitEnv []string) error {
 	pushCmd := exec.Command("git", "-C", gitDir, "push")
 	pushCmd.Env = gitEnv
 	if out, err := pushCmd.CombinedOutput(); err == nil {
 		return nil
 	} else {
-		log.Printf("[apples-git] git push rejected, retrying after rebase: %v\n%s", err, out)
+		log.Printf("[%s] git push rejected, retrying after rebase: %v\n%s", logPrefix, err, out)
 	}
 
 	pullCmd := exec.Command("git", "-C", gitDir, "pull", "--rebase")

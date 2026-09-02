@@ -3,10 +3,17 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
+	"iduna/internal/backlog"
 	"iduna/internal/http/middleware"
 )
 
@@ -34,9 +41,44 @@ import (
 //	  -> 200  (the "drag" action -- moves a card between columns and/or reorders within one)
 //	DELETE /api/v1/kanban/cards/{id}
 //	  -> 204
+// BacklogPath, when set, turns on eventual-consistency sync with
+// EMILY/BACKLOG.md itself (founder real-time, 2026-09-02: "if it gets
+// added to backlog via the kanban interface it needs to wind up in the
+// golden backlog file in git and as we work it needs to all stay in sync
+// -- for example when we finish something it needs to move off the kanban
+// board"). Two real, independent directions, both best-effort/fire-and-
+// forget (never blocks or fails the real DB write a caller is waiting on):
+//
+//  1. create(): a new card whose backlog_item_id isn't already a real
+//     line in BACKLOG.md gets one appended for real, committed, and
+//     pushed (see syncNewItemToBacklogGit) -- the same real
+//     git-add/commit/push-with-retry idiom apples.go's own
+//     syncAppleToGit already established, not a new pattern.
+//  2. list(): any card whose backlog_item_id is confirmed CHECKED in the
+//     live file is deleted from kanban_cards before being returned --
+//     "finishing something moves it off the board" for real, not just
+//     visually.
+//
+// Empty BacklogPath disables both (kanban still works as pure metadata,
+// the original design) -- a real, deliberate off switch, not an oversight.
 type KanbanHandler struct {
-	DB *sql.DB
+	DB          *sql.DB
+	BacklogPath string
 }
+
+// backlogFileMu serializes writes to BACKLOG.md + its git add/commit/push
+// across concurrent create() calls -- a distinct mutex from apples.go's own
+// gitSyncMu since it guards a different working tree (EMILY, not APPLES).
+var backlogFileMu sync.Mutex
+
+// kanbanIntakeSectionHeading is the one standing, real section every
+// kanban-originated new item lands under -- deliberately NOT guessing
+// which existing topical SECTION a card typed into the kanban UI belongs
+// to (kanban.go's own doc comment already establishes IDs and containing
+// section numbers as independent, real, unrelated numbers elsewhere in
+// this file). A human/agent can re-file an entry into a more fitting
+// section later; this just guarantees it's real, in git, and never lost.
+const kanbanIntakeSectionHeading = "## SECTION 9000: ADDED VIA IDUNA KANBAN INTERFACE (eventual-consistency intake)"
 
 type kanbanCard struct {
 	ID            int64  `json:"id"`
@@ -105,8 +147,49 @@ func (h *KanbanHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, c)
 	}
+	rows.Close()
+
+	out = h.removeCompletedCards(r, out)
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// removeCompletedCards: "when we finish something it needs to move off the
+// kanban board" (founder real-time, 2026-09-02) -- any card whose
+// backlog_item_id is confirmed CHECKED in the live BACKLOG.md is deleted
+// from kanban_cards for real (not just hidden), then excluded from this
+// response, so the board reflects "done" the moment the file does. A card
+// whose id isn't found at all in the file (renamed section, moved,
+// deleted) is left alone -- only a POSITIVE checked confirmation removes
+// anything, never an absence. Best-effort: a backlog read failure just
+// returns cards unfiltered, logged, same as every other best-effort path
+// in this file.
+func (h *KanbanHandler) removeCompletedCards(r *http.Request, cards []kanbanCard) []kanbanCard {
+	if h.BacklogPath == "" || len(cards) == 0 {
+		return cards
+	}
+	items, err := backlog.ParseFile(h.BacklogPath)
+	if err != nil {
+		log.Printf("[kanban] read backlog for completed-card check: %v", err)
+		return cards
+	}
+	byID := backlog.ByID(items)
+
+	kept := make([]kanbanCard, 0, len(cards))
+	for _, c := range cards {
+		if it, ok := byID[c.BacklogItemID]; ok && it.Checked {
+			if _, err := h.DB.ExecContext(r.Context(), `DELETE FROM kanban_cards WHERE id = ?`, c.ID); err != nil {
+				log.Printf("[kanban] failed to remove completed card id=%d (%s): %v", c.ID, c.BacklogItemID, err)
+				kept = append(kept, c) // couldn't remove it -- still show it rather than silently drop
+				continue
+			}
+			log.Printf("[kanban] %s marked done in BACKLOG.md -- removed from the board", c.BacklogItemID)
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept
 }
 
 func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +244,102 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]int64{"id": id})
+
+	// Fire-and-forget: never let a slow/failed git sync hold up the response
+	// a caller (the kanban page's own fetch, or a real bearer-auth agent
+	// caller) is waiting on for the DB write, which has already succeeded.
+	if h.BacklogPath != "" {
+		go h.syncNewItemToBacklogGitIfMissing(body.BacklogItemID, body.Title)
+	}
+}
+
+// syncNewItemToBacklogGitIfMissing checks the live file first (best-effort
+// -- a read failure just skips the sync, logged, same as every other
+// best-effort path here) and only appends+commits+pushes if id genuinely
+// isn't already a real line in BACKLOG.md. A card created for an id that
+// DOES already exist (the normal case -- most cards track a real item
+// already written by a human/agent session) is a real no-op here, exactly
+// as it should be: BACKLOG.md already has it, nothing to sync.
+func (h *KanbanHandler) syncNewItemToBacklogGitIfMissing(id, title string) {
+	items, err := backlog.ParseFile(h.BacklogPath)
+	if err != nil {
+		log.Printf("[kanban-git] read backlog: %v", err)
+		return
+	}
+	if _, exists := backlog.ByID(items)[id]; exists {
+		return
+	}
+
+	backlogFileMu.Lock()
+	defer backlogFileMu.Unlock()
+
+	// Re-check under the lock -- a concurrent create() for the same id
+	// could have already appended it while this goroutine was waiting.
+	items, err = backlog.ParseFile(h.BacklogPath)
+	if err != nil {
+		log.Printf("[kanban-git] re-read backlog: %v", err)
+		return
+	}
+	if _, exists := backlog.ByID(items)[id]; exists {
+		return
+	}
+
+	data, err := os.ReadFile(h.BacklogPath)
+	if err != nil {
+		log.Printf("[kanban-git] read %s: %v", h.BacklogPath, err)
+		return
+	}
+	text := string(data)
+
+	sessTag := currentSessionTag(emilyRootDefault())
+	sessSuffix := ""
+	if sessTag != "" {
+		sessSuffix = "\n  (" + sessTag + ")"
+	}
+	entry := fmt.Sprintf("- [ ] **%s: %s** Added via the IDUNA kanban interface, not yet triaged into a real section.%s\n", id, title, sessSuffix)
+
+	if !strings.Contains(text, kanbanIntakeSectionHeading) {
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		text += "\n" + kanbanIntakeSectionHeading + "\n\n"
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += entry
+
+	if err := os.WriteFile(h.BacklogPath, []byte(text), 0o644); err != nil {
+		log.Printf("[kanban-git] write %s: %v", h.BacklogPath, err)
+		return
+	}
+
+	emilyRoot := filepath.Dir(h.BacklogPath)
+	commitMsg := fmt.Sprintf("backlog: + %s (added via IDUNA kanban interface)", id)
+	if sessTag != "" {
+		commitMsg += "\n\nsession: " + sessTag
+	}
+	gitEnv := append(os.Environ(),
+		"GIT_AUTHOR_NAME=iduna", "GIT_AUTHOR_EMAIL=iduna@einhorn.internal",
+		"GIT_COMMITTER_NAME=iduna", "GIT_COMMITTER_EMAIL=iduna@einhorn.internal",
+	)
+	addCmd := exec.Command("git", "-C", emilyRoot, "add", "BACKLOG.md")
+	addCmd.Env = gitEnv
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		log.Printf("[kanban-git] git add: %v\n%s", err, out)
+		return
+	}
+	commitCmd := exec.Command("git", "-C", emilyRoot, "commit", "-m", commitMsg)
+	commitCmd.Env = gitEnv
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		log.Printf("[kanban-git] git commit: %v\n%s", err, out)
+		return
+	}
+	if err := gitPushWithRetry("kanban-git", emilyRoot, gitEnv); err != nil {
+		log.Printf("[kanban-git] git push failed after retry: %v", err)
+		return
+	}
+	log.Printf("[kanban-git] synced new backlog item %s → BACKLOG.md", id)
 }
 
 func (h *KanbanHandler) update(w http.ResponseWriter, r *http.Request) {

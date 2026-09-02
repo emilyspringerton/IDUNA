@@ -479,7 +479,20 @@ func main() {
 	// KanbanHandler either way -- zero duplicated logic, just two
 	// middleware chains (and two different permissions) in front of one
 	// handler instance.
-	kanbanH := &handlers.KanbanHandler{DB: db}
+	// Real bridge from EMILY/BACKLOG.md to the kanban board (2026-09-02,
+	// founder real-time: "get the backlog working with the kanban" -> "if
+	// it gets added to backlog via the kanban interface it needs to wind
+	// up in the golden backlog file in git and as we work it needs to all
+	// stay in sync") -- see internal/backlog's own doc comment and
+	// kanban.go/kanban_inbox.go's own headers. EMILY and IDUNA are sibling
+	// checkouts under the same monorepo root by convention everywhere else
+	// in this repo (every CLAUDE.md cross-links "EMILY/BACKLOG.md" as a
+	// bare relative path); default here resolves that the same way,
+	// overridable for a non-standard checkout layout. Shared by kanbanH
+	// (create/list) and kanbanInboxH below -- one real path, not two that
+	// could drift apart.
+	backlogPath := getenv("EMILY_BACKLOG_PATH", "/home/fatbaby/EMILY/BACKLOG.md")
+	kanbanH := &handlers.KanbanHandler{DB: db, BacklogPath: backlogPath}
 	kanbanPageProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.KanbanPageHandler{}))
 	mux.Handle("/admin/kanban", kanbanPageProtected)
 	kanbanAdminAPIProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanH))
@@ -488,14 +501,7 @@ func main() {
 	kanbanAPIProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("kanban.access")(kanbanH))
 	mux.Handle("/api/v1/kanban/cards", kanbanAPIProtected)
 	mux.Handle("/api/v1/kanban/cards/", kanbanAPIProtected)
-	// Real bridge from EMILY/BACKLOG.md to the kanban board (2026-09-02,
-	// founder real-time: "get the backlog working with the kanban") -- see
-	// internal/backlog's own doc comment and kanban_inbox.go's own header.
-	// EMILY and IDUNA are sibling checkouts under the same monorepo root by
-	// convention everywhere else in this repo (every CLAUDE.md cross-links
-	// "EMILY/BACKLOG.md" as a bare relative path); default here resolves
-	// that the same way, overridable for a non-standard checkout layout.
-	kanbanInboxH := &handlers.KanbanInboxHandler{DB: db, BacklogPath: getenv("EMILY_BACKLOG_PATH", "/home/fatbaby/EMILY/BACKLOG.md")}
+	kanbanInboxH := &handlers.KanbanInboxHandler{DB: db, BacklogPath: backlogPath}
 	mux.Handle("/admin/kanban/api/inbox", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanInboxH)))
 
 	// Static files (registration SPA + event stream).

@@ -71,7 +71,7 @@ GOOGLE_REDIRECT_URI
 GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON — service account key JSON for Drive API (optional; Drive disabled if absent)
 GOOGLE_DRIVE_FOLDER_ID            — Google Drive folder ID for training artifact uploads (optional; root if absent)
 IDUNA_HEC_TOKEN       — bearer token for POST /services/collector (unified logging backend ingest); unset disables ingest entirely
-EMILY_BACKLOG_PATH    — path to EMILY/BACKLOG.md for the kanban inbox bridge; default /home/fatbaby/EMILY/BACKLOG.md
+EMILY_BACKLOG_PATH    — path to EMILY/BACKLOG.md for the kanban board's two-way sync (inbox read + new-card write-back); default /home/fatbaby/EMILY/BACKLOG.md
 ```
 
 ## Apples
