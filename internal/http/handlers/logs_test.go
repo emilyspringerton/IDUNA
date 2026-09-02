@@ -177,3 +177,62 @@ func TestSearchRejectsBadSyntax(t *testing.T) {
 		t.Errorf("want 400, got %d", rr.Code)
 	}
 }
+
+// TestSearchRegexFiltersCorrectly -- S227-01: real regex-based search, a real, separate
+// query parameter from the `search` mini-language.
+func TestSearchRegexFiltersCorrectly(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	mux, _ := newLogsMux(t, keys, "secret-hec-token")
+
+	post := func(sourcetype, event string) {
+		body := `{"event":` + event + `,"sourcetype":"` + sourcetype + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/services/collector", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Splunk secret-hec-token")
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("seeding event failed: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	post("iduna:auth", `{"user":"alice","status_code":200}`)
+	post("iduna:auth", `{"user":"bob","status_code":404}`)
+
+	token := makeAgentToken(t, keys, "operator", []string{"logs.read"})
+	req := httptest.NewRequest(http.MethodGet, `/services/search/jobs?regex=%22status_code%22%3A4%5Cd%5Cd`, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Results []userlog.Record `json:"results"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 matching result (the 4xx one), got %d: %+v", len(resp.Results), resp.Results)
+	}
+	if !bytes.Contains(resp.Results[0].Event.Data, []byte("bob")) {
+		t.Errorf("expected the bob/404 event to match, got: %s", resp.Results[0].Event.Data)
+	}
+}
+
+// TestSearchRejectsBadRegex -- an invalid regex pattern is a real, honest 400, not a panic or a
+// silently-ignored filter.
+func TestSearchRejectsBadRegex(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	mux, _ := newLogsMux(t, keys, "secret-hec-token")
+
+	token := makeAgentToken(t, keys, "operator", []string{"logs.read"})
+	req := httptest.NewRequest(http.MethodGet, "/services/search/jobs?regex=%28%5B", nil) // "(["
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", rr.Code)
+	}
+}

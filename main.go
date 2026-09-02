@@ -457,6 +457,12 @@ func main() {
 	mux.HandleFunc("GET /portal/logout", portalH.Logout)
 	portalProtected := middleware.RequireCookieAuth(keys, iamStore, "/portal/login", handlers.AdminSessionTTL)(middleware.RequirePermission("devportal.access")(http.HandlerFunc(portalH.Home)))
 	mux.Handle("/portal", portalProtected)
+	// S227-01: the log query page requires BOTH devportal.access (the base portal gate) AND
+	// logs.read (the same permission GET /services/search/jobs itself requires) -- a devportal
+	// user isn't automatically entitled to read the security/audit log this page exposes.
+	portalLogsProtected := middleware.RequireCookieAuth(keys, iamStore, "/portal/login", handlers.AdminSessionTTL)(
+		middleware.RequirePermission("devportal.access")(middleware.RequirePermission("logs.read")(http.HandlerFunc(portalH.Logs))))
+	mux.Handle("/portal/logs", portalLogsProtected)
 
 	// Kanban prioritization layer (S200-04-adjacent tooling, 2026-08-26) --
 	// see internal/http/handlers/kanban.go's own doc comment for the full

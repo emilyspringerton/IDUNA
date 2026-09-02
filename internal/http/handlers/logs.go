@@ -40,9 +40,13 @@
 package handlers
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -157,38 +161,80 @@ const (
 	maxScanBatch     = 50000
 )
 
-// HandleSearch implements GET /services/search/jobs (Splunk's own real search endpoint path,
-// deliberately synchronous — see this file's own header comment). Requires the caller's JWT to
-// carry `logs.read` (wired via middleware.RequirePermission in main.go, the same real pattern
-// every other protected IDUNA endpoint already uses).
-func (h *LogsHandler) HandleSearch(w http.ResponseWriter, r *http.Request) {
-	typ, source, q, err := parseSearchTerms(r.URL.Query().Get("search"))
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
+// searchQuery is this v0's own real, deliberately narrow query shape: the `search` mini-language
+// (type=/source=/q=) PLUS a real, separate `regex` parameter (founder real-time, 2026-09-02:
+// "make sure regex is available to query with"). `regex` is deliberately its own top-level query
+// PARAMETER rather than a fourth `search` term -- a regex pattern can itself contain spaces
+// (`\d+ \d+`), which would break `parseSearchTerms`'s own space-tokenized mini-language; giving
+// it a real, separate parameter sidesteps that instead of inventing quoting rules for the
+// mini-language. Real, honest safety property, not assumed: Go's own `regexp` package compiles
+// to RE2 automata (linear-time matching, no catastrophic backtracking) -- a search regex here
+// can be slow on a large log, but not a real ReDoS vector, unlike PCRE-style engines.
+type searchQuery struct {
+	typ, source, q string
+	regex          *regexp.Regexp
+}
 
-	recs, err := h.Store.ReadFrom(r.Context(), 0, maxScanBatch)
+func parseSearchQuery(values url.Values) (searchQuery, error) {
+	typ, source, q, err := parseSearchTerms(values.Get("search"))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+		return searchQuery{}, err
 	}
+	var re *regexp.Regexp
+	if pattern := values.Get("regex"); pattern != "" {
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return searchQuery{}, fmt.Errorf("invalid regex: %w", err)
+		}
+	}
+	return searchQuery{typ: typ, source: source, q: q, regex: re}, nil
+}
 
+// searchEvents is the real, shared filter logic both HandleSearch (the JSON API) and the
+// developer portal's own log query page call -- one real implementation, not two copies that
+// could drift.
+func searchEvents(ctx context.Context, store userlog.EventLog, query searchQuery) ([]userlog.Record, error) {
+	recs, err := store.ReadFrom(ctx, 0, maxScanBatch)
+	if err != nil {
+		return nil, err
+	}
 	results := make([]userlog.Record, 0, len(recs))
 	for _, rec := range recs {
-		if typ != "" && rec.Event.Type != typ {
+		if query.typ != "" && rec.Event.Type != query.typ {
 			continue
 		}
-		if source != "" && rec.Event.Source != source {
+		if query.source != "" && rec.Event.Source != query.source {
 			continue
 		}
-		if q != "" && !strings.Contains(string(rec.Event.Data), q) {
+		if query.q != "" && !strings.Contains(string(rec.Event.Data), query.q) {
+			continue
+		}
+		if query.regex != nil && !query.regex.Match(rec.Event.Data) {
 			continue
 		}
 		results = append(results, rec)
 		if len(results) >= maxSearchResults {
 			break
 		}
+	}
+	return results, nil
+}
+
+// HandleSearch implements GET /services/search/jobs (Splunk's own real search endpoint path,
+// deliberately synchronous — see this file's own header comment). Requires the caller's JWT to
+// carry `logs.read` (wired via middleware.RequirePermission in main.go, the same real pattern
+// every other protected IDUNA endpoint already uses).
+func (h *LogsHandler) HandleSearch(w http.ResponseWriter, r *http.Request) {
+	query, err := parseSearchQuery(r.URL.Query())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	results, err := searchEvents(r.Context(), h.Store, query)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
 	}
 
 	// Splunk's own real "results" key, for real API-shape familiarity.

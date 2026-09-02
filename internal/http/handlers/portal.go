@@ -190,6 +190,49 @@ func (h *PortalHandler) Home(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Logs renders the log query page (S227-01, founder real-time: "build the log query interface
+// into the iduna developer portal make sure regex is available to query with"). Real, honest,
+// deliberately accepted limitation, named directly on the page itself, not hidden: this reuses
+// LogsHandler's own real searchEvents/parseSearchQuery (logs.go), which reads from the SAME
+// unified event log this very IDUNA process is running against -- viewing logs genuinely
+// requires IDUNA to be up. The founder's own real words on this: "we dont want to rely on iduna
+// being up to view the logs but if iduna is our logging backend assuming it needs to be up
+// anyways to query the logs - for now this is technical debt... in the name of keeping
+// operations simple while we plan migration." Not solved here -- a real, separate, deliberately
+// deferred architecture question (S227-02).
+func (h *PortalHandler) Logs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	hasQuery := q.Get("search") != "" || q.Get("regex") != ""
+
+	data := map[string]any{
+		"Title":       "Logs",
+		"SearchValue": q.Get("search"),
+		"RegexValue":  q.Get("regex"),
+		"HasQuery":    hasQuery,
+	}
+	if hasQuery {
+		query, err := parseSearchQuery(q)
+		if err != nil {
+			data["QueryError"] = err.Error()
+		} else if h.EventLog == nil {
+			data["QueryError"] = "the unified logging backend is not configured on this server"
+		} else {
+			results, err := searchEvents(r.Context(), h.EventLog, query)
+			if err != nil {
+				data["QueryError"] = err.Error()
+			} else {
+				data["Results"] = results
+				data["ResultCount"] = len(results)
+			}
+		}
+	}
+	renderHTML(w, portalLogsTmpl, data)
+}
+
 // Logout clears the iduna_session cookie and returns to the portal login
 // page -- same clearing shape as admin_login.go's own logout, duplicated
 // (not called directly) so a portal sign-out lands back on /portal/login
@@ -214,6 +257,131 @@ func (h *PortalHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // 2026-08-25) then ported here so the live page matches, not just a
 // preview -- founder pattern established earlier this session ("finish
 // the wotan stuff first i want to see that online first").
+// portalLogsTmpl -- the real log query page, S227-01. Same real style guide as
+// portalHomeTmpl/portalLoginTmpl (cream/gold ceremony aesthetic) so this reads as one system,
+// not a bolted-on tool. A plain GET form (search=, regex=) so a query is a real, bookmarkable/
+// shareable URL, matching how every other real query/search tool (including the JSON API this
+// reuses) already works.
+var portalLogsTmpl = template.Must(template.New("portal_logs").Funcs(template.FuncMap{
+	"eventJSON": func(data []byte) string { return string(data) },
+}).Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — Developer Portal</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Spectral:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg-soft: #ede7dc; --panel: #ebe4d8; --line-soft: #d2c7b8;
+    --gold: #c6a75e; --gold-soft: #bfa062; --gold-highlight: #d6bc7a;
+    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093; --rose: #b76e79;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at top, color-mix(in srgb, var(--bg) 84%, #fff 16%), var(--bg-soft));
+    color: var(--text-main); font-family: "Spectral", Georgia, serif; line-height: 1.45;
+  }
+  a { color: var(--gold-soft); }
+  a:hover { color: var(--gold-highlight); }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.6rem clamp(1.5rem, 5vw, 3.5rem) 1.2rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--gold) 35%, var(--line-soft) 65%);
+  }
+  .wordmark { letter-spacing: 0.3em; text-transform: uppercase; font-size: 0.68rem; color: var(--text-muted); }
+  .wordmark strong { color: var(--text-main); }
+  .session { display: flex; align-items: center; gap: 0.9rem; font-size: 0.82rem; color: var(--text-muted); }
+  main { max-width: 980px; margin: 0 auto; padding: 2.4rem clamp(1.5rem, 5vw, 3.5rem) 4rem; }
+  h1 { font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 2.1rem; margin: 0 0 0.3rem; }
+  .note {
+    font-size: 0.82rem; color: var(--text-muted); margin: 0 0 1.6rem; padding: 0.7rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line-soft) 55%); border-radius: 6px;
+    background: color-mix(in srgb, var(--panel) 92%, white 8%);
+  }
+  form.query {
+    display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.8rem; margin-bottom: 1.8rem;
+  }
+  .field label { display: block; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.35rem; }
+  .field input {
+    width: 100%; padding: 0.6rem 0.8rem; font: inherit; font-size: 0.88rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--line-soft) 45%);
+    background: color-mix(in srgb, var(--panel) 97%, white 3%); color: var(--text-main); border-radius: 4px;
+  }
+  .field input:focus { outline: none; border-color: var(--gold-highlight); }
+  .go {
+    align-self: end; padding: 0.62rem 1.3rem; border-radius: 4px; font: inherit; font-size: 0.88rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 80%, #7b6640 20%);
+    background: color-mix(in srgb, var(--panel) 88%, #e5dac7 12%); color: var(--text-main); cursor: pointer;
+  }
+  .go:hover { border-color: var(--gold-highlight); }
+  .err {
+    font-size: 0.85rem; color: var(--rose); padding: 0.75rem 1rem; border-radius: 5px;
+    background: color-mix(in srgb, var(--panel) 90%, var(--rose) 10%);
+    border: 1px solid color-mix(in srgb, var(--rose) 55%, var(--line-soft) 45%); margin-bottom: 1.2rem;
+  }
+  .count { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line-soft); }
+  td { padding: 0.55rem 0.7rem; border-bottom: 1px solid color-mix(in srgb, var(--line-soft) 60%, transparent 40%); vertical-align: top; }
+  td.mono, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.78rem; word-break: break-all; }
+  td.data { max-width: 420px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wordmark">EINHORN_INDUSTRIAL &nbsp;/&nbsp; <strong>IDUNA</strong></div>
+  <div class="session"><a href="/portal">&larr; Back to tools</a></div>
+</header>
+<main>
+  <h1>Logs</h1>
+  <p class="note">One place to grab the logs &mdash; queries a real, live unified event log
+    (<code>POST /services/collector</code> / <code>GET /services/search/jobs</code>). This page
+    requires IDUNA itself to be up: a real, deliberately accepted limitation while migration is
+    planned, not solved here.</p>
+
+  <form class="query" method="get" action="/portal/logs">
+    <div class="field">
+      <label for="search">Search (type=&hellip; source=&hellip; q=&hellip;)</label>
+      <input type="text" id="search" name="search" value="{{.SearchValue}}" placeholder="type=iduna:auth.local.failure">
+    </div>
+    <div class="field">
+      <label for="regex">Regex (matched against each event's own raw JSON)</label>
+      <input type="text" id="regex" name="regex" value="{{.RegexValue}}" placeholder="&quot;status_code&quot;:4\d\d">
+    </div>
+    <button class="go" type="submit">Search</button>
+  </form>
+
+  {{if .QueryError}}<div class="err">{{.QueryError}}</div>{{end}}
+
+  {{if .HasQuery}}
+    {{if not .QueryError}}
+      <p class="count">{{.ResultCount}} matching event{{if ne .ResultCount 1}}s{{end}}</p>
+      <table>
+        <thead><tr><th>Seq</th><th>Type</th><th>Source</th><th>Occurred At</th><th>Data</th></tr></thead>
+        <tbody>
+          {{range .Results}}
+          <tr>
+            <td class="mono">{{.Sequence}}</td>
+            <td class="mono">{{.Event.Type}}</td>
+            <td class="mono">{{.Event.Source}}</td>
+            <td class="mono">{{.Event.OccurredAt}}</td>
+            <td class="data mono">{{eventJSON .Event.Data}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{end}}
+  {{end}}
+</main>
+</body>
+</html>
+`))
+
 var portalLoginTmpl = template.Must(template.New("portal_login").Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -465,6 +633,19 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
       <div class="tool-main">
         <div class="tool-name">SARENA_NOTEBOOK</div>
         <div class="tool-desc">Native PARENA notebook GUI &mdash; TYLER-style title cards, built-in note rendering. HTML v0 shipped; libplot/SDL-native are real, later phases.</div>
+      </div>
+      <span class="tool-status status-live">Live</span>
+      <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </a>
+    <a class="tool-row" href="/portal/logs">
+      <div class="tool-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7a7368" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>
+        </svg>
+      </div>
+      <div class="tool-main">
+        <div class="tool-name">Logs</div>
+        <div class="tool-desc">Query the unified event log &mdash; auth/admin events, type/source/regex filters. Requires IDUNA itself to be up (a real, accepted limitation for now).</div>
       </div>
       <span class="tool-status status-live">Live</span>
       <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>

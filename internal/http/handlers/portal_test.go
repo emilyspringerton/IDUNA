@@ -115,6 +115,75 @@ func TestPortalHandler_LocalLogin_EmitsEvents(t *testing.T) {
 	}
 }
 
+// TestPortalHandler_Logs_NoQueryShowsForm -- with no query params, the page renders the search
+// form and no results table (and doesn't touch the event log at all).
+func TestPortalHandler_Logs_NoQueryShowsForm(t *testing.T) {
+	h := &handlers.PortalHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/portal/logs", nil)
+	rr := httptest.NewRecorder()
+	h.Logs(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `name="search"`) || !strings.Contains(body, `name="regex"`) {
+		t.Errorf("expected a search form with search+regex fields, got: %s", body)
+	}
+	if strings.Contains(body, "matching event") {
+		t.Errorf("expected no results section with no query, got: %s", body)
+	}
+}
+
+// TestPortalHandler_Logs_RealQueryReturnsResults -- a real query against a real event log
+// returns the matching event, rendered in the page.
+func TestPortalHandler_Logs_RealQueryReturnsResults(t *testing.T) {
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	_, err = eventLog.Append(context.Background(), userlog.Event{
+		ID: "e1", Type: "iduna:auth.local.failure", Source: "iduna-auth",
+		Data: []byte(`{"email":"alice@example.com"}`),
+	})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	h := &handlers.PortalHandler{EventLog: eventLog}
+	req := httptest.NewRequest(http.MethodGet, "/portal/logs?search=type=iduna:auth.local.failure", nil)
+	rr := httptest.NewRecorder()
+	h.Logs(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "1 matching event") {
+		t.Errorf("expected exactly 1 matching event reported, got: %s", body)
+	}
+	if !strings.Contains(body, "alice@example.com") {
+		t.Errorf("expected the matched event's own data rendered, got: %s", body)
+	}
+}
+
+// TestPortalHandler_Logs_BadRegexShowsError -- a real, honest error message, not a panic or a
+// silently-empty result set.
+func TestPortalHandler_Logs_BadRegexShowsError(t *testing.T) {
+	h := &handlers.PortalHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/portal/logs?regex=%28%5B", nil) // "(["
+	rr := httptest.NewRecorder()
+	h.Logs(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (the page itself renders fine, with an inline error), got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "invalid regex") {
+		t.Errorf("expected an inline invalid-regex error, got: %s", rr.Body.String())
+	}
+}
+
 func TestPortalHandler_Home_ListsTools(t *testing.T) {
 	h := &handlers.PortalHandler{}
 	req := httptest.NewRequest(http.MethodGet, "/portal", nil)
