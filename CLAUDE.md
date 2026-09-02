@@ -25,7 +25,8 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | GET | `/api/v1/subscriptions/me` | Get caller's subscription status (requires JWT) |
 | GET/POST/PATCH/DELETE | `/api/v1/kanban/cards[/:id]` | Kanban prioritization layer over EMILY/BACKLOG.md (requires kanban.access) |
 | POST | `/services/collector` | Unified logging backend ingest — Splunk HEC-shaped (`Authorization: Splunk <IDUNA_HEC_TOKEN>`), any JSON event |
-| GET | `/services/search/jobs` | Unified logging backend search — Splunk-shaped, synchronous v0 (`?search=type=x source=y q=text`, requires `logs.read`) |
+| GET | `/services/search/jobs` | Unified logging backend search — Splunk-shaped, synchronous v0 (`?search=type=x source=y q=text&regex=pattern`, requires `logs.read`) |
+| GET | `/portal/logs` | Log query UI in the developer portal (same search/regex query, requires `devportal.access` + `logs.read`) |
 | GET | `/admin/` | Back Office UI (admin role required) |
 | GET | `/admin/kanban` | Kanban board UI (3 columns: Backlog/Priority/Cruise, drag-and-drop; admin role required) |
 | GET | `/health` | Health check |
@@ -88,15 +89,29 @@ Claude Code executes → Emily Prime patches on completion (complete/blocked).
 
 "One real place to jump to and grab the logs" (founder real-time, 2026-09-02) — a real,
 Splunk-shaped event log, separate from the user-event log above (that one is scoped to IDUNA
-local users specifically). Backed by `github.com/example/prrject-fatbaby/eventstore` (the same
-real, already-general NDJSON append-only log PRRJECT_FATBABY's own signal pipeline uses), stored
-under `var/eventlog/`. See `internal/http/handlers/logs.go` for the real, current scope: ingest
-(`POST /services/collector`, Splunk HEC's own real endpoint path/auth/payload/response shape)
-and search (`GET /services/search/jobs`, Splunk's own real endpoint path, deliberately
-synchronous — a real, narrow SPL subset: `type=`/`source=`/`q=` terms, space-separated, ANDed).
-Real, honest, not yet done: no existing IDUNA code path (auth, admin actions, HEIMDAL
-transitions, ...) emits events into this log yet — this ships the ingest/search infrastructure
-only, a real, separate, deliberately-not-attempted-yet integration pass.
+local users specifically). Backed by `internal/userlog.FileEventLog` (the same real NDJSON
+append-only log the user-event log itself uses, just a separate root dir), stored under
+`var/eventlog/` — real, checked-not-assumed reason this reuses `userlog` rather than
+`PRRJECT_FATBABY`'s own `eventstore` package (the more "original" implementation of the identical
+shape): IDUNA's real CI checks out this repo standalone with no `go.work`/sibling-repo present,
+confirmed via `GOWORK=off go build ./...`. See `internal/http/handlers/logs.go` for the real
+scope: ingest (`POST /services/collector`, Splunk HEC's own real endpoint path/auth/payload/
+response shape) and search (`GET /services/search/jobs`, Splunk's own real endpoint path,
+deliberately synchronous — a real, narrow SPL subset: `type=`/`source=`/`q=` terms plus a real,
+separate `regex=` parameter, RE2-based so it's not a ReDoS vector). A real log query UI lives in
+the developer portal at `/portal/logs` (`internal/http/handlers/portal.go`'s own `Logs` method) —
+same search/regex query, rendered as a real HTML form + results table; requires IDUNA itself to
+be up (a real, deliberately accepted limitation while migration is planned, named on the page
+itself, not hidden).
+
+Real code paths that DO emit events today: `GoogleAuthHandler`/`AgentAuthHandler`/
+`LocalAuthHandler`/`AdminLoginHandler`/`PortalHandler.LocalLogin` (every real login surface —
+`iduna:auth.*.success`/`.failure`) and `AdminHandler.userAction`/`agentAction` suspend/activate
+(`iduna:admin.user.suspend`/`.unsuspend`, `iduna:admin.agent.suspend`/`.unsuspend`). Every
+emission point is nil-safe (an unset `EventLog` field is a no-op, not a panic) and fire-and-forget
+(a logging-backend outage never breaks the real auth/admin flow it's observing). Real, honest,
+not yet done: HEIMDAL sprint transitions, Apple postings, and role/permission grant/revoke don't
+emit events yet (`EMILY/BACKLOG.md` SECTION 226, S226-04).
 
 ## Migrations Checklist
 
