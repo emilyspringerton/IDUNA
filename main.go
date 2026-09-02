@@ -548,6 +548,14 @@ func main() {
 	logsH := &handlers.LogsHandler{Store: unifiedLog, HECToken: getenv("IDUNA_HEC_TOKEN", "")}
 	handlers.RegisterLogsRoutes(mux, logsH, keys)
 
+	// S226-02: wire real auth events into the unified log now that unifiedLog exists (same real
+	// "construct early, wire the field once its own dependency exists" pattern portalH.Proj
+	// below already uses). googleAuthH/agentAuthH were already constructed above and registered
+	// into mux by pointer, so setting EventLog here reaches the exact same handler instances
+	// actually serving requests.
+	googleAuthH.EventLog = unifiedLog
+	agentAuthH.EventLog = unifiedLog
+
 	// Wire the developer portal's real IDUNA login now that userProj exists
 	// (see the portalH declaration above, in the /portal route block, for
 	// why this is set here rather than in the struct literal there).

@@ -14,6 +14,7 @@ import (
 	"iduna/internal/auth"
 	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
+	"iduna/internal/userlog"
 )
 
 // stubAgentStore implements the minimal subset of store.IAMStore needed by AgentAuthHandler.
@@ -187,6 +188,61 @@ func TestAgentAuthHandler_MissingFields(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
+	}
+}
+
+// TestAgentAuthHandler_EmitsEvents -- S226-02: real success/failure events actually land in the
+// unified logging backend, and the failure event never carries the raw agent_secret.
+func TestAgentAuthHandler_EmitsEvents(t *testing.T) {
+	k, err := jwt.GenerateKeys()
+	if err != nil {
+		t.Fatalf("generate keys: %v", err)
+	}
+	store := &stubAgentStore{agents: map[string]*auth.Agent{
+		"EMILY": {ID: "agent-1", Name: "EMILY", Type: "LLM_AGENT", Status: "ACTIVE",
+			Permissions: []string{"fatbaby.read"}},
+	}}
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	h := &handlers.AgentAuthHandler{Keys: k, Store: store, EventLog: eventLog}
+
+	// A real success.
+	body, _ := json.Marshal(map[string]string{"agent_name": "EMILY", "agent_secret": "sk-emily"})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/v1/auth/agent", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("success request: status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+
+	// A real failure -- an unknown agent.
+	body, _ = json.Marshal(map[string]string{"agent_name": "GHOST", "agent_secret": "top-secret-value"})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/v1/auth/agent", bytes.NewReader(body)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("failure request: status = %d, want 401", rr.Code)
+	}
+
+	recs, err := eventLog.ReadFrom(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(recs))
+	}
+	if recs[0].Event.Type != "iduna:auth.agent.success" {
+		t.Errorf("event 0 Type = %q, want iduna:auth.agent.success", recs[0].Event.Type)
+	}
+	if recs[1].Event.Type != "iduna:auth.agent.failure" {
+		t.Errorf("event 1 Type = %q, want iduna:auth.agent.failure", recs[1].Event.Type)
+	}
+	if strings.Contains(string(recs[1].Event.Data), "top-secret-value") {
+		t.Errorf("failure event must never contain the raw agent_secret, got: %s", recs[1].Event.Data)
+	}
+	if !strings.Contains(string(recs[1].Event.Data), "GHOST") {
+		t.Errorf("failure event should record the attempted agent_name, got: %s", recs[1].Event.Data)
 	}
 }
 
