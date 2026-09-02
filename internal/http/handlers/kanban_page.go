@@ -61,7 +61,10 @@ const kanbanPageHTML = `<!doctype html>
   h1 { margin: 0; font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 2rem; letter-spacing: 0.01em; }
   .sub { color: var(--text-muted); font-size: 0.85rem; }
   main { padding: 1.6rem 2rem 3rem; }
-  .board { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); gap: 1.2rem; align-items: start; }
+  .board { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: 1.2rem; align-items: start; }
+  .col.inbox { background: color-mix(in srgb, var(--panel) 80%, var(--bg-soft) 20%); }
+  .card.inbox-card { cursor: grab; border-style: dashed; }
+  .card.inbox-card .id { color: var(--text-muted); }
   .col {
     border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line-soft) 55%);
     border-radius: 8px; background: color-mix(in srgb, var(--panel) 92%, white 8%);
@@ -111,12 +114,16 @@ const kanbanPageHTML = `<!doctype html>
 <header>
   <div>
     <h1>Kanban</h1>
-    <div class="sub">Priority layer over EMILY/BACKLOG.md — drag a card between columns; backlog item ids stay authoritative in BACKLOG.md itself.</div>
+    <div class="sub">Priority layer over EMILY/BACKLOG.md — drag a card between columns, or drag a real open backlog item in from Inbox to sort it. Backlog item ids/content stay authoritative in BACKLOG.md itself; completed items are hidden here to save DOM nodes (view those in BACKLOG.md directly).</div>
   </div>
   <div class="sub"><a href="/admin">← Back Office</a></div>
 </header>
 <main>
   <div class="board">
+    <div class="col inbox">
+      <h2>Inbox <span class="count" id="count-inbox">0</span></h2>
+      <div class="cards" id="cards-inbox"></div>
+    </div>
     <div class="col" data-queue="backlog" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
       <h2>Backlog <span class="count" id="count-backlog">0</span></h2>
       <div class="cards" id="cards-backlog"></div>
@@ -139,7 +146,10 @@ const kanbanPageHTML = `<!doctype html>
 </main>
 <script>
 const API = '/admin/kanban/api/cards';
+const INBOX_API = '/admin/kanban/api/inbox';
 let dragId = null;
+let dragKind = null;   // 'card' (an existing kanban_cards row) or 'inbox' (a real, un-carded open backlog item)
+let dragTitle = null;  // only meaningful for dragKind === 'inbox' -- the real title to use when creating the card
 
 function esc(s) {
   const d = document.createElement('div');
@@ -166,6 +176,53 @@ async function loadCards() {
   }
 }
 
+// loadInbox: real, open (unchecked) BACKLOG.md items with no kanban card
+// yet -- see kanban_inbox.go's own doc comment. Refreshed alongside
+// loadCards() any time a card is created/moved/deleted, since an item
+// leaving/entering "un-carded" status changes what belongs here.
+async function loadInbox() {
+  try {
+    const res = await fetch(INBOX_API, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const items = await res.json();
+    renderInbox(items || []);
+  } catch (e) {
+    const container = document.getElementById('cards-inbox');
+    container.innerHTML = '';
+    const el = document.createElement('div');
+    el.className = 'empty';
+    el.textContent = 'Failed to load inbox: ' + e.message;
+    container.appendChild(el);
+  }
+}
+
+function renderInbox(items) {
+  document.getElementById('count-inbox').textContent = items.length;
+  const container = document.getElementById('cards-inbox');
+  container.innerHTML = '';
+  if (items.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.textContent = 'No open, un-sorted backlog items.';
+    container.appendChild(e);
+    return;
+  }
+  for (const it of items) {
+    const el = document.createElement('div');
+    el.className = 'card inbox-card';
+    el.draggable = true;
+    el.dataset.id = it.id;
+    el.dataset.title = it.title;
+    el.dataset.kind = 'inbox';
+    el.ondragstart = onDragStart;
+    el.ondragend = onDragEnd;
+    el.title = 'Drag into a column to sort it';
+    el.innerHTML = '<div class="id">' + esc(it.id) + '</div>' +
+      '<div class="title">' + esc(it.title) + '</div>';
+    container.appendChild(el);
+  }
+}
+
 function render(cards) {
   const byQueue = { backlog: [], priority: [], cruise: [] };
   for (const c of cards) {
@@ -188,6 +245,7 @@ function render(cards) {
       el.className = 'card';
       el.draggable = true;
       el.dataset.id = c.id;
+      el.dataset.kind = 'card';
       el.ondragstart = onDragStart;
       el.ondragend = onDragEnd;
       el.innerHTML = '<a href="#" class="del" title="Remove card" onclick="removeCard(' + c.id + '); return false;">✕</a>' +
@@ -200,12 +258,16 @@ function render(cards) {
 
 function onDragStart(e) {
   dragId = e.currentTarget.dataset.id;
+  dragKind = e.currentTarget.dataset.kind || 'card';
+  dragTitle = e.currentTarget.dataset.title || null;
   e.currentTarget.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'move';
 }
 function onDragEnd(e) {
   e.currentTarget.classList.remove('dragging');
   dragId = null;
+  dragKind = null;
+  dragTitle = null;
 }
 function onDragOver(e) {
   e.preventDefault();
@@ -220,14 +282,26 @@ async function onDrop(e) {
   if (!dragId) return;
   const queue = e.currentTarget.dataset.queue;
   try {
-    const res = await fetch(API + '/' + dragId, {
-      method: 'PATCH',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ queue: queue })
-    });
+    let res;
+    if (dragKind === 'inbox') {
+      // Real, un-carded backlog item dragged in -- create the real card
+      // (title comes from the live BACKLOG.md parse, not hand-typed).
+      res = await fetch(API, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backlog_item_id: dragId, title: dragTitle, queue: queue })
+      });
+    } else {
+      res = await fetch(API + '/' + dragId, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queue: queue })
+      });
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    await loadCards();
+    await Promise.all([loadCards(), loadInbox()]);
   } catch (e2) {
     setStatus('Failed to move card: ' + e2.message, true);
   }
@@ -238,7 +312,7 @@ async function removeCard(id) {
   try {
     const res = await fetch(API + '/' + id, { method: 'DELETE', credentials: 'same-origin' });
     if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
-    await loadCards();
+    await Promise.all([loadCards(), loadInbox()]);
   } catch (e) {
     setStatus('Failed to remove card: ' + e.message, true);
   }
@@ -259,13 +333,14 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     form.reset();
-    await loadCards();
+    await Promise.all([loadCards(), loadInbox()]);
   } catch (e2) {
     setStatus('Failed to add card: ' + e2.message, true);
   }
 });
 
 loadCards();
+loadInbox();
 </script>
 </body>
 </html>

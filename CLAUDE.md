@@ -28,7 +28,8 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | GET | `/services/search/jobs` | Unified logging backend search — Splunk-shaped, synchronous v0 (`?search=type=x source=y q=text&regex=pattern`, requires `logs.read`) |
 | GET | `/portal/logs` | Log query UI in the developer portal (same search/regex query, requires `devportal.access` + `logs.read`) |
 | GET | `/admin/` | Back Office UI (admin role required) |
-| GET | `/admin/kanban` | Kanban board UI (3 columns: Backlog/Priority/Cruise, drag-and-drop; admin role required) |
+| GET | `/admin/kanban` | Kanban board UI (Inbox + 3 columns: Backlog/Priority/Cruise, drag-and-drop; admin role required) |
+| GET | `/admin/kanban/api/inbox` | Real, open (unchecked), not-yet-carded `EMILY/BACKLOG.md` items — the live bridge from the backlog file to the board (admin role required) |
 | GET | `/health` | Health check |
 
 ## Auth Model
@@ -70,6 +71,7 @@ GOOGLE_REDIRECT_URI
 GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON — service account key JSON for Drive API (optional; Drive disabled if absent)
 GOOGLE_DRIVE_FOLDER_ID            — Google Drive folder ID for training artifact uploads (optional; root if absent)
 IDUNA_HEC_TOKEN       — bearer token for POST /services/collector (unified logging backend ingest); unset disables ingest entirely
+EMILY_BACKLOG_PATH    — path to EMILY/BACKLOG.md for the kanban inbox bridge; default /home/fatbaby/EMILY/BACKLOG.md
 ```
 
 ## Apples
