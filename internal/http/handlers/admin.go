@@ -16,6 +16,7 @@ import (
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
 	"iduna/internal/store"
+	"iduna/internal/userlog"
 )
 
 // AdminHandler serves the Back Office admin UI.
@@ -25,6 +26,7 @@ type AdminHandler struct {
 	Mailinglist *mailinglist.Store // optional -- nil is handled gracefully (dashboard just omits the signup stats card)
 	DB          *sql.DB            // raw truestore handle, for player/character queries not exposed via IAMStore (dragonsnshit account creation, GM tools)
 	DriveSlurp  *DriveSlurpHandler // OAuth-based Drive browse+slurp feature, S187-03/S188-05/S189-10
+	EventLog    userlog.EventLog   // optional (S226-03); nil skips event emission entirely
 	mux         *http.ServeMux
 }
 
@@ -149,8 +151,18 @@ func (h *AdminHandler) userAction(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "suspend":
 		opErr = h.Store.UpdateUserStatus(ctx, userID, "SUSPENDED", operatorID)
+		if opErr == nil {
+			emitAuthEvent(ctx, h.EventLog, "iduna:admin.user.suspend", "iduna-admin", map[string]any{
+				"user_id": userID, "operator_id": operatorID,
+			})
+		}
 	case "activate":
 		opErr = h.Store.UpdateUserStatus(ctx, userID, "ACTIVE", operatorID)
+		if opErr == nil {
+			emitAuthEvent(ctx, h.EventLog, "iduna:admin.user.unsuspend", "iduna-admin", map[string]any{
+				"user_id": userID, "operator_id": operatorID,
+			})
+		}
 	case "roles":
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad form", http.StatusBadRequest)
@@ -238,11 +250,17 @@ func (h *AdminHandler) agentAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "operation failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		emitAuthEvent(ctx, h.EventLog, "iduna:admin.agent.suspend", "iduna-admin", map[string]any{
+			"agent_id": agentID, "operator_id": operatorID,
+		})
 	case "activate":
 		if err := h.Store.UpdateAgentStatus(ctx, agentID, "ACTIVE", operatorID); err != nil {
 			http.Error(w, "operation failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		emitAuthEvent(ctx, h.EventLog, "iduna:admin.agent.unsuspend", "iduna-admin", map[string]any{
+			"agent_id": agentID, "operator_id": operatorID,
+		})
 	case "permissions":
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad form", http.StatusBadRequest)

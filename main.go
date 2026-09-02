@@ -548,13 +548,17 @@ func main() {
 	logsH := &handlers.LogsHandler{Store: unifiedLog, HECToken: getenv("IDUNA_HEC_TOKEN", "")}
 	handlers.RegisterLogsRoutes(mux, logsH, keys)
 
-	// S226-02: wire real auth events into the unified log now that unifiedLog exists (same real
-	// "construct early, wire the field once its own dependency exists" pattern portalH.Proj
-	// below already uses). googleAuthH/agentAuthH were already constructed above and registered
-	// into mux by pointer, so setting EventLog here reaches the exact same handler instances
-	// actually serving requests.
+	// S226-02/S226-03: wire real auth + admin events into the unified log now that unifiedLog
+	// exists (same real "construct early, wire the field once its own dependency exists" pattern
+	// portalH.Proj below already uses). All of these were already constructed above and
+	// registered into mux by pointer, so setting EventLog here reaches the exact same handler
+	// instances actually serving requests. Covers every real "login to the IDUNA backend"
+	// surface (Google/agent API auth, the Back Office cookie login, the developer portal cookie
+	// login) plus admin suspend/unsuspend for both users and agents.
 	googleAuthH.EventLog = unifiedLog
 	agentAuthH.EventLog = unifiedLog
+	adminLoginH.EventLog = unifiedLog
+	adminH.EventLog = unifiedLog
 
 	// Wire the developer portal's real IDUNA login now that userProj exists
 	// (see the portalH declaration above, in the /portal route block, for
@@ -562,8 +566,9 @@ func main() {
 	portalH.Proj = userProj
 	portalH.Keys = keys
 	portalH.Issuer = issuer
+	portalH.EventLog = unifiedLog
 
-	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer}
+	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer, EventLog: unifiedLog}
 	registerH := &handlers.RegisterHandler{Keys: keys, Log: uel, Proj: userProj, Store: iamStore, Issuer: issuer}
 	usersH := &handlers.UsersHandler{Log: uel, Proj: userProj}
 

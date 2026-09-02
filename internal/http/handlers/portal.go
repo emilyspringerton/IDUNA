@@ -43,9 +43,10 @@ type PortalHandler struct {
 	// a nil Proj means the local-login form is simply never rendered
 	// (Login below), matching GoogleClientID's own existing "sign-in
 	// not yet configured" fallback pattern for the Google button.
-	Proj   userlog.UserProjector
-	Keys   *authjwt.Keys
-	Issuer string
+	Proj     userlog.UserProjector
+	Keys     *authjwt.Keys
+	Issuer   string
+	EventLog userlog.EventLog // optional (S226-03); nil skips event emission entirely
 }
 
 // Login renders the sign-in page. Unauthenticated only in practice --
@@ -114,10 +115,16 @@ func (h *PortalHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user == nil || user.Status == "deleted" || user.Status == "suspended" {
+		emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.portal.failure", "iduna-auth", map[string]any{
+			"email": email,
+		})
 		h.renderLoginError(w, next, loginErr)
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.portal.failure", "iduna-auth", map[string]any{
+			"email": email,
+		})
 		h.renderLoginError(w, next, loginErr)
 		return
 	}
@@ -151,6 +158,10 @@ func (h *PortalHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(AdminSessionTTL.Seconds()),
+	})
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.portal.success", "iduna-auth", map[string]any{
+		"local_uid": user.LocalUID,
+		"email":     user.Email,
 	})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }

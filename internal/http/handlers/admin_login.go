@@ -9,6 +9,7 @@ import (
 
 	"iduna/internal/auth/jwt"
 	"iduna/internal/store"
+	"iduna/internal/userlog"
 )
 
 // AdminSessionTTL is the admin session cookie/JWT lifetime. Shared with
@@ -18,9 +19,10 @@ const AdminSessionTTL = 8 * time.Hour
 // AdminLoginHandler serves /admin/login (GET + POST) and /admin/logout.
 // These routes are public (no auth middleware) so the browser can reach them.
 type AdminLoginHandler struct {
-	Store  store.IAMStore
-	Keys   *jwt.Keys
-	Issuer string
+	Store    store.IAMStore
+	Keys     *jwt.Keys
+	Issuer   string
+	EventLog userlog.EventLog // optional (S226-03); nil skips event emission entirely
 }
 
 func (h *AdminLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +57,10 @@ func (h *AdminLoginHandler) login(w http.ResponseWriter, r *http.Request) {
 
 	agent, err := h.Store.AuthenticateAgent(r.Context(), agentName, agentSecret)
 	if err != nil {
+		emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.admin_login.failure", "iduna-auth", map[string]any{
+			"agent_name": agentName,
+			"reason":     "invalid_credentials",
+		})
 		renderLoginPage(w, map[string]any{
 			"Error": "Invalid agent name or secret.",
 			"Next":  next,
@@ -70,6 +76,10 @@ func (h *AdminLoginHandler) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !hasAdmin {
+		emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.admin_login.failure", "iduna-auth", map[string]any{
+			"agent_name": agentName,
+			"reason":     "missing_iduna_admin_permission",
+		})
 		renderLoginPage(w, map[string]any{
 			"Error": fmt.Sprintf("Agent %q does not have the iduna.admin permission.", agentName),
 			"Next":  next,
@@ -104,6 +114,10 @@ func (h *AdminLoginHandler) login(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(AdminSessionTTL.Seconds()),
+	})
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.admin_login.success", "iduna-auth", map[string]any{
+		"agent_id":   agent.ID,
+		"agent_name": agent.Name,
 	})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }

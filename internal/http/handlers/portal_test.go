@@ -1,12 +1,17 @@
 package handlers_test
 
 import (
+	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
+	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
+	"iduna/internal/userlog"
 )
 
 // Portal's own auth gating (RequireCookieAuth + RequirePermission) is
@@ -55,6 +60,58 @@ func TestPortalHandler_Login_WrongMethod(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for non-GET, got %d", rr.Code)
+	}
+}
+
+// TestPortalHandler_LocalLogin_EmitsEvents -- S226-03: a real success and a real failure both
+// land in the unified log with the right event Type, distinct from LocalAuthHandler's own
+// iduna:auth.local.* events (this is the cookie-based /portal/login surface, a real, separate
+// login path).
+func TestPortalHandler_LocalLogin_EmitsEvents(t *testing.T) {
+	keys, err := jwt.GenerateKeys()
+	if err != nil {
+		t.Fatalf("generate keys: %v", err)
+	}
+	proj := &stubUserProjector{byEmail: map[string]*userlog.LocalUser{
+		"alice@example.com": {LocalUID: 1, Email: "alice@example.com", Status: "active",
+			PasswordHash: mustHash(t, "correct-horse-battery-staple")},
+	}}
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	h := &handlers.PortalHandler{Keys: keys, Proj: proj, EventLog: eventLog}
+
+	post := func(email, password string) int {
+		form := url.Values{"email": {email}, "password": {password}}
+		req := httptest.NewRequest(http.MethodPost, "/portal/login", bytes.NewBufferString(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		h.LocalLogin(rr, req)
+		return rr.Code
+	}
+
+	if code := post("alice@example.com", "correct-horse-battery-staple"); code != http.StatusSeeOther {
+		t.Fatalf("success login: status = %d, want 303", code)
+	}
+	if code := post("alice@example.com", "wrong-password"); code != http.StatusOK {
+		// LocalLogin re-renders the login page (200) with an error, rather than a redirect.
+		t.Fatalf("failed login: status = %d, want 200 (re-rendered login page)", code)
+	}
+
+	recs, err := eventLog.ReadFrom(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(recs))
+	}
+	if recs[0].Event.Type != "iduna:auth.portal.success" {
+		t.Errorf("event 0 Type = %q, want iduna:auth.portal.success", recs[0].Event.Type)
+	}
+	if recs[1].Event.Type != "iduna:auth.portal.failure" {
+		t.Errorf("event 1 Type = %q, want iduna:auth.portal.failure", recs[1].Event.Type)
 	}
 }
 

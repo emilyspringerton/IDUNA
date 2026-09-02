@@ -19,9 +19,10 @@ import (
 // Webmaster (uid=0) receives full admin permissions.
 // All other local users receive the permissions associated with their status.
 type LocalAuthHandler struct {
-	Keys  *authjwt.Keys
-	Proj  userlog.UserProjector
-	Issuer string
+	Keys     *authjwt.Keys
+	Proj     userlog.UserProjector
+	Issuer   string
+	EventLog userlog.EventLog // optional (S226-03); nil skips event emission entirely
 }
 
 type localAuthRequest struct {
@@ -59,11 +60,17 @@ func (h *LocalAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user == nil || user.Status == "deleted" || user.Status == "suspended" {
+		emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.local.failure", "iduna-auth", map[string]any{
+			"email": req.Email,
+		})
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.local.failure", "iduna-auth", map[string]any{
+			"email": req.Email,
+		})
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
@@ -90,6 +97,10 @@ func (h *LocalAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:auth.local.success", "iduna-auth", map[string]any{
+		"local_uid": user.LocalUID,
+		"email":     user.Email,
+	})
 	writeJSON(w, http.StatusOK, localAuthResponse{
 		Token:     token,
 		ExpiresAt: exp.Unix(),
