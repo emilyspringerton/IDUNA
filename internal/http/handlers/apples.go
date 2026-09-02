@@ -32,19 +32,26 @@ import (
 type ApplesHandler struct {
 	Store        store.IAMStore
 	ApplesGitDir string // path to APPLES git repo; if set, every new Apple is auto-synced
-
-	// gitSyncMu serializes syncAppleToGit's git commands across concurrent
-	// requests. Each Apple POST spawns syncAppleToGit as its own goroutine
-	// (fire-and-forget by design — see that func's doc comment); without this
-	// lock, two Apples landing within the same window can race `git commit`/
-	// `git push` against the same working tree, and the loser's push was
-	// rejected (non-fast-forward) with no retry — a silently dropped sync.
-	// This is a real, fixable concurrency bug regardless of how much of the
-	// historical gap it explains: 9226 of 9908 Apples were found missing from
-	// the mirror (scattered throughout the whole ID range, not one contiguous
-	// block) before a one-time backfill (APPLES commit 699bdd5, 2026-07-16).
-	gitSyncMu sync.Mutex
 }
+
+// applesGitSyncMu serializes syncAppleToGit's git commands across concurrent
+// callers — a package-level mutex (2026-09-02, "codify the plumbing":
+// KanbanHandler now files real Apples too, for a manual kanban "done" move,
+// reusing this exact same real sync function rather than a second copy —
+// see kanban.go's own doc comment). Each Apple POST/kanban-done-move spawns
+// syncAppleToGit as its own goroutine (fire-and-forget by design — see that
+// func's doc comment); without this lock, two Apples landing within the
+// same window can race `git commit`/`git push` against the same working
+// tree, and the loser's push was rejected (non-fast-forward) with no retry
+// -- a silently dropped sync. This is a real, fixable concurrency bug
+// regardless of how much of the historical gap it explains: 9226 of 9908
+// Apples were found missing from the mirror (scattered throughout the
+// whole ID range, not one contiguous block) before a one-time backfill
+// (APPLES commit 699bdd5, 2026-07-16). Previously a field on ApplesHandler
+// itself (`gitSyncMu`) -- promoted to package-level so every real caller of
+// syncAppleToGit, not just ApplesHandler's own, shares the identical real
+// serialization guarantee against the identical real working tree.
+var applesGitSyncMu sync.Mutex
 
 func (h *ApplesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Strip /api/v1/apples prefix and check for sub-paths.
@@ -170,7 +177,7 @@ func (h *ApplesHandler) enrich(w http.ResponseWriter, r *http.Request, id int64)
 		// Re-sync so the git mirror reflects the enrichment too — same file
 		// path (id+type), so this overwrites rather than duplicates.
 		if updated, err := h.Store.GetApple(r.Context(), id); err == nil {
-			go h.syncAppleToGit(*updated)
+			go syncAppleToGit(h.ApplesGitDir, *updated)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "enriched": true})
@@ -255,7 +262,7 @@ func (h *ApplesHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.ApplesGitDir != "" {
 		apple.ID = id
-		go h.syncAppleToGit(apple)
+		go syncAppleToGit(h.ApplesGitDir, apple)
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":          id,
@@ -393,13 +400,18 @@ func (h *ApplesHandler) dailyTokenStats(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// syncAppleToGit writes the Apple as a JSON file to ApplesGitDir, updates MANIFEST.json,
+// syncAppleToGit writes the Apple as a JSON file to gitDir, updates MANIFEST.json,
 // commits both, and pushes. Runs as a goroutine; all failures are logged and non-fatal.
-// The git command sequence (add/commit/push) is serialized via gitSyncMu — see its doc
-// comment — since concurrent Apple creation must not race commits/pushes against the
-// same working tree.
-func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
-	gitDir := h.ApplesGitDir
+// A no-op if gitDir is empty -- callers that don't have a real ApplesGitDir configured
+// (or don't want git sync for this particular Apple) can call this unconditionally.
+// The git command sequence (add/commit/push) is serialized via applesGitSyncMu — see its
+// own doc comment — since concurrent Apple creation must not race commits/pushes against
+// the same working tree, regardless of which real caller (ApplesHandler, KanbanHandler)
+// triggered it.
+func syncAppleToGit(gitDir string, apple auth.AppleRecord) {
+	if gitDir == "" {
+		return
+	}
 	today := time.Now().UTC().Format("20060102")
 
 	// File write can happen before the lock — each Apple writes a distinct
@@ -440,8 +452,8 @@ func (h *ApplesHandler) syncAppleToGit(apple auth.AppleRecord) {
 	// Everything from here on touches shared state (MANIFEST.json, the git
 	// index, the branch ref) — serialize across concurrent syncAppleToGit
 	// goroutines.
-	h.gitSyncMu.Lock()
-	defer h.gitSyncMu.Unlock()
+	applesGitSyncMu.Lock()
+	defer applesGitSyncMu.Unlock()
 
 	appleGitUpdateManifest(gitDir, apple, today)
 

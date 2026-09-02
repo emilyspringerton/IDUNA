@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,8 +14,10 @@ import (
 	"strings"
 	"sync"
 
+	"iduna/internal/auth"
 	"iduna/internal/backlog"
 	"iduna/internal/http/middleware"
+	"iduna/internal/store"
 )
 
 // KanbanHandler is the prioritization layer on top of EMILY/BACKLOG.md's own
@@ -61,10 +64,35 @@ import (
 //
 // Empty BacklogPath disables both (kanban still works as pure metadata,
 // the original design) -- a real, deliberate off switch, not an oversight.
+//
+// Real THIRD direction added 2026-09-02, same conversation: PATCH ...
+// {"queue":"done"} is a real, special action, not a literal 4th board
+// column ("we dont have a done column" -- founder's own words) -- it
+// (a) relocates the item's own full real text in BACKLOG.md into a
+// standing archive section, checkbox flipped to [x], (b) files a real
+// Apple via Store.AppendApple (the exact same call create() itself makes
+// -- one real code path for "file an Apple," not a second one for manual
+// kanban completions), titled/bodied with real context about the actual
+// task, not a bare placeholder, and (c) deletes the card. Store/
+// ApplesGitDir empty disables this path too (falls back to a plain
+// queue update, same as any other real queue value) -- same real,
+// deliberate off-switch convention as BacklogPath above.
 type KanbanHandler struct {
-	DB          *sql.DB
-	BacklogPath string
+	DB           *sql.DB
+	BacklogPath  string
+	Store        store.IAMStore
+	ApplesGitDir string
 }
+
+// kanbanArchiveSectionHeading is the one standing, real section a "done"
+// kanban move relocates an item's own full text into -- the real
+// counterpart to kanbanIntakeSectionHeading below, for the OTHER real
+// direction (an item leaving active work, not entering it). Mirrors
+// EMILY/CLAUDE.md's own already-documented DONE.md concept ("Archived
+// completed items") in spirit, kept inside BACKLOG.md itself rather than a
+// second file so ExtractItemRaw/ByID never need to reconcile two real
+// files as one logical backlog.
+const kanbanArchiveSectionHeading = "## SECTION 9001: ARCHIVE (completed via kanban board move)"
 
 // backlogFileMu serializes writes to BACKLOG.md + its git add/commit/push
 // across concurrent create() calls -- a distinct mutex from apples.go's own
@@ -314,9 +342,24 @@ func (h *KanbanHandler) syncNewItemToBacklogGitIfMissing(id, title string) {
 		return
 	}
 
-	emilyRoot := filepath.Dir(h.BacklogPath)
 	commitMsg := fmt.Sprintf("backlog: + %s (added via IDUNA kanban interface)", id)
-	if sessTag != "" {
+	if err := commitAndPushBacklog(h.BacklogPath, commitMsg); err != nil {
+		log.Printf("[kanban-git] %v", err)
+		return
+	}
+	log.Printf("[kanban-git] synced new backlog item %s → BACKLOG.md", id)
+}
+
+// commitAndPushBacklog runs the real git add/commit/push sequence against
+// BACKLOG.md's own repo (its containing directory), tagged with the
+// current real session (same real convention `syncAppleToGit`'s own
+// commits already use). Shared by syncNewItemToBacklogGitIfMissing above
+// and completeCard below -- one real git-plumbing helper, not two copies
+// (2026-09-02, "process improvements... make the plumbing more codified").
+// Caller must already hold backlogFileMu.
+func commitAndPushBacklog(backlogPath, commitMsg string) error {
+	emilyRoot := filepath.Dir(backlogPath)
+	if sessTag := currentSessionTag(emilyRootDefault()); sessTag != "" {
 		commitMsg += "\n\nsession: " + sessTag
 	}
 	gitEnv := append(os.Environ(),
@@ -326,20 +369,17 @@ func (h *KanbanHandler) syncNewItemToBacklogGitIfMissing(id, title string) {
 	addCmd := exec.Command("git", "-C", emilyRoot, "add", "BACKLOG.md")
 	addCmd.Env = gitEnv
 	if out, err := addCmd.CombinedOutput(); err != nil {
-		log.Printf("[kanban-git] git add: %v\n%s", err, out)
-		return
+		return fmt.Errorf("git add: %w\n%s", err, out)
 	}
 	commitCmd := exec.Command("git", "-C", emilyRoot, "commit", "-m", commitMsg)
 	commitCmd.Env = gitEnv
 	if out, err := commitCmd.CombinedOutput(); err != nil {
-		log.Printf("[kanban-git] git commit: %v\n%s", err, out)
-		return
+		return fmt.Errorf("git commit: %w\n%s", err, out)
 	}
 	if err := gitPushWithRetry("kanban-git", emilyRoot, gitEnv); err != nil {
-		log.Printf("[kanban-git] git push failed after retry: %v", err)
-		return
+		return fmt.Errorf("git push failed after retry: %w", err)
 	}
-	log.Printf("[kanban-git] synced new backlog item %s → BACKLOG.md", id)
+	return nil
 }
 
 func (h *KanbanHandler) update(w http.ResponseWriter, r *http.Request) {
@@ -359,6 +399,10 @@ func (h *KanbanHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Queue == nil && body.Position == nil && body.Title == nil {
 		http.Error(w, "nothing to update -- provide queue, position, and/or title", http.StatusBadRequest)
+		return
+	}
+	if body.Queue != nil && *body.Queue == "done" {
+		h.completeCard(w, r, id)
 		return
 	}
 	if body.Queue != nil && !validKanbanQueues[*body.Queue] {
@@ -401,6 +445,136 @@ func (h *KanbanHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// completeCard is PATCH .../cards/{id} {"queue":"done"} -- see KanbanHandler's
+// own doc comment for the full real design. Real, honest degraded paths,
+// never a hard failure over a missing optional dependency: no Store/
+// ApplesGitDir configured skips the Apple; no matching BACKLOG.md line
+// found skips the file move (still files the Apple, noting that honestly
+// in its own body) -- either way the card itself is always real,
+// genuinely removed from the board, since that's the one thing the
+// founder's own "done" ask is unconditionally about.
+func (h *KanbanHandler) completeCard(w http.ResponseWriter, r *http.Request, id int64) {
+	var backlogItemID, title string
+	err := h.DB.QueryRowContext(r.Context(),
+		`SELECT backlog_item_id, title FROM kanban_cards WHERE id = ?`, id).Scan(&backlogItemID, &title)
+	if err == sql.ErrNoRows {
+		http.Error(w, "card not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+
+	archived := false
+	if h.BacklogPath != "" {
+		archived = h.archiveBacklogItem(backlogItemID)
+	}
+
+	if h.Store != nil {
+		go h.fileCompletionApple(backlogItemID, title, archived)
+	}
+
+	if _, err := h.DB.ExecContext(r.Context(), `DELETE FROM kanban_cards WHERE id = ?`, id); err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// archiveBacklogItem moves backlogItemID's own real, complete text (every
+// continuation line included, via backlog.ExtractItemRaw) out of wherever
+// it currently sits in BACKLOG.md, flips its checkbox to [x], and appends
+// it under the standing kanbanArchiveSectionHeading -- founder real-time:
+// "it should be moved to a different section of the backlog for archive."
+// Returns whether a real matching line was actually found and moved (false
+// is a real, honest "nothing to move," not an error -- a card whose id
+// never made it into the file, e.g. the S203-04 collision found earlier
+// this session, has nothing to archive).
+func (h *KanbanHandler) archiveBacklogItem(id string) bool {
+	backlogFileMu.Lock()
+	defer backlogFileMu.Unlock()
+
+	data, err := os.ReadFile(h.BacklogPath)
+	if err != nil {
+		log.Printf("[kanban-git] read %s: %v", h.BacklogPath, err)
+		return false
+	}
+	text := string(data)
+
+	raw, start, end, found := backlog.ExtractItemRaw(text, id)
+	if !found {
+		log.Printf("[kanban-git] %s has no real BACKLOG.md line to archive -- skipping the file move", id)
+		return false
+	}
+
+	checked := strings.Replace(raw, "- [ ] **"+id+":", "- [x] **"+id+":", 1)
+	newText := text[:start] + text[end:]
+	if !strings.HasSuffix(newText, "\n") {
+		newText += "\n"
+	}
+	if !strings.Contains(newText, kanbanArchiveSectionHeading) {
+		newText += "\n" + kanbanArchiveSectionHeading + "\n\n"
+	}
+	if !strings.HasSuffix(newText, "\n") {
+		newText += "\n"
+	}
+	newText += strings.TrimRight(checked, "\n") + "\n"
+
+	if err := os.WriteFile(h.BacklogPath, []byte(newText), 0o644); err != nil {
+		log.Printf("[kanban-git] write %s: %v", h.BacklogPath, err)
+		return false
+	}
+	commitMsg := fmt.Sprintf("backlog: ✓ %s (marked done + archived via IDUNA kanban board)", id)
+	if err := commitAndPushBacklog(h.BacklogPath, commitMsg); err != nil {
+		log.Printf("[kanban-git] %v", err)
+		return false
+	}
+	log.Printf("[kanban-git] archived completed backlog item %s", id)
+	return true
+}
+
+// fileCompletionApple posts a real Apple recording a manual kanban "done"
+// move -- founder real-time: "we still need to file the apple for moving
+// it to done, say manual kanban move or something in the apple ... to get
+// more of the context of the actual task." Reuses Store.AppendApple, the
+// EXACT SAME real call create() itself makes -- one real code path for
+// "file an Apple," never a second, parallel one for this case -- and
+// syncAppleToGit for the identical real git-mirror behavior every other
+// Apple gets. AppleType "backlog_completion" is the real, already-
+// established type for exactly this shape (see IDUNA/CLAUDE.md's own
+// Apple type list).
+func (h *KanbanHandler) fileCompletionApple(backlogItemID, title string, archived bool) {
+	shortTitle := title
+	if len(shortTitle) > 60 {
+		shortTitle = shortTitle[:60]
+	}
+	body := fmt.Sprintf(
+		"Manual kanban move: %s (%s) moved to Done on the IDUNA kanban board, not through the normal implement-then-file-an-Apple flow.",
+		backlogItemID, title)
+	if archived {
+		body += " Its own real BACKLOG.md line was checked off and relocated into the standing archive section."
+	} else {
+		body += " No matching BACKLOG.md line was found to archive (filed here for the audit trail regardless)."
+	}
+	apple := auth.AppleRecord{
+		AgentID:    "iduna-kanban",
+		SourceRepo: "EMILY",
+		RunID:      currentSessionTag(emilyRootDefault()),
+		AppleType:  "backlog_completion",
+		Title:      "Manual kanban move: " + shortTitle,
+		Body:       signAppleBody(body),
+	}
+	appleID, err := h.Store.AppendApple(context.Background(), apple)
+	if err != nil {
+		log.Printf("[kanban-git] failed to file completion apple for %s: %v", backlogItemID, err)
+		return
+	}
+	apple.ID = appleID
+	syncAppleToGit(h.ApplesGitDir, apple)
+	log.Printf("[kanban-git] filed completion Apple #%d for %s", appleID, backlogItemID)
 }
 
 func (h *KanbanHandler) delete(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,9 @@
 package backlog
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const sample = `# EMILY BACKLOG
 
@@ -82,6 +85,66 @@ func TestByID(t *testing.T) {
 	}
 	if _, ok := idx["S999-99"]; ok {
 		t.Errorf("did not expect a match for a nonexistent id")
+	}
+}
+
+// TestParse_NonNumericID -- real, live-found bug (2026-09-02): the item
+// regex used to require S\d+-\d+, silently never matching a real,
+// already-live id like "GFD-SYNC" (a real founder-created kanban card).
+func TestParse_NonNumericID(t *testing.T) {
+	items := Parse("- [ ] **GFD-SYNC: sync REDGARDEN tech into GFD.** Real body.\n")
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].ID != "GFD-SYNC" {
+		t.Errorf("ID = %q, want GFD-SYNC", items[0].ID)
+	}
+	idx := ByID(items)
+	if _, ok := idx["GFD-SYNC"]; !ok {
+		t.Errorf("expected GFD-SYNC to be findable via ByID")
+	}
+	if _, _, _, found := ExtractItemRaw("- [ ] **GFD-SYNC: sync REDGARDEN tech into GFD.** Real body.\n", "GFD-SYNC"); !found {
+		t.Errorf("expected GFD-SYNC to be findable via ExtractItemRaw")
+	}
+}
+
+func TestExtractItemRaw_MultiLineTitleStopsAtNextItem(t *testing.T) {
+	raw, start, end, found := ExtractItemRaw(sample, "S233-04")
+	if !found {
+		t.Fatalf("expected to find S233-04")
+	}
+	if !strings.HasPrefix(raw, `- [ ] **S233-04:`) {
+		t.Errorf("raw should start with the item's own line, got: %q", raw)
+	}
+	if !strings.Contains(raw, "real browser.") {
+		t.Errorf("raw should include the item's own real continuation line, got: %q", raw)
+	}
+	if sample[start:end] != raw {
+		t.Errorf("start/end offsets don't match the returned raw text")
+	}
+	// S233-04 is the last item in the sample, so its raw span should run to
+	// the real end of the file.
+	if end != len(sample) {
+		t.Errorf("expected end == len(sample) (last item, no trailing section), got end=%d len=%d", end, len(sample))
+	}
+}
+
+func TestExtractItemRaw_StopsAtNextSectionHeading(t *testing.T) {
+	raw, _, _, found := ExtractItemRaw(sample, "S232-02")
+	if !found {
+		t.Fatalf("expected to find S232-02")
+	}
+	if strings.Contains(raw, "SECTION 233") {
+		t.Errorf("raw should stop before the next section heading, got: %q", raw)
+	}
+	if strings.Contains(raw, "S233-01") {
+		t.Errorf("raw should not bleed into the next section's own item, got: %q", raw)
+	}
+}
+
+func TestExtractItemRaw_NotFound(t *testing.T) {
+	if _, _, _, found := ExtractItemRaw(sample, "S999-99"); found {
+		t.Errorf("expected not found for a nonexistent id")
 	}
 }
 

@@ -186,12 +186,24 @@ const QUEUE_LABELS = { backlog: 'Backlog', priority: 'Priority', cruise: 'Cruise
 // this file's own CSS/JS comments on why this exists alongside drag.
 // excludeQueue omits a card's own current queue from the options (not
 // meaningful for an inbox item, which has no current queue yet).
+//
+// "Done" (2026-09-02, founder real-time: "we need a Done option for send
+// to its fine we dont have a done column") is deliberately real-card-only,
+// not offered on an Inbox item -- it's not a literal board column
+// (kanban.go's own KanbanHandler.completeCard doc comment explains why:
+// it's a real action -- archive the backlog line, file a real Apple,
+// remove the card), and completing it needs a real numeric kanban_cards
+// id an Inbox item doesn't have yet (drag/send it into a real column
+// first).
 function moveToSelectHTML(kind, id, title, excludeQueue) {
   const titleAttr = title != null ? ' data-title="' + esc(title) + '"' : '';
   let opts = '<option value="">Send to…</option>';
   for (const q of ['backlog', 'priority', 'cruise']) {
     if (q === excludeQueue) continue;
     opts += '<option value="' + q + '">' + QUEUE_LABELS[q] + '</option>';
+  }
+  if (kind === 'card') {
+    opts += '<option value="done">✓ Done</option>';
   }
   return '<div class="move-to"><select data-kind="' + kind + '" data-id="' + esc(id) + '"' + titleAttr +
     ' onchange="onMoveToSelect(event)" onclick="event.stopPropagation()">' + opts + '</select></div>';

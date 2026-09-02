@@ -23,7 +23,7 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | POST | `/api/v1/intelligence/observations` | Camera observations from MJOLNIR |
 | POST | `/api/v1/subscriptions` | Provision Emily+ subscription (requires subscriptions.admin) |
 | GET | `/api/v1/subscriptions/me` | Get caller's subscription status (requires JWT) |
-| GET/POST/PATCH/DELETE | `/api/v1/kanban/cards[/:id]` | Kanban prioritization layer over EMILY/BACKLOG.md (requires kanban.access) |
+| GET/POST/PATCH/DELETE | `/api/v1/kanban/cards[/:id]` | Kanban prioritization layer over EMILY/BACKLOG.md (requires kanban.access). `PATCH .../{id} {"queue":"done"}` is a real, special action, not a literal queue: archives the item's own real BACKLOG.md line (checkbox flipped, relocated to a standing archive section), files a real completion Apple, and removes the card. |
 | POST | `/services/collector` | Unified logging backend ingest — Splunk HEC-shaped (`Authorization: Splunk <IDUNA_HEC_TOKEN>`), any JSON event |
 | GET | `/services/search/jobs` | Unified logging backend search — Splunk-shaped, synchronous v0 (`?search=type=x source=y q=text&regex=pattern`, requires `logs.read`) |
 | GET | `/portal/logs` | Log query UI in the developer portal (same search/regex query, requires `devportal.access` + `logs.read`) |

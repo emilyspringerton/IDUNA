@@ -492,7 +492,7 @@ func main() {
 	// (create/list) and kanbanInboxH below -- one real path, not two that
 	// could drift apart.
 	backlogPath := getenv("EMILY_BACKLOG_PATH", "/home/fatbaby/EMILY/BACKLOG.md")
-	kanbanH := &handlers.KanbanHandler{DB: db, BacklogPath: backlogPath}
+	kanbanH := &handlers.KanbanHandler{DB: db, BacklogPath: backlogPath, Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
 	kanbanPageProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.KanbanPageHandler{}))
 	mux.Handle("/admin/kanban", kanbanPageProtected)
 	kanbanAdminAPIProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanH))

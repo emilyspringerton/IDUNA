@@ -42,7 +42,23 @@ var (
 	// (?s) so the bold title can span multiple real lines (a common real
 	// shape in this file -- a long summary wraps well before the closing
 	// **), matched non-greedily up to the FIRST closing "**".
-	itemRe = regexp.MustCompile(`(?ms)^- \[([ xX])\] \*\*(S\d+-\d+):\s*(.*?)\*\*`)
+	//
+	// The id group used to be hardcoded `S\d+-\d+` -- found live,
+	// load-bearing, 2026-09-02 (a real completion attempt against a real
+	// kanban-created item silently failed to find its own real,
+	// just-written BACKLOG.md line): a real, already-live id,
+	// `GFD-SYNC` (a real card the founder created via the kanban UI, not a
+	// synthetic test), doesn't match `S\d+-\d+` at all -- it was NEVER
+	// findable by ByID/ExtractItemRaw, which also means
+	// syncNewItemToBacklogGitIfMissing's own "already exists" check always
+	// silently reported false for it, a real, latent duplicate-append risk
+	// for the exact next time a card for that same id got created. Widened
+	// to any identifier starting with a letter and continuing with
+	// letters/digits/underscore/hyphen up to the real ":" boundary --
+	// matches every real id shape actually seen in this file (`S202-27`,
+	// `S233-04`, `GFD-SYNC`, `S1-01`) without being so permissive it could
+	// swallow real title text.
+	itemRe = regexp.MustCompile(`(?ms)^- \[([ xX])\] \*\*([A-Za-z][A-Za-z0-9_-]*):\s*(.*?)\*\*`)
 )
 
 // ParseFile reads path and parses it. A missing/unreadable file is a real
@@ -101,6 +117,37 @@ func Parse(text string) []Item {
 		})
 	}
 	return items
+}
+
+// ExtractItemRaw returns the exact, real raw text span for the item with
+// the given id -- from its own "- [ ]"/"- [x]" line through (but not
+// including) whatever comes next: the next real item, the next real
+// "## SECTION" heading, or end of file, whichever is earliest. A real,
+// mechanical "cut precisely this one item's own block, continuation lines
+// and all" operation -- used by the kanban "move to done" action
+// (2026-09-02, founder real-time: "it should be moved to a different
+// section of the backlog for archive") to relocate an item's own complete
+// real text rather than just flipping its checkbox in place.
+func ExtractItemRaw(text, id string) (raw string, start int, end int, found bool) {
+	itemMatches := itemRe.FindAllStringSubmatchIndex(text, -1)
+	sectionMatches := sectionRe.FindAllStringIndex(text, -1)
+	for i, m := range itemMatches {
+		if text[m[4]:m[5]] != id {
+			continue
+		}
+		start = m[0]
+		end = len(text)
+		if i+1 < len(itemMatches) {
+			end = itemMatches[i+1][0]
+		}
+		for _, sm := range sectionMatches {
+			if sm[0] > start && sm[0] < end {
+				end = sm[0]
+			}
+		}
+		return text[start:end], start, end, true
+	}
+	return "", 0, 0, false
 }
 
 // ByID indexes items by ID for O(1) lookup (e.g. joining a kanban card's
