@@ -513,6 +513,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/gm">GM Tools</a>
   <a href="/admin/promptoverse-queue">Prompt-o-verse Queue</a>
   <a href="/admin/drive-slurp">Drive Slurp</a>
+  <a href="/admin/kanban">Kanban</a>
   <span style="flex:1"></span>
   <a href="/admin/logout" style="font-size:11px;color:#888">Sign out</a>
 </nav>
