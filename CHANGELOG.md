@@ -1,5 +1,19 @@
 # IDUNA Changelog
 
+## 2026-09-03 (4)
+- S243-02:新增 `docs/EMILY_FOR_BUSINESS_NORTHSTAR.md`,針對創辦人自己的框架「IDUNA IS THE PRODUCT
+  BASICALLY ZERO TRUST SECURITY AGENT NATIVE」做一次真實、有根據的產品範疇界定——不是實作計畫,是
+  給創辦人層級決策用的真實輸入。直接點名一個真實、沒有含糊帶過的矛盾:`docs/NORTHSTAR.md` 自己現在
+  仍然寫著「IDUNA is not a product. It is the backbone.」,這份新文件沒有替創辦人偷偷選邊站。把
+  IDUNA 現有、已查證的真實能力(agent-native 雙軌認證、階層式 RBAC、git 備份的 Apples 稽核帳本、
+  剛關閉的 SECTION 226 統一日誌後端)對到一個真正對外的 zero-trust 產品賣點上,同時誠實列出真正缺少
+  的部分:沒有多租戶、沒有自助 onboarding、沒有持續性裝置/posture 驗證(EmilyOS 自己的
+  `docs/POSTURE.md` 有設計但大多還是 `[ ] Milestone 1/2` 沒真的做)、沒有網路微分段故事、沒有真正
+  完成的合規稽核(EmilyOS 的 `docs/SOC2.md` 是控制項對照表,不是稽核證明)。留下 4 個明確、沒有在這裡
+  解決的開放問題給創辦人:是要把現有 IDUNA 本身外部化,還是另外做一個沿用其設計的新產品;真正的買家
+  是誰;EmilyOS 的 posture kernel 要不要併進這個賣點;定價/包裝模式。已登記進
+  `EMILY/context/golden-docs-index.md`(`EMILY-FOR-BUSINESS-NORTH`)。 (sess-20260902-2008-ed50169e)
+
 ## 2026-09-03 (3)
 - S207-68:kanban 板真的可以在同一欄內排序卡片了。原本拖曳只能把卡片丟到別的欄位(改
   `queue`),丟回同一欄完全是 no-op,沒有任何真正的 `position` 寫回——後端

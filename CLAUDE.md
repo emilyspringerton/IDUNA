@@ -119,6 +119,16 @@ with real `from_status`/`to_status`); `ApplesHandler.create` (`iduna:apples.crea
 emission point is nil-safe (an unset `EventLog` field is a no-op, not a panic) and fire-and-forget
 (a logging-backend outage never breaks the real auth/admin/heimdal/apples flow it's observing).
 
+## Emily for Business — product-scoping (not implementation)
+
+`docs/EMILY_FOR_BUSINESS_NORTHSTAR.md` (S243-02, 2026-09-03) — real, grounded scoping input for
+the founder's own framing "IDUNA IS THE PRODUCT BASICALLY ZERO TRUST SECURITY AGENT NATIVE."
+Names the real tension against this file's own standing "IDUNA is not a product, it is the
+backbone" framing (`docs/NORTHSTAR.md`), maps IDUNA's real existing primitives onto a zero-trust
+pitch, and names what's genuinely missing (multi-tenancy, self-serve onboarding, continuous
+posture verification, compliance attestation) plus open questions for a founder-level decision.
+Not an implementation plan — no code changes follow from this doc alone.
+
 ## Migrations Checklist
 
 - Migration filenames: `YYYYMMDDNNNN_description.sql`
