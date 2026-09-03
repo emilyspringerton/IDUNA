@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-09-03 (2)
+- S235-01:kanban 手動加卡片,現在可以只打 section 編號(例如 `S203`),不用自己猜一個沒被用過的 item 編號。新的 `resolveBareSectionID`(`internal/http/handlers/kanban.go`)真的讀 `backlog.ParseFile` 的即時內容,找出該 section 底下真正最大的編號再 +1——不是亂猜,已經有完整 id(`S203-04`)的呼叫方完全不受影響。讀檔失敗就老實 fallback 到 `-01`,不會擋住建卡。`create()` 的回應現在會真的把解析後的 `backlog_item_id` 傳回去,前端狀態列也會顯示實際分配到哪個 id。6 個新測試(單元測試 + 一個真的重現當初那次真實碰撞的 create 整合測試:`S203` 在 `S203-04` 已存在時解析成 `S203-05`),外加對重啟後的 live `iduna.service` 做的真實驗證:`S235` 正確解析成 `S235-02`(因為這個 section 自己的 `S235-01` 已經佔用),真的同步進 `BACKLOG.md`,驗證完就清掉。`go build/test` 跟 `GOWORK=off go build/test`(真正獨立 CI 路徑)都乾淨,`go vet` 乾淨。 (sess-20260902-2008-ed50169e)
+
 ## 2026-09-03
 - S226-04:把統一日誌系統(Splunk 風格)剩下的真實 code path 都接上,關閉 SECTION 226 整個 thread。S226-01~03 已經做完每個真的登入介面跟 admin 停權/解停權;這次補完清單裡剩下的:`HeimdalHandler.submit`(`iduna:heimdal.submit`)跟 `.patch`(`iduna:heimdal.transition`,帶真正的 `from_status`/`to_status`,`patch` 現在會先真的查一次舊狀態才更新)、`ApplesHandler.create`(`iduna:apples.create`,帶真正的 apple_id/agent_id/source_repo/apple_type)、`AdminHandler` 的角色 assign/revoke(`iduna:admin.role.assign`/`.revoke`)、agent 權限 grant/revoke(`iduna:admin.agent_permission.grant`/`.revoke`)。順手多做一個 S226-04 清單沒明講但同一個 handler、同樣安全敏感的:agent secret 輪替(`iduna:admin.agent.secret_rotate`——只記錄「有輪替過」,絕對不把剛產生的明文 secret 寫進事件裡,真的測試過)。全部沿用 S226-02/03 自己已經建立的真實慣例:`EventLog` 欄位 nil-safe(沒接就是完全不動作,不會 panic)、fire-and-forget(記錄失敗絕對不能擋住真正的業務流程)、共用同一個 `emitAuthEvent` helper。9 個新測試,`go build/test` 跟 `GOWORK=off go build/test`(真正的獨立 CI 路徑)都乾淨,`go vet` 乾淨。真的在 live `iduna.service` 上驗證過,不只是單元測試:重啟服務後真的發一張 Apple(#17272),直接看 `var/eventlog/events/` 底下真正的 NDJSON 檔案,確認 `iduna:apples.create` 事件真的落地,欄位完全正確。commit `3d690d5`,Apple #17273。 (sess-20260902-2008-ed50169e)
 

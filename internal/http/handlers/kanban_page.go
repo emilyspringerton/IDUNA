@@ -161,7 +161,8 @@ const kanbanPageHTML = `<!doctype html>
     </div>
   </div>
   <form class="add-row" id="add-form">
-    <input type="text" name="backlog_item_id" placeholder="S202-27" maxlength="32" required>
+    <input type="text" name="backlog_item_id" placeholder="S202-27 (or just S202)" maxlength="32" required
+           title="A full id (S202-27) or just the section (S202) -- the item number is optional, a real unused one is auto-assigned">
     <input type="text" name="title" placeholder="Short card title" maxlength="200" required>
     <button type="submit">+ Add card</button>
   </form>
@@ -404,7 +405,14 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
       body: JSON.stringify({ backlog_item_id: backlogItemId, title: title })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    const created = await res.json();
     form.reset();
+    // A bare section reference (e.g. "S202") gets auto-resolved to a real, specific id
+    // server-side (resolveBareSectionID) -- surface what actually got assigned so a caller who
+    // used the shortcut can see it, not just silently trust it worked.
+    if (created && created.backlog_item_id && created.backlog_item_id !== backlogItemId) {
+      setStatus('Added as ' + created.backlog_item_id + '.', false);
+    }
     await Promise.all([loadCards(), loadInbox()]);
   } catch (e2) {
     setStatus('Failed to add card: ' + e2.message, true);

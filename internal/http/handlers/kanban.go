@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -232,6 +233,9 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	body.BacklogItemID = strings.TrimSpace(body.BacklogItemID)
 	body.Title = strings.TrimSpace(body.Title)
+	if h.BacklogPath != "" {
+		body.BacklogItemID = resolveBareSectionID(h.BacklogPath, body.BacklogItemID)
+	}
 	if body.BacklogItemID == "" || len(body.BacklogItemID) > 32 {
 		http.Error(w, "backlog_item_id required, max 32 chars", http.StatusBadRequest)
 		return
@@ -271,7 +275,10 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 	id, _ := res.LastInsertId()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]int64{"id": id})
+	// backlog_item_id echoed back real and resolved -- the only way a caller who submitted a
+	// bare section reference (see resolveBareSectionID's own doc comment) finds out which real
+	// id actually got assigned.
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "backlog_item_id": body.BacklogItemID})
 
 	// Fire-and-forget: never let a slow/failed git sync hold up the response
 	// a caller (the kanban page's own fetch, or a real bearer-auth agent
@@ -279,6 +286,64 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 	if h.BacklogPath != "" {
 		go h.syncNewItemToBacklogGitIfMissing(body.BacklogItemID, body.Title)
 	}
+}
+
+// bareSectionRe matches a manually-typed backlog_item_id that names only a section number
+// ("S203"), not a specific item within it ("S203-04"). Anchored full-string match -- a real,
+// already-specific id like "S203-04" or a non-numeric id like "GFD-SYNC" must fall through
+// unresolved and untouched.
+var bareSectionRe = regexp.MustCompile(`^S(\d+)$`)
+
+// realSectionItemRe extracts the item-number suffix from every real id already under a given
+// section, so resolveBareSectionID can find the next free one -- deliberately narrower than
+// backlog.Parse's own itemRe (which also has to accept non-numeric ids like "GFD-SYNC"): this
+// one only needs the "S<section>-<number>" shape, since that's the only shape a bare "S<section>"
+// request could plausibly continue.
+func realSectionItemRe(section string) *regexp.Regexp {
+	return regexp.MustCompile(`^S` + section + `-(\d+)$`)
+}
+
+// resolveBareSectionID closes the real, live-found UX gap SECTION 235/S235-01 named: a manual
+// kanban add-card required a caller to already know and correctly guess an unused
+// "S<section>-<item>" id up front -- guessing wrong (as genuinely happened live, 2026-09-02:
+// a new card for "fix PAPERCRAFT build in ci" collided with an existing, unrelated S203-04)
+// silently overwrote nothing in the DB (kanban_cards has no UNIQUE constraint on
+// backlog_item_id) but DID create two real kanban cards claiming the same backlog line, and
+// confused BACKLOG.md's own eventual-consistency sync the moment either one tried to reconcile.
+//
+// Founder: "the -27 part of the item doesnt need to be specify you can but if you just say
+// S203 then you can do that but you shouldnt have to." Real fix: accept a bare "S<section>"
+// reference and auto-assign the next real, actually-unused item number under that section by
+// reading the live BACKLOG.md (backlog.ParseFile) -- the same file this handler's own sync
+// already treats as the one authoritative source, not a second guess. Only fires on the exact
+// bare-section shape (bareSectionRe); a caller who already gave a full, specific id (the
+// existing, still-fully-supported path) is returned completely unchanged.
+//
+// A read failure (missing file, permission issue) or a section with zero existing real items
+// both fall back to "<section>-01" rather than erroring the whole create -- honest best-effort,
+// matching every other real backlog-file interaction in this handler.
+func resolveBareSectionID(backlogPath, rawID string) string {
+	m := bareSectionRe.FindStringSubmatch(rawID)
+	if m == nil {
+		return rawID
+	}
+	section := m[1]
+	itemRe := realSectionItemRe(section)
+	maxN := 0
+	if items, err := backlog.ParseFile(backlogPath); err == nil {
+		for _, it := range items {
+			if sm := itemRe.FindStringSubmatch(it.ID); sm != nil {
+				if n, convErr := strconv.Atoi(sm[1]); convErr == nil && n > maxN {
+					maxN = n
+				}
+			}
+		}
+	}
+	next := maxN + 1
+	if next <= 99 {
+		return fmt.Sprintf("S%s-%02d", section, next)
+	}
+	return fmt.Sprintf("S%s-%d", section, next)
 }
 
 // syncNewItemToBacklogGitIfMissing checks the live file first (best-effort

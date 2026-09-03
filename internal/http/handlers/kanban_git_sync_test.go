@@ -1,6 +1,10 @@
 package handlers_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,5 +163,65 @@ func TestKanbanList_RemovesCardsForCompletedItems(t *testing.T) {
 		if c.ID == doneID {
 			t.Errorf("expected card id=%d (S1-02) to be deleted, but it's still present", doneID)
 		}
+	}
+}
+
+// TestKanbanCreate_BareSectionResolvesToRealID -- S235-01, end to end: a manually-typed bare
+// section reference ("S203") gets resolved to a real, actually-unused item id before the card is
+// ever inserted, and the real id (not the bare one the caller typed) is what BACKLOG.md's own
+// eventual-consistency sync appends.
+func TestKanbanCreate_BareSectionResolvesToRealID(t *testing.T) {
+	backlogPath := newTestBacklogGitRepo(t,
+		"# BACKLOG\n\n## SECTION 203: TEST (2026-09-03)\n\n"+
+			"- [ ] **S203-04: an unrelated, already-existing item -- the exact real collision this\n"+
+			"  fix prevents.** Real body.\n")
+
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := middleware.RequireAuth(keys)(&handlers.KanbanHandler{DB: db, BacklogPath: backlogPath})
+
+	payload := map[string]string{"backlog_item_id": "S203", "title": "fix PAPERCRAFT build in ci"}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/kanban/cards", bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ID            int64  `json:"id"`
+		BacklogItemID string `json:"backlog_item_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	// S203-04 already exists -- the next real, unused number is S203-05, never the collision
+	// this whole feature exists to prevent.
+	if resp.BacklogItemID != "S203-05" {
+		t.Fatalf("resolved backlog_item_id = %q, want S203-05", resp.BacklogItemID)
+	}
+
+	cards := listKanbanCards(t, h, token, "")
+	if len(cards) != 1 || cards[0].BacklogItemID != "S203-05" {
+		t.Fatalf("expected exactly 1 card with backlog_item_id S203-05, got: %+v", cards)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	var content string
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(backlogPath)
+		if err != nil {
+			t.Fatalf("read backlog: %v", err)
+		}
+		content = string(data)
+		if strings.Contains(content, "S203-05") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(content, "S203-05: fix PAPERCRAFT build in ci") {
+		t.Fatalf("expected BACKLOG.md to contain the real resolved item, got:\n%s", content)
 	}
 }
