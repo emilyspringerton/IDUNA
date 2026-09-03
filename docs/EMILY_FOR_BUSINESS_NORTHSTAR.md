@@ -174,3 +174,98 @@ database redesign), and subdomain routing's own capability gap is now closed. Wh
 unbuilt: `console.okemily.com` itself (the actual onboarding UI/flow), the automation that wires
 a new signup into a new IDUNA instance + broker route + DNS/cert, and the wildcard-vs-per-tenant
 TLS decision above.
+
+## IDUNA_PRO — a real extraction plan (2026-09-03, founder real-time — resolves Open Question 1)
+
+Founder, real-time, preserved verbatim, in two messages: "so we need multi tenant iduna as a
+platform we can offer a free trial that really stands up their iduna instance — we pull some of
+the more custom stuff out of iduna and the code goes right into the emily for business product
+IDUNA_PRO" then "so we use our IDUNA to manage the free trials for emily for business." **This
+resolves Open Question 1 above, decisively**: this repo (internal IDUNA) is NOT being
+externalized in place. It stays exactly what it already is — the internal EINHORN_INDUSTRIAL
+backbone — and additionally becomes the **control plane** for a new, separate, sibling product,
+`IDUNA_PRO`, built from a real subset of this codebase. Checked, not assumed: no `IDUNA_PRO`
+repo exists on GitHub yet (attempted clone, `Repository not found`) — named here, not
+pre-created, unlike `EMILY_FOR_BUSINESS`.
+
+### The control-plane model
+
+Internal IDUNA gains a new, real capability (not yet built, scoped here): tracking and
+provisioning `IDUNA_PRO` tenants, the same way it already tracks HEIMDAL sprints or Apples — a
+new `tenants`/`trials` table plus a real provisioning pipeline triggered by a signup on
+`console.okemily.com`:
+
+1. `console.okemily.com` (itself unbuilt, see above) posts a new trial signup to internal
+   IDUNA's own API (org name, contact, desired subdomain).
+2. Internal IDUNA provisions a real, fresh `IDUNA_PRO` instance for that tenant: a new
+   `SQLITE_PATH`, a fresh migration run (already proven trivial, see above), a seeded
+   `agents.json`, on its own port.
+3. Internal IDUNA registers a new broker `Route` (`Host: "<tenant>.console.okemily.com"`,
+   `UpstreamBase` pointing at the new instance's port) — the real routing capability S243-06
+   already shipped this session, just not yet wired to an automated writer.
+4. Internal IDUNA tracks the tenant's real lifecycle (trial/active/expired) — a genuinely new
+   subsystem, not a re-purposing of anything that exists today.
+
+This is coherent with IDUNA's own stated identity ("IDUNA is not a product, it is the backbone")
+in a way pure externalization wasn't: it stays the backbone, and the backbone now also backs the
+business side, literally.
+
+### What "pull the more custom stuff out" means — a real, checked categorization
+
+`IDUNA_PRO`'s own codebase is a new, separate extraction of the generic parts of this repo — not
+a fork of the whole thing, not a build-tag/feature-flag split of this same binary. Checked
+directly against this repo's actual `internal/` and `internal/http/handlers/` directories
+(2026-09-03):
+
+**Real core candidates — generic IAM/zero-trust primitives, no EINHORN_INDUSTRIAL-specific
+content:**
+- `internal/auth/*` — Google OAuth, ES256 JWT issuance, M2M agent auth, device flow. The actual
+  product.
+- `internal/store/*` — SQLite + MySQL backends, the migrations engine. Already tenant-shaped by
+  accident (see "DB-per-install" above).
+- `internal/userlog/*` — the unified Splunk-shaped logging backend (SECTION 226) — this
+  document's own earlier "what's real today" section already named this as genuinely sellable
+  on its own.
+- `internal/util/*` — generic helpers (rate limiter, etc).
+- `http/handlers`: `auth.go`, `agents.go`, `jwks.go`, `device.go`, `local_auth.go`, `refresh.go`,
+  `register.go`, `me.go`, `admin.go`/`admin_login.go` (core RBAC/admin), `apples.go` (the
+  append-only audit-ledger MECHANISM is generic and real product value, even though "Apples" as
+  a name/concept is EINHORN-flavored — would need a generic rename for the product), `logs.go`/
+  `portal.go` (the log search UI).
+
+**Real "leave behind" candidates — genuinely monorepo-specific, no product value outside this
+org:**
+- `internal/blog`, `internal/tyler`, `internal/promptoverse`, `internal/mailinglist`,
+  `internal/drive` (Google Drive service-account integration for training artifacts),
+  `internal/vault` (explicitly "founder-only password manager" per its own doc comment),
+  `internal/statuspage` (checks specifically EINHORN_INDUSTRIAL's own public services),
+  `internal/backlog` (the kanban-over-`EMILY/BACKLOG.md` bridge — tied to this specific file).
+- `http/handlers`: `blog.go`, `tyler.go`, `mailinglist.go`, `carepyre_contact.go`,
+  `promptoverse*.go`, `mmo_*.go`, `redgarden_*.go`, `shankpit_*.go`, `racer_ticket.go`,
+  `papercraft_ticket.go`, `players*.go`, `player_*.go`, `chat_messages.go`,
+  `admin_dragonsnshit.go`, `admin_gm.go`, `admin_saga.go`, `web_ceremony.go`, `monitors.go`,
+  `intelligence.go`, `status_page.go`, `kanban_*.go`, `kgraph.go`, `dis.go`, `supply.go`,
+  `heimdal.go` (MJOLNIR-sprint-specific), `push_tokens.go` (MJOLNIR FCM-specific).
+
+**Real, genuinely ambiguous — a decision, not a fact, for whoever does the actual extraction:**
+- `internal/honorcode` — the MECHANISM (a versioned, hash-verified, re-acceptance-on-bump
+  covenant) is generic and could be a real product feature (compliance acknowledgment flows);
+  the actual CONTENT (`THE_HONOR_CODE` text) is EINHORN-specific and would need to become
+  pluggable/configurable, not shipped as-is.
+- `subscriptions.go` (`Emily+` subscription provisioning) — billing-adjacent; could plausibly
+  inform `IDUNA_PRO`'s own real tiering/plan model rather than being discarded outright, but
+  today's implementation is almost certainly EINHORN-specific in its details.
+- `kanban.go`/`kanban_page.go`/`kanban_inbox.go` — a genuinely well-built, real feature (drag/
+  sort/inbox-sync, this same session's own S207-68/S235-01 work), but tightly coupled to
+  parsing `EMILY/BACKLOG.md`'s own specific Markdown convention — real, substantial
+  generalization work needed before this could be a customer-facing feature, not a copy-paste.
+
+### Real, honest, not attempted in this pass
+
+This is a categorization and a control-plane design, not a migration. Not done here: creating
+the `IDUNA_PRO` repo, actually moving code, building the `tenants`/`trials` table or its
+provisioning pipeline, or `console.okemily.com` itself. Real, concrete next step: found the
+`IDUNA_PRO` repo (or ask the founder to pre-create it, matching the `EMILY_FOR_BUSINESS`/`LO`/
+`MIXFORGE` precedent of the founder creating the empty upstream repo ahead of the work), seed it
+with the "real core candidates" list above, and treat the "ambiguous" list as real, individual
+decisions to make one at a time during that extraction — not resolved wholesale here.
