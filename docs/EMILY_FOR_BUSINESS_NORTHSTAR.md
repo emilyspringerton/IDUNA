@@ -355,3 +355,30 @@ correctly not rushed alongside the extraction that just landed.
 The extraction itself is real and live-verified, but not everything is done: `console.okemily.com`
 itself, the `tenants`/`trials` table and its provisioning pipeline, and the wildcard-vs-per-tenant
 TLS decision (see above) all remain real, separate, unbuilt next steps.
+
+## Kanban board — a real "core integration point" (2026-09-03, founder real-time)
+
+Founder, real-time: "build the kanban into IDUNA_PRO its a good affordance for interop between
+human and agents - we will probably build tools on top of the IDUNA_PRO like this is one of the
+core integration points." This was previously listed above as a genuinely ambiguous extraction
+candidate ("tightly coupled to `EMILY/BACKLOG.md`'s own specific Markdown convention"). Real,
+checked correction to that earlier assessment: reading `kanban.go`/`kanban_inbox.go` directly
+showed every BACKLOG.md-specific behavior (bare-section resolution, git auto-commit, Inbox sync)
+was already gated behind an empty-string check on `BacklogPath` — the coupling was real but
+already optional, not structural. Shipped as-is into `IDUNA_PRO`: `BACKLOG_PATH` unset (the
+default) yields a pure, generic, DB-backed board; setting it opts a customer into syncing
+against their own markdown-checkbox file, the exact same mechanism IDUNA itself uses against
+`EMILY/BACKLOG.md`.
+
+Two real product-context fixes made along the way: the "done" move's Apple used to hardcode
+`SourceRepo: "EMILY"` — now a real `KANBAN_SOURCE_REPO_NAME` env var (defaults `"kanban"`); the
+board's own user-visible copy referenced `EMILY/BACKLOG.md` by name and was rewritten to be
+product-neutral. `admin_login.go` (the cookie-session login page IDUNA_PRO's kanban UI needs)
+turned out to have zero `internal/mailinglist` coupling on direct inspection — unlike `admin.go`
+itself — so it came along for free rather than needing to be built from scratch.
+
+**Live-verified, the actual point of the feature**: a real agent JWT (bearer, `kanban.access`
+permission) created/listed/moved a card to Done through `/api/v1/kanban/cards`; separately, a
+real cookie session (`/admin/login`) loaded the real `/admin/kanban` board page and created a
+card through `/admin/kanban/api/cards` — the exact same `KanbanHandler` instance serving both a
+human and an agent caller. `IDUNA_PRO` commit `31cfb54`.
