@@ -110,3 +110,67 @@ A real founder-level product-scoping conversation, informed by this document's o
 today" section — not attempted as an engineering task in this pass. Once that conversation
 resolves question 1 above in particular, the actual engineering sequencing (multi-tenancy first?
 self-serve onboarding first? EmilyOS integration first?) can be scoped for real.
+
+## Multi-tenancy architecture direction (2026-09-03, founder real-time — partially answers Open
+Question 1 above)
+
+Founder, real-time, preserved verbatim: "so to make iduna multi tenant we need like a DB per
+install and we need console.okemily.com for our customers and partners to onboard also we can
+use the fatbaby proxies for offering custom subdomains for partners/customers." This is real
+direction on the mechanism (DB-per-install + a real onboarding portal + subdomain routing) — it
+does not by itself resolve whether this is IDUNA-externalized-in-place or a separate product
+(Open Question 1 is still open), but the mechanism described works identically either way, so
+it's worth grounding now.
+
+**Real, checked finding: DB-per-install is already close to free.** IDUNA's own `main.go`
+resolves its database from a single, per-process `SQLITE_PATH` (or `MYSQL_DSN` for the MySQL
+backend) env var, and `RunSQLiteMigrations` runs cleanly against a fresh, empty file. A
+"DB-per-install" tenant is structurally just: a new `SQLITE_PATH`, a fresh migration run, a new
+`agents.json` seeded via `cmd/bootstrap`, on a distinct port. The real work here isn't the
+database layer itself (already tenant-shaped by accident of how it was built) — it's
+**orchestration**: something has to actually spin up a new IDUNA process (or container) per
+tenant, allocate it a port, and register it. Not built yet, not attempted in this pass.
+
+**Real, checked finding: `console.okemily.com` doesn't exist yet.** No service, page, or repo by
+that name exists anywhere in this monorepo today. Building it means a new onboarding flow that,
+per signup, needs to trigger: (a) provisioning a new per-tenant IDUNA instance (see above), (b) a
+new broker route so the tenant's chosen subdomain reaches it, (c) DNS + TLS for that subdomain.
+None of (a)/(b)/(c) are wired together yet — this document names the shape, not a working
+pipeline.
+
+**Real, shipped this session (S243-06): the routing half of (b).** The FatBaby broker
+(`PRRJECT_FATBABY/broker`, the real, already-running reverse proxy behind okemily.com's own
+nginx — the "fatbaby proxies" the founder's own message referred to) previously only matched
+requests by tenant bearer token or URL path prefix; it had **no Host-header (subdomain) matching
+at all**, a real, decisive gap for "custom subdomains for partners/customers." Closed directly:
+new `Route.Host` field (exact, case-insensitive match) + `Registry.ResolveByHost`, checked FIRST
+in `AuthMiddleware` (before path-prefix and bearer-token matching, so a tenant's own paths can
+never be shadowed by an unrelated global route). A Host route deliberately skips the broker's
+own HTTP Basic Auth — for a tenant subdomain, the real auth boundary is that tenant's own
+upstream IDUNA instance (JWT/OAuth), not the broker. 4 new tests, `go build/vet/test ./...`
+clean, zero regressions (`PRRJECT_FATBABY` commit `5876dce`). **What this does NOT do**: actually
+register a new tenant's route — that's still a manual edit to
+`gpt2-alpine-c/config/broker-routes.json` today, the same real, honest gap this repo's own
+`broker/registry.go` doc comment already names for hot-reload in general. A real
+`console.okemily.com` signup flow would need to write a new Route entry into that file (or a
+future DB-backed registry) programmatically, not by hand — real, separate, unbuilt work.
+
+**Real, checked finding: wildcard TLS needs a DNS-01 challenge, not the existing HTTP-01 flow.**
+`okemily.com`'s own DNS is confirmed live on Cloudflare (`nicolas.ns.cloudflare.com` /
+`jocelyn.ns.cloudflare.com`). Every existing cert on this box (`certbot --nginx -d ...`, see
+`sudo-queue/13-carepyre-domain-setup.sh` for the exact real pattern used elsewhere in this
+monorepo) uses HTTP-01, which cannot issue a wildcard cert for `*.console.okemily.com` — only a
+DNS-01 challenge can, which for Cloudflare means the real `certbot-dns-cloudflare` plugin plus a
+real Cloudflare API token (a credential this investigation did not have access to and did not
+attempt to source). Two real, honest alternatives, not chosen between here: (1) a real wildcard
+cert via DNS-01, issued once, reused for every subdomain — the standard approach for this shape
+of product; (2) issue a real, individual cert per new tenant subdomain on signup (more moving
+parts per onboarding, no wildcard-cert/API-token dependency). This is a real, concrete decision
+point for whoever builds the actual onboarding automation, not resolved in this pass.
+
+**Bottom line**: the founder's proposed mechanism is sound and mostly already low-cost given
+what IDUNA and the broker already are — DB-per-install needs an orchestration layer (not a
+database redesign), and subdomain routing's own capability gap is now closed. What's still fully
+unbuilt: `console.okemily.com` itself (the actual onboarding UI/flow), the automation that wires
+a new signup into a new IDUNA instance + broker route + DNS/cert, and the wildcard-vs-per-tenant
+TLS decision above.
