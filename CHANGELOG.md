@@ -1,5 +1,19 @@
 # IDUNA Changelog
 
+## 2026-09-03 (10)
+- ops: redeployed the live IDUNA instance to pick up the real hat-store routes/migration
+  shipped earlier this session (commit `5bf170c`) -- the running `~/.local/bin/iduna` binary
+  predated that commit, so `/api/v1/hats` was a real, live 404 until this restart (kanban
+  `WTHS-012010`'s own live-verification surfaced this). Real backup taken of `var/iduna.db`
+  first (`var/iduna.db.bak-20260903-231306`), careful manual restart (kill old PID, install new
+  binary, restart with the exact same real env vars read from `/proc/<pid>/environ` before
+  killing it) since `systemctl --user` bus access is unavailable in this sandbox -- same
+  precedent this session's own earlier matchmaker-pool incident already established. Health
+  check confirmed 200 immediately after restart; `202609030001_hats.sql` applied cleanly
+  against the real, live database. Real, separate, unrelated bug noticed along the way (not
+  fixed here): `SERVER_PORT` is documented in `scripts/iduna.service`'s own header comment but
+  never actually read anywhere in `main.go` -- the port is hardcoded to `:8080`.
+
 ## 2026-09-03 (9)
 - feat(mmo): real hat catalog + buy/equip API (kanban `WTHS-0000`/`WTHS-0010`,
   `BRAWLPIT/docs/WOTAN_HAT_STORE_NORTHSTAR.md` Phase 1). New migration `202609030001_hats.sql`:
