@@ -23,7 +23,7 @@
   closed 回 503,不是接受),`/tiers` 現在真的不用登入就能拿到。誠實、還沒驗證的部分:這個
   sandbox 沒有真正的 Stripe webhook secret,所以「真正合法簽章被正確接受」這條路徑只在
   `go test`(用真的算出來的 HMAC 模擬)驗證過,沒有對著 LIVE 服務用真正的 Stripe secret 跑過。
-  commit 待補。 (sess-20260902-2008-ed50169e)
+  commit `75f9b33`。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-03 (5)
 - kanban 卡片 9966:Back Office 的選單改成真正固定在左邊的側邊欄,不再是頂端一整排橫向塞滿的
