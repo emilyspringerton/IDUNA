@@ -1,5 +1,21 @@
 # IDUNA Changelog
 
+## 2026-09-03 (3)
+- S207-68:kanban 板真的可以在同一欄內排序卡片了。原本拖曳只能把卡片丟到別的欄位(改
+  `queue`),丟回同一欄完全是 no-op,沒有任何真正的 `position` 寫回——後端
+  `PATCH .../cards/{id} {"position":N}` 其實老早就支援了,只是前端從沒用過。這次
+  補上兩條真的可用路徑:(1) 拖曳時,`onCardDragOver` 會依游標在目標卡片上半/下半
+  即時把被拖曳的 DOM 節點插到正確位置,放開時 `onDrop` 讀出該欄最終的真實 DOM 順序,
+  對每張卡片各發一次 `PATCH {queue, position}`,重新編出 0..n-1 的連續序號(即使是
+  跨欄拖曳也一次到位,不用兩次呼叫);(2) 新增 ▲/▼ 按鈕(`moveCardBy`),對不方便
+  拖曳的輸入裝置提供一個真正、可預期、好測試的替代路徑,用 `kanbanOrder` 這個
+  server-confirmed 的順序快取算出要跟哪張鄰居互換,一樣走同一條 `persistColumnOrder`。
+  新增 `TestKanban_PatchPositionReordersColumn`(真實整合測試:建三張卡,PATCH
+  position 把順序反過來,GET 驗證真的照新順序回傳,不是建立順序),驗證前端依賴的
+  這個 API 合約本來就對。`go build/vet/test ./...` 全倉庫乾淨零回歸。真的重建
+  `iduna.service` 並重啟、`health` 檢查通過;`/admin/kanban` 在未登入時正確回
+  401(admin 權限閘門本身沒被動到)。 (sess-20260902-2008-ed50169e)
+
 ## 2026-09-03 (2)
 - S235-01:kanban 手動加卡片,現在可以只打 section 編號(例如 `S203`),不用自己猜一個沒被用過的 item 編號。新的 `resolveBareSectionID`(`internal/http/handlers/kanban.go`)真的讀 `backlog.ParseFile` 的即時內容,找出該 section 底下真正最大的編號再 +1——不是亂猜,已經有完整 id(`S203-04`)的呼叫方完全不受影響。讀檔失敗就老實 fallback 到 `-01`,不會擋住建卡。`create()` 的回應現在會真的把解析後的 `backlog_item_id` 傳回去,前端狀態列也會顯示實際分配到哪個 id。6 個新測試(單元測試 + 一個真的重現當初那次真實碰撞的 create 整合測試:`S203` 在 `S203-04` 已存在時解析成 `S203-05`),外加對重啟後的 live `iduna.service` 做的真實驗證:`S235` 正確解析成 `S235-02`(因為這個 section 自己的 `S235-01` 已經佔用),真的同步進 `BACKLOG.md`,驗證完就清掉。`go build/test` 跟 `GOWORK=off go build/test`(真正獨立 CI 路徑)都乾淨,`go vet` 乾淨。 (sess-20260902-2008-ed50169e)
 

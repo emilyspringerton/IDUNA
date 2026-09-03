@@ -141,6 +141,46 @@ func TestKanban_MoveCardBetweenQueues(t *testing.T) {
 	}
 }
 
+// TestKanban_PatchPositionReordersColumn -- S207-68 ("i should have the
+// ability to sort the cards in a column"). The kanban board's own UI
+// (kanban_page.go) reorders a column entirely via repeated
+// PATCH .../cards/{id} {"queue":..., "position":...} calls -- this proves
+// that real contract end to end: three cards land in position order 0,1,2
+// on creation, a real PATCH re-numbers all three to the reverse order, and
+// GET reflects the new order, not creation order.
+func TestKanban_PatchPositionReordersColumn(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := kanbanHandlerWithAuth(keys, db)
+
+	idA := postKanbanCard(t, h, token, "S207-01", "Card A", "priority")
+	idB := postKanbanCard(t, h, token, "S207-02", "Card B", "priority")
+	idC := postKanbanCard(t, h, token, "S207-03", "Card C", "priority")
+
+	before := listKanbanCards(t, h, token, "priority")
+	if len(before) != 3 || before[0].ID != idA || before[1].ID != idB || before[2].ID != idC {
+		t.Fatalf("expected creation order A,B,C before reorder, got %+v", before)
+	}
+
+	// Reverse the order: C=0, B=1, A=2.
+	for newPos, id := range []int64{idC, idB, idA} {
+		body, _ := json.Marshal(map[string]any{"queue": "priority", "position": newPos})
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/kanban/cards/"+jsonInt(id), bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch position for card %d: status = %d, body = %s", id, rec.Code, rec.Body.String())
+		}
+	}
+
+	after := listKanbanCards(t, h, token, "priority")
+	if len(after) != 3 || after[0].ID != idC || after[1].ID != idB || after[2].ID != idA {
+		t.Fatalf("expected reversed order C,B,A after reorder, got %+v", after)
+	}
+}
+
 func TestKanban_QueueFilterScopesList(t *testing.T) {
 	keys, _ := jwt.GenerateKeys()
 	db := newTestKanbanDB(t)

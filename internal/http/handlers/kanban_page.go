@@ -99,6 +99,13 @@ const kanbanPageHTML = `<!doctype html>
   .card .title { font-size: 0.92rem; margin-top: 0.15rem; }
   .card .del { float: right; color: var(--text-faint); text-decoration: none; font-size: 0.85rem; }
   .card .del:hover { color: #a24; }
+  /* S207-68 "i should have the ability to sort the cards in a column" --
+     a real, click-based reorder alternative to drag (see moveCardBy in the
+     script below), floated left opposite the existing delete "x". */
+  .card .sort-btns { float: left; display: flex; flex-direction: column; line-height: 0.8; margin-right: 0.4rem; }
+  .card .sort-btn { color: var(--text-faint); text-decoration: none; font-size: 0.6rem; }
+  .card .sort-btn:hover { color: var(--gold-highlight); }
+  .card .sort-btn-disabled { color: var(--text-faint); opacity: 0.3; cursor: default; }
   /* "Send to" quick-move (2026-09-02, same UX fix as the scrollable
      columns above) -- founder: "we need to either extend the columns down
      or add a right click send to interface." A small always-visible
@@ -277,6 +284,13 @@ function renderInbox(items) {
   }
 }
 
+// kanbanOrder caches each column's current id order (server-confirmed, not
+// live drag state) so the real +/- sort buttons below can compute a swap
+// without re-walking the DOM -- a real, non-drag path to the same S207-68
+// ask ("i should have the ability to sort the cards in a column"), since
+// drag-and-drop alone isn't reliably usable/testable on every input device.
+let kanbanOrder = { backlog: [], priority: [], cruise: [] };
+
 function render(cards) {
   const byQueue = { backlog: [], priority: [], cruise: [] };
   for (const c of cards) {
@@ -284,6 +298,7 @@ function render(cards) {
   }
   for (const q of ['backlog', 'priority', 'cruise']) {
     const list = byQueue[q].sort((a, b) => a.position - b.position);
+    kanbanOrder[q] = list.map(c => c.id);
     document.getElementById('count-' + q).textContent = list.length;
     const container = document.getElementById('cards-' + q);
     container.innerHTML = '';
@@ -294,7 +309,7 @@ function render(cards) {
       container.appendChild(e);
       continue;
     }
-    for (const c of list) {
+    list.forEach((c, idx) => {
       const el = document.createElement('div');
       el.className = 'card';
       el.draggable = true;
@@ -302,12 +317,20 @@ function render(cards) {
       el.dataset.kind = 'card';
       el.ondragstart = onDragStart;
       el.ondragend = onDragEnd;
+      el.ondragover = onCardDragOver;
+      const upBtn = idx === 0
+        ? '<span class="sort-btn sort-btn-disabled" title="Already first">▲</span>'
+        : '<a href="#" class="sort-btn" title="Move up" onclick="moveCardBy(' + c.id + ',\'' + q + '\',-1); return false;">▲</a>';
+      const downBtn = idx === list.length - 1
+        ? '<span class="sort-btn sort-btn-disabled" title="Already last">▼</span>'
+        : '<a href="#" class="sort-btn" title="Move down" onclick="moveCardBy(' + c.id + ',\'' + q + '\',1); return false;">▼</a>';
       el.innerHTML = '<a href="#" class="del" title="Remove card" onclick="removeCard(' + c.id + '); return false;">✕</a>' +
+        '<div class="sort-btns">' + upBtn + downBtn + '</div>' +
         '<div class="id">' + esc(c.backlog_item_id) + '</div>' +
         '<div class="title">' + esc(c.title) + '</div>' +
         moveToSelectHTML('card', c.id, null, q);
       container.appendChild(el);
-    }
+    });
   }
 }
 
@@ -330,6 +353,61 @@ function onDragOver(e) {
 }
 function onDragLeave(e) {
   e.currentTarget.classList.remove('dragover');
+}
+// onCardDragOver: real, live within-column sort (S207-68 -- "i should have
+// the ability to sort the cards in a column"). Only wired on real cards
+// (kind 'card'), not Inbox entries, which have no persisted position of
+// their own. Live-reorders the actual dragged DOM node as the cursor passes
+// over a sibling card's top/bottom half; onDrop below reads the resulting
+// DOM order and persists it via a real position PATCH per card, so this is
+// not just a cosmetic drag -- it survives a reload.
+function onCardDragOver(e) {
+  e.preventDefault();
+  if (dragKind !== 'card') return;
+  const target = e.currentTarget;
+  if (target.classList.contains('dragging')) return;
+  const container = target.parentElement;
+  const dragging = container.querySelector('.dragging');
+  if (!dragging || dragging === target) return;
+  const rect = target.getBoundingClientRect();
+  const before = (e.clientY - rect.top) < rect.height / 2;
+  container.insertBefore(dragging, before ? target : target.nextSibling);
+}
+// moveCardBy: the ▲/▼ button handler -- swaps a card with its immediate
+// neighbor in kanbanOrder's cached, server-confirmed order and persists the
+// whole column. A click-based alternative to drag-and-drop for S207-68,
+// since drag isn't reliable/testable everywhere a keyboard or touch-only
+// input is.
+function moveCardBy(id, queue, delta) {
+  const ids = (kanbanOrder[queue] || []).slice();
+  const idx = ids.findIndex(x => String(x) === String(id));
+  if (idx === -1) return;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= ids.length) return;
+  [ids[idx], ids[newIdx]] = [ids[newIdx], ids[idx]];
+  persistColumnOrder(queue, ids);
+}
+// persistColumnOrder: writes the real, final drag result back through the
+// same PATCH .../cards/{id} API every other kanban write uses -- one call
+// per card in the column, each setting queue (covers a cross-column drop
+// too) + a fresh, gapless 0..n-1 position matching the live DOM order.
+async function persistColumnOrder(queue, orderedIds) {
+  try {
+    await Promise.all(orderedIds.map((id, idx) =>
+      fetch(API + '/' + id, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queue: queue, position: idx })
+      }).then(res => {
+        if (!res.ok) throw new Error('HTTP ' + res.status + ' for card ' + id);
+      })
+    ));
+    await Promise.all([loadCards(), loadInbox()]);
+  } catch (e2) {
+    setStatus('Failed to save card order: ' + e2.message, true);
+    await loadCards(); // real state may be partially applied -- reload rather than trust stale DOM
+  }
 }
 // sendToQueue: the one real place both drag-and-drop (onDrop) and the
 // "send to" quick-select (onMoveToSelect) route through -- either creates
@@ -377,7 +455,27 @@ async function onDrop(e) {
   e.preventDefault();
   e.currentTarget.classList.remove('dragover');
   if (!dragId) return;
-  await sendToQueue(dragKind, dragId, dragTitle, e.currentTarget.dataset.queue);
+  const queue = e.currentTarget.dataset.queue;
+  if (dragKind === 'card') {
+    // Real cards support in-column sort (S207-68): if onCardDragOver already
+    // live-moved the dragged node into this column's own DOM, use that
+    // order as-is. If it was dropped on empty space (or an empty column, or
+    // never crossed a sibling card) instead, the node is still sitting in
+    // its old container -- append it here so it isn't silently dropped.
+    const container = document.getElementById('cards-' + queue);
+    const draggingEl = document.querySelector('.card.dragging');
+    if (draggingEl && draggingEl.parentElement !== container) {
+      const emptyMsg = container.querySelector('.empty');
+      if (emptyMsg) emptyMsg.remove();
+      container.appendChild(draggingEl);
+    }
+    const orderedIds = Array.from(container.querySelectorAll('.card'))
+      .map(el => el.dataset.id)
+      .filter(Boolean);
+    await persistColumnOrder(queue, orderedIds);
+  } else {
+    await sendToQueue(dragKind, dragId, dragTitle, queue);
+  }
 }
 
 async function removeCard(id) {
