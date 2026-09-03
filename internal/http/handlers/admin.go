@@ -490,13 +490,21 @@ var adminBase = `<!doctype html>
 <title>{{.Title}} — IDUNA Back Office</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:"Georgia","Times New Roman",serif;background:#f5f2ee;color:#1a1a1a;font-size:14px;line-height:1.55}
+body{font-family:"Georgia","Times New Roman",serif;background:#f5f2ee;color:#1a1a1a;font-size:14px;line-height:1.55;padding-left:190px}
 a{color:#5a3e36;text-decoration:none}
 a:hover{text-decoration:underline}
-nav{background:#1a1a1a;color:#ccc;padding:10px 24px;display:flex;gap:24px;align-items:center}
-nav .brand{color:#c4a882;font-weight:bold;letter-spacing:.04em;margin-right:12px}
-nav a{color:#ccc;font-size:13px}
-nav a:hover{color:#fff}
+/* Left menu, always there (S-9966, kanban cruise queue: "update the IDUNA OG menu interface so
+   its a left menu thats always there keep it simple and nice let us scroll up and down on the
+   menu if it gets that long") -- fixed to the viewport's own left edge so it never scrolls out
+   of view with the page content, and independently scrollable (overflow-y: auto) so a future,
+   longer link list degrades to its own scrollbar instead of pushing content down or overflowing
+   the viewport. */
+nav{position:fixed;top:0;left:0;bottom:0;width:190px;background:#1a1a1a;color:#ccc;padding:16px 0;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+nav .brand{color:#c4a882;font-weight:bold;letter-spacing:.04em;padding:0 20px 4px}
+nav .subbrand{color:#666;font-size:11px;padding:0 20px 14px;display:block}
+nav a{color:#ccc;font-size:13px;padding:7px 20px;display:block}
+nav a:hover{color:#fff;background:#2a2a2a;text-decoration:none}
+nav .signout{margin-top:auto;border-top:1px solid #333;padding-top:10px;color:#888;font-size:11px}
 .container{max-width:1100px;margin:0 auto;padding:24px}
 h1{font-size:22px;font-weight:normal;border-bottom:1px solid #c0b8b0;padding-bottom:8px;margin-bottom:20px;letter-spacing:.02em}
 h2{font-size:16px;font-weight:normal;margin:20px 0 10px;color:#3a2a24}
@@ -523,7 +531,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
 <body>
 <nav>
   <span class="brand">IDUNA</span>
-  <span style="color:#666;font-size:11px;margin-right:16px">Back Office</span>
+  <span class="subbrand">Back Office</span>
   <a href="/admin">Overview</a>
   <a href="/admin/users">Users</a>
   <a href="/admin/agents">Agents</a>
@@ -536,8 +544,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/promptoverse-queue">Prompt-o-verse Queue</a>
   <a href="/admin/drive-slurp">Drive Slurp</a>
   <a href="/admin/kanban">Kanban</a>
-  <span style="flex:1"></span>
-  <a href="/admin/logout" style="font-size:11px;color:#888">Sign out</a>
+  <a href="/admin/logout" class="signout">Sign out</a>
 </nav>
 <div class="container">
 {{block "body" .}}{{end}}

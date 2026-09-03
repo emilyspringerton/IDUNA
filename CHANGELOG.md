@@ -1,5 +1,17 @@
 # IDUNA Changelog
 
+## 2026-09-03 (5)
+- kanban 卡片 9966:Back Office 的選單改成真正固定在左邊的側邊欄,不再是頂端一整排橫向塞滿的
+  連結列。創辦人:「/design updatge the IDUNA OG menu interface so its a left menu thats always
+  there keep it simple and nice let us scroll up and down on the menu if it gets that long」。
+  `internal/http/handlers/admin.go` 的 `adminBase` 樣板:`nav` 改成 `position:fixed` 貼齊視窗左邊
+  跟上下邊界,自己有獨立的 `overflow-y:auto`,連結變多、變長也只會在選單自己裡面捲動,不會把主要
+  內容往下推或整個視窗爆版;`body` 加上對應的 `padding-left` 讓主內容區不被蓋住;連結清單本身、
+  href 全部保持不變,只是排版方向從橫向改成直向,「Sign out」用 `margin-top:auto` 固定貼在選單
+  最下面。`go build/vet/test ./...` 乾淨;真的把 `iduna.service` 重建、重啟過,`/health` 綠燈——
+  服務能正常啟動這件事本身就是真實驗證:`adminBase` 是用 `template.Must` 解析的,樣板寫錯會直接
+  在啟動時 panic,不是靜默失敗。 (sess-20260902-2008-ed50169e)
+
 ## 2026-09-03 (4)
 - S243-02:新增 `docs/EMILY_FOR_BUSINESS_NORTHSTAR.md`,針對創辦人自己的框架「IDUNA IS THE PRODUCT
   BASICALLY ZERO TRUST SECURITY AGENT NATIVE」做一次真實、有根據的產品範疇界定——不是實作計畫,是
