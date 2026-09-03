@@ -78,6 +78,9 @@ func (s *stubAgentStore) AppendApple(context.Context, auth.AppleRecord) (int64, 
 func (s *stubAgentStore) ListApples(context.Context, string, string, string, int) ([]auth.AppleRecord, error) {
 	return nil, nil
 }
+func (s *stubAgentStore) SearchApples(context.Context, string, int) ([]auth.AppleRecord, error) {
+	return nil, nil
+}
 func (s *stubAgentStore) GetApple(context.Context, int64) (*auth.AppleRecord, error) {
 	return nil, nil
 }

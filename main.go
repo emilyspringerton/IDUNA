@@ -480,6 +480,14 @@ func main() {
 		middleware.RequirePermission("devportal.access")(middleware.RequirePermission("logs.read")(http.HandlerFunc(portalH.Logs))))
 	mux.Handle("/portal/logs", portalLogsProtected)
 
+	// Unified search (kanban card 1111, "IDUNA UNIFIED SEARCH INTERFACE") -- same real
+	// double-permission-gate shape as /portal/logs above, requiring BOTH read permissions since
+	// this page shows both corpora at once (apples.read gates the same content
+	// GET /api/v1/apples itself requires).
+	portalSearchProtected := middleware.RequireCookieAuth(keys, iamStore, "/portal/login", handlers.AdminSessionTTL)(
+		middleware.RequirePermission("devportal.access")(middleware.RequirePermission("logs.read")(middleware.RequirePermission("apples.read")(http.HandlerFunc(portalH.Search)))))
+	mux.Handle("/portal/search", portalSearchProtected)
+
 	// Kanban prioritization layer (S200-04-adjacent tooling, 2026-08-26) --
 	// see internal/http/handlers/kanban.go's own doc comment for the full
 	// founder-quote chain. The browser board (/admin/kanban and its own
@@ -611,6 +619,7 @@ func main() {
 	portalH.Keys = keys
 	portalH.Issuer = issuer
 	portalH.EventLog = unifiedLog
+	portalH.Store = iamStore
 
 	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer, EventLog: unifiedLog}
 	registerH := &handlers.RegisterHandler{Keys: keys, Log: uel, Proj: userProj, Store: iamStore, Issuer: issuer}

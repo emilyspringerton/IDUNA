@@ -705,6 +705,38 @@ func (s *MySQLStore) ListApples(ctx context.Context, agentID, sourceRepo, appleT
 	return apples, rows.Err()
 }
 
+// SearchApples -- real, free-text (title OR body) substring search. MySQL's default collation
+// (utf8mb4_general_ci / utf8mb4_0900_ai_ci on modern installs) is case-insensitive, matching
+// SQLiteStore's own real behavior for the same call. Same real, deliberate simplicity as that
+// implementation's own doc comment: plain LIKE, not a real full-text index -- a genuine,
+// separate, later step if this table ever gets large enough to need one.
+func (s *MySQLStore) SearchApples(ctx context.Context, query string, limit int) ([]auth.AppleRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	like := "%" + query + "%"
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, agent_id, source_repo, run_id, apple_type, title, COALESCE(metadata,'null'), recorded_at
+		 FROM apples WHERE title LIKE ? OR body LIKE ?
+		 ORDER BY recorded_at DESC LIMIT ?`, like, like, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var apples []auth.AppleRecord
+	for rows.Next() {
+		var a auth.AppleRecord
+		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &a.Metadata, &a.RecordedAt); err != nil {
+			return nil, err
+		}
+		apples = append(apples, a)
+	}
+	return apples, rows.Err()
+}
+
 // GetApple returns a single apple by its integer ID, including body and metadata.
 func (s *MySQLStore) GetApple(ctx context.Context, id int64) (*auth.AppleRecord, error) {
 	row := s.db.QueryRowContext(ctx,

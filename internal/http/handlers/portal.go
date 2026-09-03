@@ -8,6 +8,7 @@ import (
 
 	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/http/middleware"
+	"iduna/internal/store"
 	"iduna/internal/userlog"
 
 	"golang.org/x/crypto/bcrypt"
@@ -47,6 +48,11 @@ type PortalHandler struct {
 	Keys     *authjwt.Keys
 	Issuer   string
 	EventLog userlog.EventLog // optional (S226-03); nil skips event emission entirely
+	// Store powers Search below (kanban card 1111, "IDUNA UNIFIED SEARCH INTERFACE") -- optional,
+	// same fallback shape EventLog above already establishes: nil means the Apples half of a
+	// search simply reports its own real "not configured" message rather than the whole page
+	// erroring out.
+	Store store.IAMStore
 }
 
 // Login renders the sign-in page. Unauthenticated only in practice --
@@ -233,6 +239,53 @@ func (h *PortalHandler) Logs(w http.ResponseWriter, r *http.Request) {
 	renderHTML(w, portalLogsTmpl, data)
 }
 
+// Search -- kanban card 1111, "IDUNA UNIFIED SEARCH INTERFACE." One query box, real results
+// from two real, distinct corpora shown together: the unified event log (the same real
+// searchEvents this file's own Logs page already uses, reusing its "q=" free-text term rather
+// than inventing a second search syntax) and Apples (new SearchApples, see store.go's own doc
+// comment for why this is a plain LIKE scan, not a real full-text index, in this v0). Real,
+// deliberate simplicity, matching this repo's own "keep it simple" pattern from the admin
+// sidebar redesign: BOTH corpora are queried with the exact same plain text on every request --
+// no separate mini-syntax per source. A caller missing EventLog/Store just sees that corpus
+// honestly report itself unavailable rather than a hard error for the whole page.
+func (h *PortalHandler) Search(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query().Get("q")
+	data := map[string]any{
+		"Title":    "Unified Search",
+		"QueryVal": q,
+		"HasQuery": q != "",
+	}
+	if q != "" {
+		if h.EventLog == nil {
+			data["LogError"] = "the unified logging backend is not configured on this server"
+		} else {
+			logResults, err := searchEvents(r.Context(), h.EventLog, searchQuery{q: q})
+			if err != nil {
+				data["LogError"] = err.Error()
+			} else {
+				data["LogResults"] = logResults
+				data["LogCount"] = len(logResults)
+			}
+		}
+		if h.Store == nil {
+			data["AppleError"] = "the apples store is not configured on this server"
+		} else {
+			appleResults, err := h.Store.SearchApples(r.Context(), q, 50)
+			if err != nil {
+				data["AppleError"] = err.Error()
+			} else {
+				data["AppleResults"] = appleResults
+				data["AppleCount"] = len(appleResults)
+			}
+		}
+	}
+	renderHTML(w, portalSearchTmpl, data)
+}
+
 // Logout clears the iduna_session cookie and returns to the portal login
 // page -- same clearing shape as admin_login.go's own logout, duplicated
 // (not called directly) so a portal sign-out lands back on /portal/login
@@ -365,6 +418,145 @@ var portalLogsTmpl = template.Must(template.New("portal_logs").Funcs(template.Fu
         <thead><tr><th>Seq</th><th>Type</th><th>Source</th><th>Occurred At</th><th>Data</th></tr></thead>
         <tbody>
           {{range .Results}}
+          <tr>
+            <td class="mono">{{.Sequence}}</td>
+            <td class="mono">{{.Event.Type}}</td>
+            <td class="mono">{{.Event.Source}}</td>
+            <td class="mono">{{.Event.OccurredAt}}</td>
+            <td class="data mono">{{eventJSON .Event.Data}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{end}}
+  {{end}}
+</main>
+</body>
+</html>
+`))
+
+// portalSearchTmpl -- S1111 real unified search page, same real style guide as
+// portalLogsTmpl/portalHomeTmpl (deliberately identical CSS, this is one system not a bolted-on
+// tool -- see portalLogsTmpl's own doc comment for the full rationale, unchanged here). One
+// query box, two real result sections (Apples, Log Events) shown together, each independently
+// reporting its own "not configured" state rather than either one blocking the other.
+var portalSearchTmpl = template.Must(template.New("portal_search").Funcs(template.FuncMap{
+	"eventJSON": func(data []byte) string { return string(data) },
+}).Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — Developer Portal</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Spectral:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg-soft: #ede7dc; --panel: #ebe4d8; --line-soft: #d2c7b8;
+    --gold: #c6a75e; --gold-soft: #bfa062; --gold-highlight: #d6bc7a;
+    --text-main: #3a352e; --text-muted: #7a7368; --text-faint: #a8a093; --rose: #b76e79;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at top, color-mix(in srgb, var(--bg) 84%, #fff 16%), var(--bg-soft));
+    color: var(--text-main); font-family: "Spectral", Georgia, serif; line-height: 1.45;
+  }
+  a { color: var(--gold-soft); }
+  a:hover { color: var(--gold-highlight); }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.6rem clamp(1.5rem, 5vw, 3.5rem) 1.2rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--gold) 35%, var(--line-soft) 65%);
+  }
+  .wordmark { letter-spacing: 0.3em; text-transform: uppercase; font-size: 0.68rem; color: var(--text-muted); }
+  .wordmark strong { color: var(--text-main); }
+  .session { display: flex; align-items: center; gap: 0.9rem; font-size: 0.82rem; color: var(--text-muted); }
+  main { max-width: 980px; margin: 0 auto; padding: 2.4rem clamp(1.5rem, 5vw, 3.5rem) 4rem; }
+  h1 { font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 2.1rem; margin: 0 0 0.3rem; }
+  h2 { font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 1.4rem; margin: 2rem 0 0.6rem; }
+  .note {
+    font-size: 0.82rem; color: var(--text-muted); margin: 0 0 1.6rem; padding: 0.7rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line-soft) 55%); border-radius: 6px;
+    background: color-mix(in srgb, var(--panel) 92%, white 8%);
+  }
+  form.query { display: grid; grid-template-columns: 1fr auto; gap: 0.8rem; margin-bottom: 1.8rem; }
+  .field label { display: block; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.35rem; }
+  .field input {
+    width: 100%; padding: 0.6rem 0.8rem; font: inherit; font-size: 0.88rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--line-soft) 45%);
+    background: color-mix(in srgb, var(--panel) 97%, white 3%); color: var(--text-main); border-radius: 4px;
+  }
+  .field input:focus { outline: none; border-color: var(--gold-highlight); }
+  .go {
+    align-self: end; padding: 0.62rem 1.3rem; border-radius: 4px; font: inherit; font-size: 0.88rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 80%, #7b6640 20%);
+    background: color-mix(in srgb, var(--panel) 88%, #e5dac7 12%); color: var(--text-main); cursor: pointer;
+  }
+  .go:hover { border-color: var(--gold-highlight); }
+  .err {
+    font-size: 0.85rem; color: var(--rose); padding: 0.75rem 1rem; border-radius: 5px;
+    background: color-mix(in srgb, var(--panel) 90%, var(--rose) 10%);
+    border: 1px solid color-mix(in srgb, var(--rose) 55%, var(--line-soft) 45%); margin-bottom: 1.2rem;
+  }
+  .count { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line-soft); }
+  td { padding: 0.55rem 0.7rem; border-bottom: 1px solid color-mix(in srgb, var(--line-soft) 60%, transparent 40%); vertical-align: top; }
+  td.mono, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.78rem; word-break: break-all; }
+  td.data { max-width: 420px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wordmark">EINHORN_INDUSTRIAL &nbsp;/&nbsp; <strong>IDUNA</strong></div>
+  <div class="session"><a href="/portal">&larr; Back to tools</a></div>
+</header>
+<main>
+  <h1>Unified Search</h1>
+  <p class="note">One query box, two real corpora &mdash; Apples and the unified event log,
+    shown together. Each reports its own real availability independently; one being
+    unconfigured never blocks the other from returning real results.</p>
+
+  <form class="query" method="get" action="/portal/search">
+    <div class="field">
+      <label for="q">Search</label>
+      <input type="text" id="q" name="q" value="{{.QueryVal}}" placeholder="a term to look for across apples and events">
+    </div>
+    <button class="go" type="submit">Search</button>
+  </form>
+
+  {{if .HasQuery}}
+    <h2>Apples</h2>
+    {{if .AppleError}}<div class="err">{{.AppleError}}</div>{{end}}
+    {{if not .AppleError}}
+      <p class="count">{{.AppleCount}} matching apple{{if ne .AppleCount 1}}s{{end}}</p>
+      <table>
+        <thead><tr><th>ID</th><th>Type</th><th>Source Repo</th><th>Title</th><th>Recorded At</th></tr></thead>
+        <tbody>
+          {{range .AppleResults}}
+          <tr>
+            <td class="mono">{{.ID}}</td>
+            <td class="mono">{{.AppleType}}</td>
+            <td class="mono">{{.SourceRepo}}</td>
+            <td>{{.Title}}</td>
+            <td class="mono">{{.RecordedAt}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{end}}
+
+    <h2>Log Events</h2>
+    {{if .LogError}}<div class="err">{{.LogError}}</div>{{end}}
+    {{if not .LogError}}
+      <p class="count">{{.LogCount}} matching event{{if ne .LogCount 1}}s{{end}}</p>
+      <table>
+        <thead><tr><th>Seq</th><th>Type</th><th>Source</th><th>Occurred At</th><th>Data</th></tr></thead>
+        <tbody>
+          {{range .LogResults}}
           <tr>
             <td class="mono">{{.Sequence}}</td>
             <td class="mono">{{.Event.Type}}</td>
@@ -646,6 +838,19 @@ var portalHomeTmpl = template.Must(template.New("portal_home").Parse(`<!doctype 
       <div class="tool-main">
         <div class="tool-name">Logs</div>
         <div class="tool-desc">Query the unified event log &mdash; auth/admin events, type/source/regex filters. Requires IDUNA itself to be up (a real, accepted limitation for now).</div>
+      </div>
+      <span class="tool-status status-live">Live</span>
+      <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </a>
+    <a class="tool-row" href="/portal/search">
+      <div class="tool-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7a7368" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
+        </svg>
+      </div>
+      <div class="tool-main">
+        <div class="tool-name">Unified Search</div>
+        <div class="tool-desc">One query box across Apples and the unified event log together.</div>
       </div>
       <span class="tool-status status-live">Live</span>
       <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>

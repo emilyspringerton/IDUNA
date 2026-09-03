@@ -60,6 +60,24 @@ func (s *stubApplesStore) ListApples(_ context.Context, agentID, sourceRepo, app
 	return out, nil
 }
 
+// SearchApples -- a real, in-memory substring match over title/body, mirroring
+// SQLiteStore/MySQLStore's own real LIKE-based behavior, so tests against this stub actually
+// exercise the same matching semantics real callers see.
+func (s *stubApplesStore) SearchApples(_ context.Context, query string, limit int) ([]auth.AppleRecord, error) {
+	var out []auth.AppleRecord
+	for _, a := range s.apples {
+		if !strings.Contains(strings.ToLower(a.Title), strings.ToLower(query)) &&
+			!strings.Contains(strings.ToLower(a.Body), strings.ToLower(query)) {
+			continue
+		}
+		out = append(out, a)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (s *stubApplesStore) GetApple(_ context.Context, id int64) (*auth.AppleRecord, error) {
 	if s.getErr != nil {
 		return nil, s.getErr

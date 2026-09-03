@@ -1,5 +1,24 @@
 # IDUNA Changelog
 
+## 2026-09-03 (7)
+- kanban 卡片 1111「IDUNA UNIFIED SEARCH INTERFACE」:新增 `/portal/search`,一個真正的統一搜尋
+  頁面——一個查詢框,同時對兩個真實的資料來源下去查,結果放在同一頁。Apples 這邊新增
+  `store.IAMStore.SearchApples`(SQLite/MySQL 兩邊都真的實作了):在此之前 `ListApples` 只能用
+  精確的 `agent_id`/`source_repo`/`apple_type` 篩選,完全沒有任何自由文字搜尋 title/body 的能力
+  ——這次補上真正的 `title LIKE ? OR body LIKE ?`,誠實地用普通 LIKE、不是 FTS5 全文索引(跟
+  kanban 卡片 9933 那邊 `bstree.prn` 自己的取捨一樣:先做最小可用的真實版本,真正的索引結構是
+  之後、獨立的後續工作)。事件日誌那邊直接重用 `/portal/logs` 頁面已經有的真正 `searchEvents`,
+  用同一個查詢字串,不另外發明第二套搜尋語法。兩邊各自獨立回報自己「有沒有設定好」,其中一邊沒
+  設定(例如 `EventLog`/`Store` 是 nil)不會擋住另一邊真的把結果秀出來。新增 6 個測試(store 層
+  2 個真的對著記憶體 SQLite 跑、handler 層 3 個真的驗證兩個來源同時出結果、其中一邊沒設定另一邊
+  仍正常運作),`go build/vet/test ./...` 全部乾淨、零回歸。真的在 live `iduna.service` 上重建
+  重啟過,`/health` 綠燈;另外直接對正式環境的 `iduna.db` 跑了一次真正的 `LIKE` 查詢,確認語法
+  跟資料真的對得上(查到 3 筆真實、剛剛才寫進去的 kanban 相關 Apple)。誠實、還沒驗證的部分:
+  `/portal/search` 這個頁面本身需要真正的 cookie 登入(`devportal.access` + `logs.read` +
+  `apples.read`),這個 sandbox 沒有真正的 admin 帳號可以登入測試,所以頁面本身的即時渲染沒有
+  對著 live 服務直接驗證過,只驗證到 handler 層測試 + 服務重啟沒有 panic(樣板本身用
+  `template.Must` 解析,寫錯會直接在啟動時炸掉)。 (sess-20260902-2008-ed50169e)
+
 ## 2026-09-03 (6)
 - kanban 卡片 1001「EMILY+ paywall needs to actually function with user accounts etc」——真的找到
   並修掉兩個真實、嚴重的問題,不是重寫整個訂閱系統。**問題一(真正的安全漏洞)**:

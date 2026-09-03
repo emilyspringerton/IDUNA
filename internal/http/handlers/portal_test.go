@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"iduna/internal/auth"
 	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
 	"iduna/internal/userlog"
@@ -181,6 +182,98 @@ func TestPortalHandler_Logs_BadRegexShowsError(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "invalid regex") {
 		t.Errorf("expected an inline invalid-regex error, got: %s", rr.Body.String())
+	}
+}
+
+// TestPortalHandler_Search_NoQueryShowsForm -- same real "empty state" shape as the Logs page.
+func TestPortalHandler_Search_NoQueryShowsForm(t *testing.T) {
+	h := &handlers.PortalHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/portal/search", nil)
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `name="q"`) {
+		t.Errorf("expected a search form with a q field, got: %s", body)
+	}
+	if strings.Contains(body, "matching apple") || strings.Contains(body, "matching event") {
+		t.Errorf("expected no results section with no query, got: %s", body)
+	}
+}
+
+// TestPortalHandler_Search_RealQueryReturnsBothCorpora -- a real query returns real, distinct
+// results from BOTH the Apples store and the unified event log in one page, kanban card 1111's
+// own literal point.
+func TestPortalHandler_Search_RealQueryReturnsBothCorpora(t *testing.T) {
+	store := &stubApplesStore{}
+	if _, err := store.AppendApple(context.Background(), auth.AppleRecord{
+		AgentID: "a", SourceRepo: "R", AppleType: "completion",
+		Title: "a real widget apple", Body: "body text",
+	}); err != nil {
+		t.Fatalf("AppendApple: %v", err)
+	}
+
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	if _, err := eventLog.Append(context.Background(), userlog.Event{
+		ID: "e1", Type: "iduna:auth.local.failure", Source: "iduna-auth",
+		Data: []byte(`{"note":"a real widget event"}`),
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	h := &handlers.PortalHandler{Store: store, EventLog: eventLog}
+	req := httptest.NewRequest(http.MethodGet, "/portal/search?q=widget", nil)
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "1 matching apple") {
+		t.Errorf("expected 1 matching apple reported, got: %s", body)
+	}
+	if !strings.Contains(body, "1 matching event") {
+		t.Errorf("expected 1 matching event reported, got: %s", body)
+	}
+	if !strings.Contains(body, "a real widget apple") || !strings.Contains(body, "a real widget event") {
+		t.Errorf("expected both real results actually rendered, got: %s", body)
+	}
+}
+
+// TestPortalHandler_Search_UnconfiguredStoreDoesNotBlockLogs -- real, deliberate independence:
+// a nil Store must not prevent the log-events half from returning real results.
+func TestPortalHandler_Search_UnconfiguredStoreDoesNotBlockLogs(t *testing.T) {
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	if _, err := eventLog.Append(context.Background(), userlog.Event{
+		ID: "e1", Type: "iduna:auth.local.failure", Source: "iduna-auth",
+		Data: []byte(`{"note":"findme"}`),
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	h := &handlers.PortalHandler{EventLog: eventLog} // Store left nil
+	req := httptest.NewRequest(http.MethodGet, "/portal/search?q=findme", nil)
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "apples store is not configured") {
+		t.Errorf("expected an honest apples-not-configured message, got: %s", body)
+	}
+	if !strings.Contains(body, "1 matching event") {
+		t.Errorf("expected the log-events half to still work despite the nil Store, got: %s", body)
 	}
 }
 

@@ -137,6 +137,13 @@ type IAMStore interface {
 	// Pass empty strings to omit a filter; pass 0 for limit to use the default (50).
 	ListApples(ctx context.Context, agentID, sourceRepo, appleType string, limit int) ([]auth.AppleRecord, error)
 
+	// SearchApples returns up to limit apples whose title OR body contains query
+	// (case-insensitive substring match), most recent first. Real, new capability
+	// (kanban card 1111, "IDUNA UNIFIED SEARCH INTERFACE") -- ListApples above only ever
+	// filtered by exact agent_id/source_repo/apple_type; there was no free-text search over
+	// apple content at all before this.
+	SearchApples(ctx context.Context, query string, limit int) ([]auth.AppleRecord, error)
+
 	// GetApple returns a single apple by its integer ID.
 	GetApple(ctx context.Context, id int64) (*auth.AppleRecord, error)
 

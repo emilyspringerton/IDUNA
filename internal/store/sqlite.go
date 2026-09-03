@@ -693,6 +693,42 @@ func (s *SQLiteStore) ListApples(ctx context.Context, agentID, sourceRepo, apple
 	return apples, rows.Err()
 }
 
+// SearchApples -- real, free-text (title OR body) substring search, case-insensitive (SQLite's
+// own LIKE is case-insensitive for ASCII by default, matching the real, common case this
+// content actually is). Real, deliberate simplicity: a plain LIKE '%query%' scan, not FTS5 --
+// the same "narrowest real slice first" judgment call this monorepo's own stdlib work makes
+// repeatedly elsewhere; a real full-text index is a genuine, separate, larger follow-up if this
+// table ever gets large enough for a linear scan to matter (see kanban card 9933's own
+// bstree.prn work in PARENA for the exact same real, honest deferral on the log-search side).
+func (s *SQLiteStore) SearchApples(ctx context.Context, query string, limit int) ([]auth.AppleRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	like := "%" + query + "%"
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, agent_id, source_repo, run_id, apple_type, title, COALESCE(metadata,'null'), recorded_at
+		 FROM apples WHERE title LIKE ? OR body LIKE ?
+		 ORDER BY recorded_at DESC LIMIT ?`, like, like, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var apples []auth.AppleRecord
+	for rows.Next() {
+		var a auth.AppleRecord
+		var recordedStr string
+		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceRepo, &a.RunID, &a.AppleType, &a.Title, &a.Metadata, &recordedStr); err != nil {
+			return nil, err
+		}
+		a.RecordedAt, _ = time.Parse(time.RFC3339Nano, recordedStr)
+		apples = append(apples, a)
+	}
+	return apples, rows.Err()
+}
+
 func (s *SQLiteStore) GetApple(ctx context.Context, id int64) (*auth.AppleRecord, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, agent_id, source_repo, run_id, apple_type, title, body, COALESCE(metadata,'null'), recorded_at
