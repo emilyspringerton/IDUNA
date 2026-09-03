@@ -144,3 +144,37 @@ func (s *Store) UpdateAdLine(slug, adLine, adCTA, adHref string) error {
 	_, err := s.db.Exec(`UPDATE posts SET ad_line = ?, ad_cta = ?, ad_href = ? WHERE slug = ?`, adLine, adCTA, adHref, slug)
 	return err
 }
+
+// Search returns posts whose title OR body contains query (case-insensitive
+// substring match via SQLite's own default LIKE collation), most recent
+// first. Same deliberate "plain LIKE, not a full-text index" scope as
+// internal/store's SearchApples — the narrowest real slice, not a search
+// engine. limit is clamped the same way (default 50, max 500, <=0 -> default).
+func (s *Store) Search(query string, limit int) ([]Post, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	like := "%" + query + "%"
+	rows, err := s.db.Query(
+		`SELECT id, slug, title, author, body, ad_line, ad_cta, ad_href, published_at, created_at
+		 FROM posts WHERE title LIKE ? OR body LIKE ? ORDER BY published_at DESC LIMIT ?`,
+		like, like, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var posts []Post
+	for rows.Next() {
+		var p Post
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Title, &p.Author, &p.Body, &p.AdLine, &p.AdCTA, &p.AdHref, &p.PublishedAt, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		posts = append(posts, p)
+	}
+	return posts, rows.Err()
+}

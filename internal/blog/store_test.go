@@ -29,6 +29,54 @@ func TestStore_CreateAndGetBySlug(t *testing.T) {
 	}
 }
 
+func TestStore_Search_MatchesTitleOrBody(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "blog.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if _, err := s.Create(Post{Slug: "duck-post", Title: "The Duck Still Hasn't Moved", Author: "Tyler", Body: "arena stats update"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := s.Create(Post{Slug: "other-post", Title: "Something Else", Author: "Tyler", Body: "mentions a duck in passing"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := s.Create(Post{Slug: "unrelated", Title: "Unrelated", Author: "Tyler", Body: "no match here"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	results, err := s.Search("duck", 50)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 matches (title + body), got %d: %+v", len(results), results)
+	}
+}
+
+func TestStore_Search_LimitRespected(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "blog.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	for i := 0; i < 5; i++ {
+		if _, err := s.Create(Post{Slug: "post-" + string(rune('a'+i)), Title: "Matching Post", Author: "Tyler", Body: "body"}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	results, err := s.Search("Matching", 2)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected limit of 2, got %d", len(results))
+	}
+}
+
 func TestStore_DuplicateSlugRejected(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "blog.db"))
 	if err != nil {

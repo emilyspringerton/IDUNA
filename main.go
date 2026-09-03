@@ -620,6 +620,7 @@ func main() {
 	portalH.Issuer = issuer
 	portalH.EventLog = unifiedLog
 	portalH.Store = iamStore
+	portalH.BlogStore = blogStore
 
 	localAuthH := &handlers.LocalAuthHandler{Keys: keys, Proj: userProj, Issuer: issuer, EventLog: unifiedLog}
 	registerH := &handlers.RegisterHandler{Keys: keys, Log: uel, Proj: userProj, Store: iamStore, Issuer: issuer}

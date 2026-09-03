@@ -7,6 +7,7 @@ import (
 	"time"
 
 	authjwt "iduna/internal/auth/jwt"
+	"iduna/internal/blog"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
 	"iduna/internal/userlog"
@@ -53,6 +54,11 @@ type PortalHandler struct {
 	// search simply reports its own real "not configured" message rather than the whole page
 	// erroring out.
 	Store store.IAMStore
+	// BlogStore adds a third corpus to Search (kanban card 9944, "OG IDUNA unified search" --
+	// found live that the existing card-1111 search only covered Apples + Log Events, and IDUNA's
+	// own real, prominent blog content (Tyler's REDGARDEN/ecosystem series) had no search story
+	// at all). Same nil-is-optional fallback shape as Store/EventLog.
+	BlogStore *blog.Store
 }
 
 // Login renders the sign-in page. Unauthenticated only in practice --
@@ -280,6 +286,17 @@ func (h *PortalHandler) Search(w http.ResponseWriter, r *http.Request) {
 			} else {
 				data["AppleResults"] = appleResults
 				data["AppleCount"] = len(appleResults)
+			}
+		}
+		if h.BlogStore == nil {
+			data["BlogError"] = "the blog store is not configured on this server"
+		} else {
+			blogResults, err := h.BlogStore.Search(q, 50)
+			if err != nil {
+				data["BlogError"] = err.Error()
+			} else {
+				data["BlogResults"] = blogResults
+				data["BlogCount"] = len(blogResults)
 			}
 		}
 	}
@@ -516,14 +533,14 @@ var portalSearchTmpl = template.Must(template.New("portal_search").Funcs(templat
 </header>
 <main>
   <h1>Unified Search</h1>
-  <p class="note">One query box, two real corpora &mdash; Apples and the unified event log,
-    shown together. Each reports its own real availability independently; one being
-    unconfigured never blocks the other from returning real results.</p>
+  <p class="note">One query box, three real corpora &mdash; Apples, Blog posts, and the unified
+    event log, shown together. Each reports its own real availability independently; one being
+    unconfigured never blocks the others from returning real results.</p>
 
   <form class="query" method="get" action="/portal/search">
     <div class="field">
       <label for="q">Search</label>
-      <input type="text" id="q" name="q" value="{{.QueryVal}}" placeholder="a term to look for across apples and events">
+      <input type="text" id="q" name="q" value="{{.QueryVal}}" placeholder="a term to look for across apples, blog posts, and events">
     </div>
     <button class="go" type="submit">Search</button>
   </form>
@@ -543,6 +560,25 @@ var portalSearchTmpl = template.Must(template.New("portal_search").Funcs(templat
             <td class="mono">{{.SourceRepo}}</td>
             <td>{{.Title}}</td>
             <td class="mono">{{.RecordedAt}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{end}}
+
+    <h2>Blog Posts</h2>
+    {{if .BlogError}}<div class="err">{{.BlogError}}</div>{{end}}
+    {{if not .BlogError}}
+      <p class="count">{{.BlogCount}} matching post{{if ne .BlogCount 1}}s{{end}}</p>
+      <table>
+        <thead><tr><th>Slug</th><th>Title</th><th>Author</th><th>Published At</th></tr></thead>
+        <tbody>
+          {{range .BlogResults}}
+          <tr>
+            <td class="mono"><a href="/blog/{{.Slug}}/">{{.Slug}}</a></td>
+            <td>{{.Title}}</td>
+            <td class="mono">{{.Author}}</td>
+            <td class="mono">{{.PublishedAt}}</td>
           </tr>
           {{end}}
         </tbody>

@@ -11,6 +11,7 @@ import (
 
 	"iduna/internal/auth"
 	"iduna/internal/auth/jwt"
+	"iduna/internal/blog"
 	"iduna/internal/http/handlers"
 	"iduna/internal/userlog"
 )
@@ -274,6 +275,65 @@ func TestPortalHandler_Search_UnconfiguredStoreDoesNotBlockLogs(t *testing.T) {
 	}
 	if !strings.Contains(body, "1 matching event") {
 		t.Errorf("expected the log-events half to still work despite the nil Store, got: %s", body)
+	}
+}
+
+// TestPortalHandler_Search_IncludesBlogPosts -- kanban card 9944 ("OG IDUNA unified search"):
+// found live that card 1111's own original search only covered Apples + Log Events, with no
+// blog corpus at all despite IDUNA's own real, prominent blog content. Real third corpus, same
+// independent-availability shape as the other two.
+func TestPortalHandler_Search_IncludesBlogPosts(t *testing.T) {
+	blogStore, err := blog.Open(t.TempDir() + "/blog.db")
+	if err != nil {
+		t.Fatalf("blog.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = blogStore.Close() })
+	if _, err := blogStore.Create(blog.Post{
+		Slug: "widget-post", Title: "A Real Widget Post", Author: "Tyler", Body: "body text",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	h := &handlers.PortalHandler{BlogStore: blogStore}
+	req := httptest.NewRequest(http.MethodGet, "/portal/search?q=widget", nil)
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "1 matching post") {
+		t.Errorf("expected 1 matching blog post reported, got: %s", body)
+	}
+	if !strings.Contains(body, "A Real Widget Post") {
+		t.Errorf("expected the real post title rendered, got: %s", body)
+	}
+}
+
+// TestPortalHandler_Search_UnconfiguredBlogStoreDoesNotBlockOthers -- same independence
+// guarantee as the existing Store/EventLog test above, extended to the new third corpus.
+func TestPortalHandler_Search_UnconfiguredBlogStoreDoesNotBlockOthers(t *testing.T) {
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	if _, err := eventLog.Append(context.Background(), userlog.Event{
+		ID: "e1", Type: "iduna:auth.local.failure", Source: "iduna-auth",
+		Data: []byte(`{"note":"findme"}`),
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	h := &handlers.PortalHandler{EventLog: eventLog} // BlogStore left nil
+	req := httptest.NewRequest(http.MethodGet, "/portal/search?q=findme", nil)
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "blog store is not configured") {
+		t.Errorf("expected an honest blog-not-configured message, got: %s", body)
+	}
+	if !strings.Contains(body, "1 matching event") {
+		t.Errorf("expected the log-events half to still work despite the nil BlogStore, got: %s", body)
 	}
 }
 
