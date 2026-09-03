@@ -260,12 +260,98 @@ org:**
   parsing `EMILY/BACKLOG.md`'s own specific Markdown convention — real, substantial
   generalization work needed before this could be a customer-facing feature, not a copy-paste.
 
+### Real, shipped: IDUNA_PRO v0 (2026-09-03)
+
+The `IDUNA_PRO` repo was created upstream and pulled in. The "real core candidates" list above
+was extracted directly (`internal/auth`, `internal/store`, `internal/userlog`,
+`internal/util`, `internal/http/middleware`, plus the core handlers: Google/local/agent/device
+auth, JWT refresh, self-serve registration, `/me`, users, agents, Apples, unified logging) into
+a new, standalone Go module. Checked directly before copying: zero cross-imports from these
+packages into any of the "leave behind" custom packages (`blog`/`tyler`/`promptoverse`/
+`mailinglist`/`vault`/`drive`/`statuspage`/`backlog`) — the categorization held up under an
+actual extraction, not just inspection. `go build`/`vet`/`test ./...` clean. **Live-verified**,
+not just compiled: booted the real binary against a fresh SQLite file (migrations ran clean,
+creating exactly the expected core tables and none of the excluded ones), confirmed `/health`,
+a real ES256 key from `/.well-known/jwks.json`, a real self-serve `POST /api/v1/auth/register`
+issuing a real JWT, and `POST /api/v1/auth/local` correctly rejecting bad credentials.
+
+**Real, honest, found gap, not fixed in this pass**: `GET /api/v1/identities/me` calls
+`store.GetUserByID`, which only resolves Google-OAuth-style UUID user IDs — a local-auth JWT's
+subject (`local:<N>`) doesn't resolve, so a self-serve-registered user gets a 404 from `/me`
+today. Confirmed this is a **pre-existing gap inherited from IDUNA itself** (read
+`GetUserByID`'s own implementation directly), not something the extraction introduced — but it
+matters more for `IDUNA_PRO` specifically, since a real product built around self-serve/local
+auth (not Google OAuth) will hit this immediately. Real, named next step: unify the local-user
+and OAuth-user identity models, or teach `/me` to dispatch on the `local:` prefix.
+
+## Extensibility — PARENA mods (2026-09-03, founder real-time)
+
+Founder, real-time, preserved verbatim: "how do we abstract the primitives of the stuff we left
+out to let people build on top to get what they need? like if someone wants to use IDUNA_PRO for
+their game logins it should be like a tutorial on our docs site to show how to get that set up on
+the platform PARENA mods built in I guess — we could even provide an online parena editor."
+
+### The real shape of the problem
+
+`IDUNA_PRO` deliberately excludes every game/product-specific handler this monorepo happens to
+need (mmo, redgarden tickets, shankpit queues, etc — see the categorization above). A real
+customer building their OWN product on `IDUNA_PRO` needs a way to add THEIR OWN custom identity
+logic — extra registration fields, custom permission gates, product-specific post-auth claims —
+without forking `IDUNA_PRO`'s own Go source for every customer. This is exactly the same real
+problem PAPERCRAFT/ECOWAR's own PARENA mod layer solves for game logic ("host owns I/O/
+networking/rendering, PARENA owns the decision") — applied here to auth/identity decisions
+instead of game decisions.
+
+### Real, decisive, checked difference from the PAPERCRAFT/ECOWAR precedent
+
+PAPERCRAFT and ECOWAR's own mods compile via `parena build ... -o file.c` (VS0's C target)
+because their host is C. **`IDUNA_PRO`'s host is Go** — a mod for it needs `BURROW`'s own
+native Go emission target (`burrow build ... -o file.go`), not PARENA's C target. This is the
+exact same real design `DUNG` already established for the same reason (its own host is also
+Go): a `burrow build`-compiled function is a real, ordinary Go import, called directly — **no
+cgo/FFI boundary at all**, the same real, load-bearing advantage `DUNG/NORTHSTAR.md` names for
+its own editor logic. Getting this wrong (assuming the C-target pattern) would have been a real,
+concrete mistake, not just a stylistic choice — a C-target mod cannot link into a pure-Go
+binary without cgo, which `IDUNA_PRO` doesn't use anywhere else and shouldn't have to start
+using just for this.
+
+### Real, phased plan (not built in this pass)
+
+1. **Define the real hook contract** — a small, named set of PARENA functions `IDUNA_PRO`'s Go
+   host calls into at specific real decision points, e.g. `on-register-extra-fields` (validate/
+   transform custom signup fields), `on-permission-check` (custom authorization beyond RBAC),
+   `on-post-auth-claims` (inject custom JWT claims). Lives under a new
+   `PARENA/stdlib/idunapro/*.prn`, matching the exact real `PARENA/stdlib/papercraft/*.prn` /
+   `PARENA/stdlib/ecowar/*.prn` per-consumer-directory convention already established.
+2. **Wire the Go host to call the generated functions** — `IDUNA_PRO`'s own handlers call the
+   `burrow build`-generated Go functions directly at those points, same zero-FFI shape DUNG
+   already proved.
+3. **Docs-site tutorial** — walks a customer through writing their first hook mod and rebuilding
+   their own `IDUNA_PRO` instance with it linked in. No docs site exists for Emily for Business
+   today — real, separate, unbuilt work, named honestly.
+4. **The "online PARENA editor" ask — real precedent exists, but needs real adaptation, not
+   reuse-as-is.** `JEWEL` (`JEWEL` repo, live today at okemily.com's `/jewel/` path via the
+   FatBaby broker) is a real, already-built Jupyter kernel that shells out to `parena build` +
+   gcc per cell — the closest existing thing to "an online PARENA editor." But JEWEL's own real
+   design is built around the **C target** (compile-then-run-a-real-binary per cell) — a
+   customer prototyping an `IDUNA_PRO` hook mod is targeting the **Go** target instead, which
+   doesn't produce a standalone runnable binary the same way (it produces a Go source file
+   meant to be imported into a larger program, not executed alone). A real, adapted online
+   editor for this specific use case would need its own execution model — most likely: compile
+   the hook mod via `burrow build`, then run it against real, fixture sample inputs in a small,
+   sandboxed Go test harness (the same pattern this session's own `test_mixforge_import.c`-style
+   verification uses, adapted to Go) and show the result — not a direct reuse of JEWEL's own
+   C-target compile-and-execute flow.
+
 ### Real, honest, not attempted in this pass
 
-This is a categorization and a control-plane design, not a migration. Not done here: creating
-the `IDUNA_PRO` repo, actually moving code, building the `tenants`/`trials` table or its
-provisioning pipeline, or `console.okemily.com` itself. Real, concrete next step: found the
-`IDUNA_PRO` repo (or ask the founder to pre-create it, matching the `EMILY_FOR_BUSINESS`/`LO`/
-`MIXFORGE` precedent of the founder creating the empty upstream repo ahead of the work), seed it
-with the "real core candidates" list above, and treat the "ambiguous" list as real, individual
-decisions to make one at a time during that extraction — not resolved wholesale here.
+This is a design, not an implementation. Not done here: the actual `PARENA/stdlib/idunapro/*.prn`
+hook contract, the Go-host wiring, the docs site, or the adapted online editor. Each is real,
+concrete, separately scoped, and sequenced above — a genuinely large initiative on its own,
+correctly not rushed alongside the extraction that just landed.
+
+### Real, honest, not attempted in this pass (extraction)
+
+The extraction itself is real and live-verified, but not everything is done: `console.okemily.com`
+itself, the `tenants`/`trials` table and its provisioning pipeline, and the wildcard-vs-per-tenant
+TLS decision (see above) all remain real, separate, unbuilt next steps.
