@@ -825,6 +825,8 @@ func main() {
 	// Field office district overlay (S127-05) — same M2M auth as MMO routes.
 	mux.Handle("/api/v1/fieldoffices", mmoH)
 	mux.Handle("/api/v1/fieldoffices/", mmoH)
+	mux.Handle("/api/v1/hats", mmoH)
+	mux.Handle("/api/v1/hats/", mmoH)
 
 	// Supply chain API (S136-02/03) — auth required.
 	supplyH := middleware.RequireAuth(keys)(&handlers.SupplyHandler{DB: db})

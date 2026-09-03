@@ -11,6 +11,10 @@ package handlers
 //   PATCH  /api/v1/characters/:id/gold/credit          — credit gold, bounded per call (2026-07-31)
 //   GET    /api/v1/characters/:id/inventory           — bag inventory (S129-05)
 //   GET    /api/v1/characters/:id/equipment           — equipped slots (S129-05)
+//   GET    /api/v1/hats                               — hat catalog (WOTAN_HAT_STORE_NORTHSTAR.md Phase 1)
+//   GET    /api/v1/characters/:id/hats                — a character's owned hats
+//   POST   /api/v1/characters/:id/hats/buy            — buy a hat by hat_id; deducts Flow atomically
+//   PATCH  /api/v1/characters/:id/hats/equip          — equip an owned hat by hat_id
 //   POST   /api/v1/items                              — craft item; provenance_chain[0] set
 //   POST   /api/v1/items/:id/transfer                 — transfer item; append provenance
 //   DELETE /api/v1/items/:id                          — soft-delete item
@@ -63,6 +67,10 @@ func (h *MMOHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Field office district overlay (S127-05)
 	case strings.HasPrefix(path, "/api/v1/fieldoffices"):
 		h.routeFieldOffices(w, r, path)
+	// Hat catalog (WOTAN_HAT_STORE_NORTHSTAR.md Phase 1) -- ownership/buy/equip live under
+	// /api/v1/characters/:id/hats..., handled by routeCharacters below.
+	case strings.HasPrefix(path, "/api/v1/hats"):
+		h.routeHats(w, r, path)
 	default:
 		http.NotFound(w, r)
 	}
@@ -172,6 +180,25 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 	if r.Method == http.MethodGet && strings.HasSuffix(path, "/equipment") {
 		id := extractSegment(path, "/api/v1/characters/", "/equipment")
 		h.handleGetEquipment(w, r, id)
+		return
+	}
+	// POST /api/v1/characters/:id/hats/buy (WOTAN_HAT_STORE_NORTHSTAR.md Phase 1) -- checked
+	// before the plain GET .../hats route below since it's a longer, more specific suffix.
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/hats/buy") {
+		id := extractSegment(path, "/api/v1/characters/", "/hats/buy")
+		h.handleBuyHat(w, r, id)
+		return
+	}
+	// PATCH /api/v1/characters/:id/hats/equip
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/hats/equip") {
+		id := extractSegment(path, "/api/v1/characters/", "/hats/equip")
+		h.handleEquipHat(w, r, id)
+		return
+	}
+	// GET /api/v1/characters/:id/hats
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/hats") {
+		id := extractSegment(path, "/api/v1/characters/", "/hats")
+		h.handleListCharacterHats(w, r, id)
 		return
 	}
 	// GET /api/v1/characters/by-player/:player_id (2026-07-31, REDGARDEN_GUI_NORTHSTAR.md

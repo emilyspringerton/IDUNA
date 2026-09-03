@@ -1,5 +1,24 @@
 # IDUNA Changelog
 
+## 2026-09-03 (9)
+- feat(mmo): real hat catalog + buy/equip API (kanban `WTHS-0000`/`WTHS-0010`,
+  `BRAWLPIT/docs/WOTAN_HAT_STORE_NORTHSTAR.md` Phase 1). New migration `202609030001_hats.sql`:
+  `hats` (catalog) + `character_hats` (ownership/equip) tables, seeded with a real 6-hat catalog
+  drawn from `OKEMILY/hats.html`'s own already-designed mockup. New
+  `internal/http/handlers/hats.go`: `GET /api/v1/hats` (catalog), `GET /api/v1/characters/:id/
+  hats` (owned), `POST /api/v1/characters/:id/hats/buy` (atomic Flow-deduct + ownership grant in
+  one real DB transaction, reusing `handleDeductGold`'s own conditional-UPDATE pattern), `PATCH
+  /api/v1/characters/:id/hats/equip` (exclusive single-hat equip). Real, decisive finding that
+  corrects the northstar's own Phase 0: a real, external Flow balance-query + spend API already
+  existed (`GET /api/v1/characters/by-player/:player_id` already returns `gold_balance`, synced
+  from GFD's own `apps2/mud/main.go` via `CreditGold`/`DeductGold`) -- no new work needed there.
+  Real bug found and fixed live, test-driven: the buy handler's own "not found vs. insufficient
+  funds" disambiguation query ran on `h.DB` instead of the open `tx`, landing on a different,
+  empty SQLite connection for a `:memory:` test DB and always misreporting a real character as
+  missing -- fixed to query through `tx`. 8 new handler tests + 1 new migration test (confirms
+  the MySQL-flavored DDL survives SQLite translation intact and re-applies idempotently).
+  `go build/vet/test ./...` all clean.
+
 ## 2026-09-03 (8)
 - docs: new `docs/NORTHSTAR_INVENTORY.md` — real, unified scoping pass for 3 related priority-queue cards (`AI-ITL`, `II-001`, `II-102`): a personal electronics/component inventory hosted as an IDUNA sibling app (same `drive`/`blog`/`vault` "monorepo-custom behind the portal" pattern), seeded with the founder's own real, named starting inventory (2x Pi B2?, 2x Pi Zero, an Adafruit Feather with a radio module). Flat SQLite schema, real API surface (plain CRUD + a genuinely new `POST /api/v1/inventory/query` endpoint feeding the real inventory into an LLM call for the AI-guidance ask). 3-phase plan matching each card's own real framing. Registered as golden doc `IDUNA-INVENTORY-NORTH`. Planning only, no code written.
 

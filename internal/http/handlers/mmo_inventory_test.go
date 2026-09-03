@@ -75,6 +75,20 @@ func newInventoryDB(t *testing.T) *sql.DB {
 			capacity     INTEGER NOT NULL DEFAULT 30,
 			PRIMARY KEY (character_id, bag)
 		);
+		CREATE TABLE hats (
+			hat_id      TEXT PRIMARY KEY,
+			name        TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			flow_cost   INTEGER NOT NULL,
+			image_asset TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE character_hats (
+			character_id TEXT NOT NULL,
+			hat_id       TEXT NOT NULL,
+			acquired_at  TEXT NOT NULL,
+			equipped     INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (character_id, hat_id)
+		);
 	`)
 	if err != nil {
 		t.Fatalf("create tables: %v", err)
