@@ -9,6 +9,7 @@ import (
 	"iduna/internal/auth"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
+	"iduna/internal/userlog"
 )
 
 // HeimdalHandler handles /api/v1/heimdal routes.
@@ -18,7 +19,8 @@ import (
 //   GET   /api/v1/heimdal/sprints/{id}   — get single sprint
 //   PATCH /api/v1/heimdal/sprints/{id}   — update status/criteria (heimdal.process — Emily Prime)
 type HeimdalHandler struct {
-	Store store.IAMStore
+	Store    store.IAMStore
+	EventLog userlog.EventLog // optional (S226-04); nil skips event emission entirely
 }
 
 func (h *HeimdalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +82,9 @@ func (h *HeimdalHandler) submit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL", "message": "failed to create sprint"})
 		return
 	}
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:heimdal.submit", "iduna-heimdal", map[string]any{
+		"sprint_id": id, "agent_name": agentName,
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         id,
 		"agent_name": agentName,
@@ -187,10 +192,22 @@ func (h *HeimdalHandler) patch(w http.ResponseWriter, r *http.Request, id int64)
 	if body.CriteriaJSON == "" {
 		body.CriteriaJSON = "[]"
 	}
+	// Real, best-effort "from" status for the transition event below -- a lookup failure here
+	// (should be rare; the sprint plainly exists if UpdateSprintItem below succeeds) just means
+	// the event's own from_status field is omitted rather than blocking the real update itself,
+	// same fire-and-forget-logging discipline every other real event emission in this repo uses.
+	fromStatus := ""
+	if prior, err := h.Store.GetSprintItem(r.Context(), id); err == nil && prior != nil {
+		fromStatus = prior.Status
+	}
 	if err := h.Store.UpdateSprintItem(r.Context(), id, body.CriteriaJSON, body.RoadmapID, body.Status, body.AppleID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "INTERNAL", "message": "failed to update sprint"})
 		return
 	}
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:heimdal.transition", "iduna-heimdal", map[string]any{
+		"sprint_id": id, "from_status": fromStatus, "to_status": body.Status, "apple_id": body.AppleID,
+		"operator": middleware.SubjectFromContext(r.Context()),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": body.Status})
 }
 

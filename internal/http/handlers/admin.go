@@ -176,8 +176,18 @@ func (h *AdminHandler) userAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if verb == "revoke" {
 			opErr = h.Store.RevokeRole(ctx, userID, roleID, operatorID)
+			if opErr == nil {
+				emitAuthEvent(ctx, h.EventLog, "iduna:admin.role.revoke", "iduna-admin", map[string]any{
+					"user_id": userID, "role_id": roleID, "operator_id": operatorID,
+				})
+			}
 		} else {
 			opErr = h.Store.AssignRole(ctx, userID, roleID, operatorID)
+			if opErr == nil {
+				emitAuthEvent(ctx, h.EventLog, "iduna:admin.role.assign", "iduna-admin", map[string]any{
+					"user_id": userID, "role_id": roleID, "operator_id": operatorID,
+				})
+			}
 		}
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
@@ -273,15 +283,21 @@ func (h *AdminHandler) agentAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var opErr error
+		var eventType string
 		if verb == "revoke" {
 			opErr = h.Store.RevokeAgentPermission(ctx, agentID, permName, operatorID)
+			eventType = "iduna:admin.agent_permission.revoke"
 		} else {
 			opErr = h.Store.GrantAgentPermission(ctx, agentID, permName, operatorID)
+			eventType = "iduna:admin.agent_permission.grant"
 		}
 		if opErr != nil {
 			http.Error(w, "operation failed: "+opErr.Error(), http.StatusInternalServerError)
 			return
 		}
+		emitAuthEvent(ctx, h.EventLog, eventType, "iduna-admin", map[string]any{
+			"agent_id": agentID, "permission_name": permName, "operator_id": operatorID,
+		})
 	case "secret":
 		plaintext, err := generateAgentSecret(32)
 		if err != nil {
@@ -292,6 +308,12 @@ func (h *AdminHandler) agentAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to set credential: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Never the plaintext itself -- same "never log the raw credential" discipline this
+		// repo's other real auth-event emissions already follow (e.g. AgentAuthHandler's own
+		// failure event logs only the attempted agent_name, never agent_secret).
+		emitAuthEvent(ctx, h.EventLog, "iduna:admin.agent.secret_rotate", "iduna-admin", map[string]any{
+			"agent_id": agentID, "operator_id": operatorID,
+		})
 		// One-time reveal: this plaintext is never retrievable again after this
 		// response (only the bcrypt/SHA-256 hash is persisted).
 		renderHTML(w, adminAgentSecretTmpl, map[string]any{

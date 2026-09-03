@@ -106,14 +106,18 @@ same search/regex query, rendered as a real HTML form + results table; requires 
 be up (a real, deliberately accepted limitation while migration is planned, named on the page
 itself, not hidden).
 
-Real code paths that DO emit events today: `GoogleAuthHandler`/`AgentAuthHandler`/
-`LocalAuthHandler`/`AdminLoginHandler`/`PortalHandler.LocalLogin` (every real login surface —
-`iduna:auth.*.success`/`.failure`) and `AdminHandler.userAction`/`agentAction` suspend/activate
-(`iduna:admin.user.suspend`/`.unsuspend`, `iduna:admin.agent.suspend`/`.unsuspend`). Every
+Real code paths that emit events today (S226-01 through S226-04, `EMILY/BACKLOG.md` SECTION 226 —
+closed): `GoogleAuthHandler`/`AgentAuthHandler`/`LocalAuthHandler`/`AdminLoginHandler`/
+`PortalHandler.LocalLogin` (every real login surface — `iduna:auth.*.success`/`.failure`);
+`AdminHandler.userAction`/`agentAction` suspend/activate (`iduna:admin.user.suspend`/`.unsuspend`,
+`iduna:admin.agent.suspend`/`.unsuspend`) and the same handler's role assign/revoke
+(`iduna:admin.role.assign`/`.revoke`), agent permission grant/revoke
+(`iduna:admin.agent_permission.grant`/`.revoke`), and agent secret rotation
+(`iduna:admin.agent.secret_rotate` — records that a rotation happened, never the freshly-generated
+plaintext); `HeimdalHandler.submit`/`.patch` (`iduna:heimdal.submit`, `iduna:heimdal.transition`
+with real `from_status`/`to_status`); `ApplesHandler.create` (`iduna:apples.create`). Every
 emission point is nil-safe (an unset `EventLog` field is a no-op, not a panic) and fire-and-forget
-(a logging-backend outage never breaks the real auth/admin flow it's observing). Real, honest,
-not yet done: HEIMDAL sprint transitions, Apple postings, and role/permission grant/revoke don't
-emit events yet (`EMILY/BACKLOG.md` SECTION 226, S226-04).
+(a logging-backend outage never breaks the real auth/admin/heimdal/apples flow it's observing).
 
 ## Migrations Checklist
 

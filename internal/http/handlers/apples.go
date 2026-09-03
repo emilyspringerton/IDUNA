@@ -16,6 +16,7 @@ import (
 	"iduna/internal/auth"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
+	"iduna/internal/userlog"
 )
 
 // ApplesHandler handles /api/v1/apples routes.
@@ -31,7 +32,8 @@ import (
 // GET   /api/v1/apples/stats/daily-tokens?days=7  requires apples.read
 type ApplesHandler struct {
 	Store        store.IAMStore
-	ApplesGitDir string // path to APPLES git repo; if set, every new Apple is auto-synced
+	ApplesGitDir string           // path to APPLES git repo; if set, every new Apple is auto-synced
+	EventLog     userlog.EventLog // optional (S226-04); nil skips event emission entirely
 }
 
 // applesGitSyncMu serializes syncAppleToGit's git commands across concurrent
@@ -264,6 +266,9 @@ func (h *ApplesHandler) create(w http.ResponseWriter, r *http.Request) {
 		apple.ID = id
 		go syncAppleToGit(h.ApplesGitDir, apple)
 	}
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:apples.create", "iduna-apples", map[string]any{
+		"apple_id": id, "agent_id": agentID, "source_repo": body.SourceRepo, "apple_type": body.AppleType,
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":          id,
 		"recorded_at": time.Now().UTC().Format(time.RFC3339Nano),

@@ -581,6 +581,13 @@ func main() {
 	adminLoginH.EventLog = unifiedLog
 	adminH.EventLog = unifiedLog
 
+	// S226-04: wire the remaining real code paths named as this section's own explicit follow-up
+	// -- HEIMDAL sprint transitions and Apple postings, alongside admin.go's own newly-added
+	// role-assign/revoke + agent-permission-grant/revoke + agent-secret-rotate emissions (same
+	// adminH.EventLog wire above already covers those, no separate line needed here).
+	heimdalH.EventLog = unifiedLog
+	applesH.EventLog = unifiedLog
+
 	// Wire the developer portal's real IDUNA login now that userProj exists
 	// (see the portalH declaration above, in the /portal route block, for
 	// why this is set here rather than in the struct literal there).

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
+	"iduna/internal/userlog"
 )
 
 // stubHeimdalStore embeds stubApplesStore (from apples_test.go) and overrides sprint methods.
@@ -201,5 +203,58 @@ func TestHeimdalPatch(t *testing.T) {
 	}
 	if store.sprints[0].RoadmapID != "RSI-42" {
 		t.Errorf("roadmap_id = %q, want RSI-42", store.sprints[0].RoadmapID)
+	}
+}
+
+// TestHeimdalHandler_EmitsEvents -- S226-04: submit and a real status transition both land in
+// the unified log, the transition event carrying the real from/to status.
+func TestHeimdalHandler_EmitsEvents(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubHeimdalStore{}
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	h := middleware.RequireAuth(keys)(&handlers.HeimdalHandler{Store: store, EventLog: eventLog})
+
+	submitToken := makeAgentToken(t, keys, "mjolnir", []string{"heimdal.submit"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/heimdal/sprints",
+		bytes.NewBufferString(`{"requirement":"real requirement text"}`))
+	req.Header.Set("Authorization", "Bearer "+submitToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("submit: want 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	processToken := makeAgentToken(t, keys, "emily-prime", []string{"heimdal.process"})
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/heimdal/sprints/1",
+		bytes.NewBufferString(`{"status":"queued"}`))
+	req.Header.Set("Authorization", "Bearer "+processToken)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch: want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	recs, err := eventLog.ReadFrom(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(recs))
+	}
+	if recs[0].Event.Type != "iduna:heimdal.submit" {
+		t.Errorf("event 0 Type = %q, want iduna:heimdal.submit", recs[0].Event.Type)
+	}
+	if recs[1].Event.Type != "iduna:heimdal.transition" {
+		t.Errorf("event 1 Type = %q, want iduna:heimdal.transition", recs[1].Event.Type)
+	}
+	if !strings.Contains(string(recs[1].Event.Data), `"from_status":"pending"`) {
+		t.Errorf("transition event should carry the real from_status, got: %s", recs[1].Event.Data)
+	}
+	if !strings.Contains(string(recs[1].Event.Data), `"to_status":"queued"`) {
+		t.Errorf("transition event should carry the real to_status, got: %s", recs[1].Event.Data)
 	}
 }

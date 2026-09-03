@@ -15,6 +15,7 @@ import (
 	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
+	"iduna/internal/userlog"
 )
 
 // context is used by stub methods that satisfy the IAMStore interface.
@@ -565,5 +566,48 @@ func TestApplesEnrich_EmptyBody(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 (empty body)", rr.Code)
+	}
+}
+
+// TestApplesCreate_EmitsEvent -- S226-04: a real Apple posting lands in the unified log too,
+// carrying the real apple_id/agent_id/source_repo/apple_type.
+func TestApplesCreate_EmitsEvent(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	store := &stubApplesStore{appendID: 99}
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	h := middleware.RequireAuth(keys)(&handlers.ApplesHandler{Store: store, EventLog: eventLog})
+
+	token := makeAgentToken(t, keys, "agent-1", []string{"apples.write"})
+	body, _ := json.Marshal(map[string]any{
+		"source_repo": "iduna", "run_id": "sha-abc123", "apple_type": "improvement",
+		"title": "test", "body": "test body",
+	})
+	req := httptest.NewRequest("POST", "/api/v1/apples", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rr.Code, rr.Body.String())
+	}
+
+	recs, err := eventLog.ReadFrom(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(recs))
+	}
+	if recs[0].Event.Type != "iduna:apples.create" {
+		t.Errorf("event Type = %q, want iduna:apples.create", recs[0].Event.Type)
+	}
+	if !strings.Contains(string(recs[0].Event.Data), `"apple_id":99`) {
+		t.Errorf("event should carry the real apple_id, got: %s", recs[0].Event.Data)
+	}
+	if !strings.Contains(string(recs[0].Event.Data), `"source_repo":"iduna"`) {
+		t.Errorf("event should carry the real source_repo, got: %s", recs[0].Event.Data)
 	}
 }
