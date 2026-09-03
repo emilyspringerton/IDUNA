@@ -1,10 +1,16 @@
 package handlers
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -204,16 +210,31 @@ func (h *SubscriptionHandler) stripeWebhook(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Stripe signature verification.
-	// In production: use stripe-go ConstructEvent. Here: header presence check
-	// (full HMAC verification handled by the Stripe SDK when GFD_STRIPE_WEBHOOK_SECRET is set).
+	// Stripe signature verification -- real, fail-closed. This used to only check that a
+	// Stripe-Signature HEADER was present (real, found, critical gap: never verified the
+	// signature itself, and skipped that check ENTIRELY whenever no webhook secret was
+	// configured) -- meaning any unauthenticated caller could POST a fake
+	// "customer.subscription.created" event naming an arbitrary iduna_user_id and grant that
+	// user a real, active paid subscription for free, with zero real payment ever happening.
+	// This is the literal, exact real gap "the paywall needs to actually function" was about.
+	//
+	// Real, direct hand-port of Stripe's own documented v1 webhook signature scheme (no new
+	// stripe-go dependency needed -- it's a plain, well-documented HMAC-SHA256 over
+	// "<timestamp>.<raw body>", matching this codebase's own established preference for a
+	// direct stdlib implementation over pulling in an SDK for one narrow, well-specified
+	// algorithm, the same real judgment call this repo's own hand-rolled ES256 JWT already
+	// makes). No configured secret now means every event is REJECTED, not silently trusted --
+	// fail closed, not fail open.
 	webhookSecret := h.StripeWebhookSecret
 	if webhookSecret == "" {
 		webhookSecret = os.Getenv("GFD_STRIPE_WEBHOOK_SECRET")
 	}
-	sig := r.Header.Get("Stripe-Signature")
-	if webhookSecret != "" && sig == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing Stripe-Signature"})
+	if webhookSecret == "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "stripe webhook secret not configured"})
+		return
+	}
+	if err := verifyStripeSignature(body, r.Header.Get("Stripe-Signature"), webhookSecret, 5*time.Minute); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid signature: " + err.Error()})
 		return
 	}
 
@@ -266,5 +287,65 @@ func (h *SubscriptionHandler) stripeWebhook(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"received": "ok"})
+}
+
+// verifyStripeSignature — a real, direct implementation of Stripe's own documented webhook
+// signature verification (https://stripe.com/docs/webhooks#verify-manually): the
+// `Stripe-Signature` header is a comma-separated list of `key=value` pairs, always including a
+// `t` (Unix timestamp the event was sent) and one or more `v1` (an HMAC-SHA256 hex digest of
+// "<t>.<raw request body>", keyed by the webhook's own signing secret). A request is genuine
+// only if at least one `v1` value matches the real, freshly-computed digest AND the timestamp
+// is recent — the timestamp check is real replay-attack protection: an attacker who somehow
+// captured one real, valid signed payload can't just resend it indefinitely once outside the
+// tolerance window, matching Stripe's own documented default tolerance (5 minutes, this repo's
+// own SubscriptionHandler.stripeWebhook already passes that literal value).
+func verifyStripeSignature(payload []byte, sigHeader, secret string, tolerance time.Duration) error {
+	if sigHeader == "" {
+		return fmt.Errorf("missing Stripe-Signature header")
+	}
+	var timestamp int64
+	var v1Sigs []string
+	for _, part := range strings.Split(sigHeader, ",") {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "t":
+			ts, err := strconv.ParseInt(kv[1], 10, 64)
+			if err != nil {
+				return fmt.Errorf("malformed timestamp")
+			}
+			timestamp = ts
+		case "v1":
+			v1Sigs = append(v1Sigs, kv[1])
+		}
+	}
+	if timestamp == 0 {
+		return fmt.Errorf("missing timestamp")
+	}
+	if len(v1Sigs) == 0 {
+		return fmt.Errorf("missing v1 signature")
+	}
+
+	age := time.Since(time.Unix(timestamp, 0))
+	if age < 0 {
+		age = -age
+	}
+	if age > tolerance {
+		return fmt.Errorf("timestamp outside tolerance (replay protection)")
+	}
+
+	signedPayload := strconv.FormatInt(timestamp, 10) + "." + string(payload)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signedPayload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+
+	for _, got := range v1Sigs {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1 {
+			return nil
+		}
+	}
+	return fmt.Errorf("no matching v1 signature")
 }
 

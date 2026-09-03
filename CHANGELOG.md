@@ -1,5 +1,30 @@
 # IDUNA Changelog
 
+## 2026-09-03 (6)
+- kanban 卡片 1001「EMILY+ paywall needs to actually function with user accounts etc」——真的找到
+  並修掉兩個真實、嚴重的問題,不是重寫整個訂閱系統。**問題一(真正的安全漏洞)**:
+  `POST /api/v1/subscriptions/stripe`(Stripe webhook)自己的簽章驗證是假的——舊程式碼只檢查
+  `Stripe-Signature` header「有沒有存在」,從來沒有真的驗證過內容,而且只要沒設定
+  `GFD_STRIPE_WEBHOOK_SECRET`,連這個「有沒有存在」的檢查都整個跳過(fail open,不是 fail
+  closed)。代表任何人都可以直接 POST 一個假的
+  `customer.subscription.created` 事件、指定任意 `iduna_user_id`,免費幫自己(或別人)開通真正的
+  付費訂閱,完全不用真的付錢。新增 `verifyStripeSignature`——直接照 Stripe 官方文件的 v1 簽章
+  演算法手刻(HMAC-SHA256 對 `"<timestamp>.<raw body>"`,常數時間比對,含真實的
+  timestamp 容忍度做重放攻擊防護),不用另外拉 `stripe-go` 這個 SDK 依賴。**沒有設定 secret 現在
+  代表整批事件全部拒絕,不是全部信任**。**問題二(真正會擋住正式環境運作的路由 bug)**:
+  `main.go` 把整個 `/api/v1/subscriptions/*`(含 `/stripe`)都包在 `RequireAuth` 底下——但
+  Stripe 自己打進來的 webhook 呼叫本來就不會帶 IDUNA 自己發的 JWT,代表**正式環境裡 Stripe 根本
+  打不進這個 endpoint,訂閱永遠不會透過 webhook 真的啟用**。同一批順便修好 `/tiers`
+  (handler 自己的文件說是 public,實際上一樣被擋);`/stripe`、`/tiers` 改成獨立、真正公開的
+  route,其餘(`/me`、手動 provision)維持要驗證。10 個新測試(含一個真的重現原本漏洞的測試:
+  偽造簽章打進真正的 HTTP handler,確認被拒絕**而且訂閱真的沒有被寫進去**),`go build/vet/test
+  ./...` 全部乾淨、零回歸。真的在 live `iduna.service` 上驗證過:重建重啟後,拿偽造簽章直接打
+  正式服務,現在真的會被擋(這台機器本身沒設定真正的 webhook secret,所以正確地整批 fail
+  closed 回 503,不是接受),`/tiers` 現在真的不用登入就能拿到。誠實、還沒驗證的部分:這個
+  sandbox 沒有真正的 Stripe webhook secret,所以「真正合法簽章被正確接受」這條路徑只在
+  `go test`(用真的算出來的 HMAC 模擬)驗證過,沒有對著 LIVE 服務用真正的 Stripe secret 跑過。
+  commit 待補。 (sess-20260902-2008-ed50169e)
+
 ## 2026-09-03 (5)
 - kanban 卡片 9966:Back Office 的選單改成真正固定在左邊的側邊欄,不再是頂端一整排橫向塞滿的
   連結列。創辦人:「/design updatge the IDUNA OG menu interface so its a left menu thats always

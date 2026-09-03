@@ -132,8 +132,11 @@ func main() {
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
 	heimdalH := &handlers.HeimdalHandler{Store: iamStore}
 
-	// Subscriptions (Emily+ gate) — S23-04.
-	subscriptionH := &handlers.SubscriptionHandler{Store: iamStore}
+	// Subscriptions (Emily+ gate) — S23-04. StripeWebhookSecret wired explicitly here (was
+	// previously left unset, silently falling back to stripeWebhook's own os.Getenv lookup at
+	// call time -- real, harmless either way now that an EMPTY secret fails closed, but real
+	// and explicit is better than implicit for a real payment-verification config value).
+	subscriptionH := &handlers.SubscriptionHandler{Store: iamStore, StripeWebhookSecret: os.Getenv("GFD_STRIPE_WEBHOOK_SECRET")}
 
 	// Check-in monitors — alerting backend.
 	monitorsH := &handlers.MonitorsHandler{Store: iamStore}
@@ -355,7 +358,20 @@ func main() {
 	mux.Handle("/api/v1/heimdal/sprints", heimdalProtected)
 	mux.Handle("/api/v1/heimdal/sprints/", heimdalProtected)
 
-	// Subscriptions API — auth required; provision requires subscriptions.admin (inside handler).
+	// Subscriptions API — auth required for /me and provision (subscriptions.admin checked
+	// inside the handler); /stripe and /tiers are real, deliberately PUBLIC exceptions,
+	// registered separately here (Go's own ServeMux picks the more specific pattern) --
+	// a genuine, found-live bug fixed the same pass as the signature-forging one below: both
+	// were previously caught by the blanket RequireAuth wrapper despite each having its own
+	// real reason to be public. /stripe in particular is Stripe's OWN webhook callback -- it
+	// carries no IDUNA JWT and never will, authenticating itself via a real Stripe-Signature
+	// HMAC instead (see verifyStripeSignature) -- so wrapping it in RequireAuth meant the real
+	// Stripe service could never reach this endpoint at all, and no real subscription could
+	// ever activate via webhook in production. /tiers is a public pricing listing per this
+	// handler's own doc comment, same real class of bug (comment said public, code required
+	// auth).
+	mux.Handle("/api/v1/subscriptions/stripe", subscriptionH)
+	mux.Handle("/api/v1/subscriptions/tiers", subscriptionH)
 	subsProtected := middleware.RequireAuth(keys)(subscriptionH)
 	mux.Handle("/api/v1/subscriptions", subsProtected)
 	mux.Handle("/api/v1/subscriptions/", subsProtected)

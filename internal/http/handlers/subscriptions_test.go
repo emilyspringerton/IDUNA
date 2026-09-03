@@ -3,9 +3,13 @@ package handlers_test
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -43,6 +47,67 @@ func (s *stubSubStore) GetUserSubscription(_ context.Context, userID string) (*a
 func subHandlerWithAuth(keys *jwt.Keys, store *stubSubStore) http.Handler {
 	h := &handlers.SubscriptionHandler{Store: store}
 	return middleware.RequireAuth(keys)(h)
+}
+
+func stripeWebhookSig(secret string, payload []byte, ts int64) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(strconv.FormatInt(ts, 10) + "." + string(payload)))
+	return "t=" + strconv.FormatInt(ts, 10) + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// TestSubscriptionStripeWebhook_NoSecretConfigured_FailsClosed -- the real, direct fix for the
+// found gap: an unconfigured webhook secret used to mean "skip verification entirely, trust
+// everything"; it must now mean "reject everything."
+func TestSubscriptionStripeWebhook_NoSecretConfigured_FailsClosed(t *testing.T) {
+	h := &handlers.SubscriptionHandler{Store: &stubSubStore{}}
+	body := []byte(`{"id":"evt_1","type":"customer.subscription.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions/stripe", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no configured secret should fail closed (503), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestSubscriptionStripeWebhook_ForgedSignatureRejected -- THE real vulnerability this whole
+// change closes: a forged/garbage Stripe-Signature header used to be accepted as long as it was
+// non-empty. Confirms end to end, through the real HTTP handler, that a forged event granting
+// an arbitrary user a subscription is rejected AND never actually applied to the store.
+func TestSubscriptionStripeWebhook_ForgedSignatureRejected(t *testing.T) {
+	store := &stubSubStore{}
+	h := &handlers.SubscriptionHandler{Store: store, StripeWebhookSecret: "whsec_real"}
+	body := []byte(`{"id":"evt_forged","type":"customer.subscription.created","data":{"object":{"metadata":{"iduna_user_id":"free-rider","gfd_tier_id":"emily_plus"}}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions/stripe", bytes.NewReader(body))
+	req.Header.Set("Stripe-Signature", "t=1700000000,v1=forged-not-a-real-hmac")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("a forged signature should be rejected (401), got %d: %s", rr.Code, rr.Body.String())
+	}
+	if sub, _ := store.GetUserSubscription(context.Background(), "free-rider"); sub != nil {
+		t.Fatal("the forged event must NOT have actually granted a subscription -- this is the real exploit this fix closes")
+	}
+}
+
+// TestSubscriptionStripeWebhook_RealValidSignatureApplied -- the real, happy path: a genuinely,
+// correctly signed event (as the real Stripe service would send) is accepted and actually
+// applied to the store.
+func TestSubscriptionStripeWebhook_RealValidSignatureApplied(t *testing.T) {
+	store := &stubSubStore{}
+	secret := "whsec_real"
+	h := &handlers.SubscriptionHandler{Store: store, StripeWebhookSecret: secret}
+	body := []byte(`{"id":"evt_real","type":"customer.subscription.created","data":{"object":{"metadata":{"iduna_user_id":"real-payer","gfd_tier_id":"emily_plus"}}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions/stripe", bytes.NewReader(body))
+	req.Header.Set("Stripe-Signature", stripeWebhookSig(secret, body, time.Now().Unix()))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("a real, correctly-signed event should be accepted, got %d: %s", rr.Code, rr.Body.String())
+	}
+	sub, _ := store.GetUserSubscription(context.Background(), "real-payer")
+	if sub == nil || sub.Status != "active" {
+		t.Fatalf("expected a real active subscription applied for real-payer, got %+v", sub)
+	}
 }
 
 func TestSubscriptionProvision(t *testing.T) {
