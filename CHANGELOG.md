@@ -1,5 +1,23 @@
 # IDUNA Changelog
 
+## 2026-09-04 (17)
+- feat(kanban): real optimistic "Done" animation (kanban card `KBUX-092929`, "hitting done on a
+  card can be optimistic and immediately disappear or like fly off the screen to the right and
+  have the other cards slide up it seems like we are waiting ona sync request"). Real, decisive
+  root cause found by reading the actual frontend code: `sendToQueue` (the one real choke point
+  both drag-to-Done and the quick-select dropdown already funnel through) awaited the PATCH
+  response, then a FULL `loadCards()`/`loadInbox()` re-fetch, before the DOM changed at all --
+  exactly the "waiting on a sync request" feeling the card itself named. Fix: a new `.card.
+  completing` CSS transition (translateX fly-off-right + fade + a delayed max-height/margin
+  collapse, so sibling cards visibly "slide up" instead of leaving a hole) applied immediately
+  via `markCardDone`, BEFORE the network call fires; `sendToQueue` now awaits the fetch and the
+  animation's own real `transitionend` together (`Promise.all`, not sequentially) so the later
+  full reload never cuts a still-playing animation short. Real, honest limitation: this is
+  browser-DOM/CSS-timing behavior with no headless-browser test harness in this repo -- verified
+  by direct code reading + a build/vet/test pass (no Go logic changed, pure frontend), not a new
+  automated test; the founder's own visual confirmation is the real remaining check.
+  `go build/vet/test ./...` clean, zero regressions.
+
 ## 2026-09-04 (16)
 - feat(kanban): real unified-log event emission (kanban priority-queue card 3243242, "ensure
   kanban does log streaming and checks in to the unified log ensure that we can build on top of

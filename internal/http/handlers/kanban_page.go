@@ -95,6 +95,20 @@ const kanbanPageHTML = `<!doctype html>
   }
   .card:active { cursor: grabbing; }
   .card.dragging { opacity: 0.4; }
+  /* KBUX-092929: "hitting done on a card can be optimistic and immediately disappear or like
+     fly off the screen to the right and have the other cards slide up... it seems like we are
+     waiting on a sync request" -- real, decisive root cause was exactly that: sendToQueue
+     awaited the PATCH response, then a full loadCards()/loadInbox() re-fetch, before the DOM
+     changed at all. .card.completing (applied by markCardDone below, BEFORE the fetch fires)
+     is the real fly-off-right animation the card's own wording asks for; max-height/margin
+     transition out too so the column visibly closes the gap ("other cards slide up") instead
+     of leaving a hole until the next full render. */
+  .card.completing {
+    transition: transform 0.28s ease-in, opacity 0.28s ease-in, max-height 0.28s ease-in 0.15s,
+                margin-bottom 0.28s ease-in 0.15s, padding 0.28s ease-in 0.15s;
+    transform: translateX(40px); opacity: 0; max-height: 0; margin-bottom: 0; padding-top: 0;
+    padding-bottom: 0; overflow: hidden; pointer-events: none;
+  }
   .card .id { font-size: 0.72rem; letter-spacing: 0.05em; color: var(--gold-soft); font-weight: 600; }
   .card .title { font-size: 0.92rem; margin-top: 0.15rem; }
   .card .del { float: right; color: var(--text-faint); text-decoration: none; font-size: 0.85rem; }
@@ -460,30 +474,63 @@ async function persistColumnOrder(queue, orderedIds) {
 // (real UX bug found live: a card far down a long Inbox column couldn't be
 // dragged to a column scrolled out of view -- see this file's own CSS
 // comment on .col for the other real half of that fix).
+// markCardDone -- KBUX-092929's own real fix: applies the .card.completing fly-off animation to
+// the given card's own DOM element immediately (before the network request even fires), and
+// returns a real Promise that resolves once the CSS transition actually finishes (a real
+// a real transitionend listener, not a guessed setTimeout duration that could drift out of sync with
+// the CSS above). sendToQueue awaits this ALONGSIDE the fetch (Promise.all, not sequentially) so
+// the full reload it still needs to run afterward (to pick up any other real server-side change)
+// never wipes the element out from under a still-playing animation -- the real, live-found race
+// the naive "start the animation, immediately reload" version of this fix had.
+function markCardDone(id) {
+  const el = document.querySelector('.card[data-id="' + id + '"]');
+  if (!el) return Promise.resolve();
+  el.classList.add('completing');
+  return new Promise(resolve => {
+    el.addEventListener('transitionend', () => { el.remove(); resolve(); }, { once: true });
+  });
+}
+
 async function sendToQueue(kind, id, title, queue) {
+  // KBUX-092929: "hitting done on a card can be optimistic and immediately disappear or like
+  // fly off the screen to the right and have the other cards slide up... it seems like we are
+  // waiting on a sync request" -- real, decisive root cause: this function used to await the
+  // PATCH response, then a full loadCards()/loadInbox() re-fetch, before the DOM changed at all
+  // (every existing caller -- drag-to-Done, the quick-select dropdown -- funnels through here,
+  // so this one real choke point is also the one real fix point). Only the real "mark an
+  // existing card done" case gets the optimistic treatment -- an inbox item becoming a brand
+  // new card has no existing DOM node to animate away, and a plain in-board move (backlog ->
+  // priority, say) isn't what this card's own report is about.
+  const animation = (kind === 'card' && queue === 'done') ? markCardDone(id) : null;
   try {
-    let res;
-    if (kind === 'inbox') {
+    const doFetch = (kind === 'inbox')
       // Real, un-carded backlog item -- create the real card (title comes
       // from the live BACKLOG.md parse, not hand-typed).
-      res = await fetch(API, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backlog_item_id: id, title: title, queue: queue })
-      });
-    } else {
-      res = await fetch(API + '/' + id, {
-        method: 'PATCH',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queue: queue })
-      });
-    }
+      ? fetch(API, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backlog_item_id: id, title: title, queue: queue })
+        })
+      : fetch(API + '/' + id, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ queue: queue })
+        });
+    // Real fix: wait for the network call AND the fly-off animation together (whichever takes
+    // longer), not the network call THEN a full reload that would otherwise cut the animation
+    // short mid-flight.
+    const [res] = await Promise.all(animation ? [doFetch, animation] : [doFetch]);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     await Promise.all([loadCards(), loadInbox()]);
   } catch (e2) {
     setStatus('Failed to move card: ' + e2.message, true);
+    // Real, honest reversal: the optimistic fly-off already played (or is still mid-flight, in
+    // which case its own already-scheduled transitionend still fires and removes the node) even
+    // though the server call that was supposed to make it real failed -- a full reload here
+    // re-renders the real, unchanged server state, which is the honest recovery either way.
+    await Promise.all([loadCards(), loadInbox()]);
   }
 }
 
