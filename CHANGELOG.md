@@ -1,5 +1,13 @@
 # IDUNA Changelog
 
+## 2026-09-04 (20)
+- docs: `docs/PROJECT_TAGS_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban seed card
+  `PMPX-000` ("a page showing the tags for the different projects etc"). Real, decisive finding:
+  "projects"/"tags" are not formalized concepts anywhere in this data model. Closest real analogs:
+  `BACKLOG.md`'s own `SECTION` numbers, Apples' own `source_repo`. 3 real open questions named; a
+  real, minimal, zero-new-schema dashboard option named (group existing data by those two already
+  -real fields). Registered as golden doc `PROJECT-TAGS-NORTH`. No code written — planning only.
+
 ## 2026-09-04 (19)
 - docs: `docs/IDUNA_NOTEBOOK_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban
   `IN-000`/`IN-001` ("icloud like affordances for creating notes... notebooks are sarena based
