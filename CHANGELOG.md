@@ -1,5 +1,15 @@
 # IDUNA Changelog
 
+## 2026-09-04 (19)
+- docs: `docs/IDUNA_NOTEBOOK_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban
+  `IN-000`/`IN-001` ("icloud like affordances for creating notes... notebooks are sarena based
+  but actually just advertised as regular notes"). Real, decisive finding: the existing
+  `SARENA_NOTEBOOK` portal link is dev-facing `JEWEL` (a real code-execution Jupyter kernel), not
+  what this card wants — the card itself names the real mismatch (plain prose notes, no code-cell
+  chrome). 3 real open questions named, 4-phase plan (owner-scoped CRUD first, then UI, then a
+  conditional PARENA backend, then `IDUNA_PRO` extraction). Registered as golden doc
+  `IDUNA-NOTEBOOK-NORTH`. No code written — planning only.
+
 ## 2026-09-04 (18)
 - docs: `docs/MULTI_KANBAN_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban
   `MULTIKANBAN-000` ("move [kanban] up the abstraction layer... IDUNA and IDUNA PRO... ability to
