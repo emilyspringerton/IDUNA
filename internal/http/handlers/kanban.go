@@ -120,8 +120,36 @@ type kanbanCard struct {
 	Title         string `json:"title"`
 	Queue         string `json:"queue"`
 	Position      int    `json:"position"`
+	BoardID       int64  `json:"board_id"`
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
+}
+
+// kanbanBoard is MULTIKANBAN-000's own real Phase 1 (full scoping in docs/
+// MULTI_KANBAN_NORTHSTAR.md): kanban_cards.board_id now scopes every card to a real board row,
+// defaulting to board 1 (EINHORN_INDUSTRIAL's own already-existing board) everywhere an older
+// caller doesn't specify one -- zero real behavior change for the one board that existed before
+// this. Board CREATION/management API is real, separate, later work (that doc's own Phase 3),
+// deliberately not built here -- this phase is schema + board-aware card CRUD only.
+type kanbanBoard struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	BacklogPath string `json:"backlog_path,omitempty"`
+	CreatedAt   string `json:"created_at"`
+}
+
+const defaultKanbanBoardID = 1
+
+// kanbanBoardIDFromQuery -- real, shared "?board_id=" parsing for GET, defaulting to
+// defaultKanbanBoardID so every existing caller (nothing this monorepo has written before
+// MULTIKANBAN-000 ever passes board_id at all) keeps listing exactly the same real
+// EINHORN_INDUSTRIAL board it always has, unchanged.
+func kanbanBoardIDFromQuery(r *http.Request) (int64, error) {
+	raw := r.URL.Query().Get("board_id")
+	if raw == "" {
+		return defaultKanbanBoardID, nil
+	}
+	return strconv.ParseInt(raw, 10, 64)
 }
 
 var validKanbanQueues = map[string]bool{"backlog": true, "priority": true, "cruise": true}
@@ -152,20 +180,24 @@ func (h *KanbanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *KanbanHandler) list(w http.ResponseWriter, r *http.Request) {
 	queue := r.URL.Query().Get("queue")
+	boardID, err := kanbanBoardIDFromQuery(r)
+	if err != nil {
+		http.Error(w, "board_id must be a real integer", http.StatusBadRequest)
+		return
+	}
 	var rows *sql.Rows
-	var err error
 	if queue != "" {
 		if !validKanbanQueues[queue] {
 			http.Error(w, "queue must be one of: backlog, priority, cruise", http.StatusBadRequest)
 			return
 		}
 		rows, err = h.DB.QueryContext(r.Context(),
-			`SELECT id, backlog_item_id, title, queue, position, created_at, updated_at
-			 FROM kanban_cards WHERE queue = ? ORDER BY position ASC, id ASC`, queue)
+			`SELECT id, backlog_item_id, title, queue, position, board_id, created_at, updated_at
+			 FROM kanban_cards WHERE queue = ? AND board_id = ? ORDER BY position ASC, id ASC`, queue, boardID)
 	} else {
 		rows, err = h.DB.QueryContext(r.Context(),
-			`SELECT id, backlog_item_id, title, queue, position, created_at, updated_at
-			 FROM kanban_cards ORDER BY queue ASC, position ASC, id ASC`)
+			`SELECT id, backlog_item_id, title, queue, position, board_id, created_at, updated_at
+			 FROM kanban_cards WHERE board_id = ? ORDER BY queue ASC, position ASC, id ASC`, boardID)
 	}
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
@@ -176,7 +208,7 @@ func (h *KanbanHandler) list(w http.ResponseWriter, r *http.Request) {
 	out := []kanbanCard{}
 	for rows.Next() {
 		var c kanbanCard
-		if err := rows.Scan(&c.ID, &c.BacklogItemID, &c.Title, &c.Queue, &c.Position, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.BacklogItemID, &c.Title, &c.Queue, &c.Position, &c.BoardID, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			continue
 		}
 		out = append(out, c)
@@ -231,14 +263,26 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 		BacklogItemID string `json:"backlog_item_id"`
 		Title         string `json:"title"`
 		Queue         string `json:"queue"`
+		BoardID       *int64 `json:"board_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	boardID := int64(defaultKanbanBoardID)
+	if body.BoardID != nil {
+		boardID = *body.BoardID
+	}
+	// MULTIKANBAN-000 Phase 1: git-file sync (resolveBareSectionID/syncNewItemToBacklogGitIfMissing)
+	// stays real, board-1-only -- h.BacklogPath is still a single, handler-wide config value, the
+	// real EINHORN_INDUSTRIAL board's own file. A card on any other board is genuinely
+	// self-contained (docs/MULTI_KANBAN_NORTHSTAR.md's own real Phase 1 design), so this whole
+	// resolve/sync step is skipped entirely for board_id != 1 -- syncing a board-2 card into
+	// board-1's own real BACKLOG.md would be a real, wrong cross-board data leak, not a feature.
+	onDefaultBoard := boardID == defaultKanbanBoardID
 	body.BacklogItemID = strings.TrimSpace(body.BacklogItemID)
 	body.Title = strings.TrimSpace(body.Title)
-	if h.BacklogPath != "" {
+	if onDefaultBoard && h.BacklogPath != "" {
 		body.BacklogItemID = resolveBareSectionID(h.BacklogPath, body.BacklogItemID)
 	}
 	if body.BacklogItemID == "" || len(body.BacklogItemID) > 32 {
@@ -260,19 +304,19 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// New cards land at the end of their column -- real next-position lookup,
-	// not just 0, so a fresh card doesn't jump ahead of everything already
-	// ranked there.
+	// New cards land at the end of their column -- real next-position lookup, not just 0, so a
+	// fresh card doesn't jump ahead of everything already ranked there. Scoped by board_id too --
+	// a new board's own first card must not inherit board 1's own, unrelated position numbers.
 	var maxPos sql.NullInt64
-	_ = h.DB.QueryRowContext(r.Context(), `SELECT MAX(position) FROM kanban_cards WHERE queue = ?`, body.Queue).Scan(&maxPos)
+	_ = h.DB.QueryRowContext(r.Context(), `SELECT MAX(position) FROM kanban_cards WHERE queue = ? AND board_id = ?`, body.Queue, boardID).Scan(&maxPos)
 	nextPos := 0
 	if maxPos.Valid {
 		nextPos = int(maxPos.Int64) + 1
 	}
 
 	res, err := h.DB.ExecContext(r.Context(),
-		`INSERT INTO kanban_cards (backlog_item_id, title, queue, position) VALUES (?, ?, ?, ?)`,
-		body.BacklogItemID, body.Title, body.Queue, nextPos)
+		`INSERT INTO kanban_cards (backlog_item_id, title, queue, position, board_id) VALUES (?, ?, ?, ?, ?)`,
+		body.BacklogItemID, body.Title, body.Queue, nextPos, boardID)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
@@ -300,7 +344,9 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 	// Fire-and-forget: never let a slow/failed git sync hold up the response
 	// a caller (the kanban page's own fetch, or a real bearer-auth agent
 	// caller) is waiting on for the DB write, which has already succeeded.
-	if h.BacklogPath != "" {
+	// MULTIKANBAN-000 Phase 1: board-1-only, same real reasoning as the resolveBareSectionID gate
+	// above -- a non-default board's own card is genuinely self-contained, no git file to sync to.
+	if onDefaultBoard && h.BacklogPath != "" {
 		go h.syncNewItemToBacklogGitIfMissing(body.BacklogItemID, body.Title)
 	}
 }

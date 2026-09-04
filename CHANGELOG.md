@@ -1,5 +1,25 @@
 # IDUNA Changelog
 
+## 2026-09-04 (21)
+- feat(kanban): real multi-board support, Phase 1 (kanban `MULTIKANBAN-000`, "move [kanban] up
+  the abstraction layer... IDUNA and IDUNA PRO... ability to create multiple kanbans"), Phase 1
+  of the same-day `MULTI_KANBAN_NORTHSTAR.md` scoping pass. New `202609040004_kanban_boards.sql`:
+  a real `kanban_boards` table, board 1 seeded as `EINHORN_INDUSTRIAL` (this monorepo's own real,
+  already-existing board, now with a real, explicit row instead of being implicit), `board_id`
+  added to `kanban_cards` (`DEFAULT 1`, so every existing row backfills with zero data-migration
+  step and zero real behavior change). `list`/`create` are now board-aware
+  (`?board_id=`/`"board_id"` in the POST body, both defaulting to board 1 for every real, existing
+  caller, which never sends either) — position-lookup for new cards is now also board-scoped (a
+  new board's own first card no longer inherits board 1's own unrelated position numbers). Real,
+  deliberate design: git-file sync (`resolveBareSectionID`/`syncNewItemToBacklogGitIfMissing`)
+  stays board-1-only — a card on any other board is genuinely self-contained, matching this
+  scoping pass's own real answer to "does a generic tenant even want git-file-backed sync." New
+  `TestKanban_BoardIDScopesListAndCreate` (real board isolation, real backward-compat check);
+  `go build/vet/test ./...` (GOWORK=off) clean, zero regressions across the whole existing kanban
+  test suite. Real, deliberately NOT built this phase (matches the doc's own Phase 2/3): a
+  board-management CRUD API, and per-board authorization (every board still shares the one
+  `iduna.admin` permission gate today).
+
 ## 2026-09-04 (20)
 - docs: `docs/PROJECT_TAGS_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban seed card
   `PMPX-000` ("a page showing the tags for the different projects etc"). Real, decisive finding:

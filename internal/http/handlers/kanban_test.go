@@ -32,11 +32,26 @@ func newTestKanbanDB(t *testing.T) *sql.DB {
 		title           VARCHAR(200) NOT NULL,
 		queue           VARCHAR(16) NOT NULL DEFAULT 'backlog',
 		position        INTEGER NOT NULL DEFAULT 0,
+		board_id        INTEGER NOT NULL DEFAULT 1,
 		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
 	if err != nil {
 		t.Fatalf("create kanban_cards table: %v", err)
+	}
+	// MULTIKANBAN-000 Phase 1: real kanban_boards table, board 1 = EINHORN_INDUSTRIAL, matching
+	// the real migration (202609040004_kanban_boards.sql) exactly.
+	_, err = db.Exec(`CREATE TABLE kanban_boards (
+		id           INTEGER  PRIMARY KEY AUTOINCREMENT,
+		name         VARCHAR(100) NOT NULL,
+		backlog_path VARCHAR(500),
+		created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		t.Fatalf("create kanban_boards table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO kanban_boards (id, name, backlog_path) VALUES (1, 'EINHORN_INDUSTRIAL', '/home/fatbaby/EMILY/BACKLOG.md')`); err != nil {
+		t.Fatalf("seed board 1: %v", err)
 	}
 	return db
 }
@@ -260,6 +275,57 @@ func TestKanban_QueueFilterScopesList(t *testing.T) {
 	if len(cruiseCards) != 1 || cruiseCards[0].BacklogItemID != "S202-28" {
 		t.Fatalf("want 1 cruise card (S202-28), got %+v", cruiseCards)
 	}
+}
+
+// TestKanban_BoardIDScopesListAndCreate -- MULTIKANBAN-000 Phase 1 (full scoping in
+// docs/MULTI_KANBAN_NORTHSTAR.md): a card created on a real, second board (board_id=2, no
+// backlog_path -- self-contained, no git-file to sync) is invisible to board 1's own default
+// listing and vice versa; the real, existing default-board behavior (every caller from before
+// this pass, which never sends board_id at all) stays completely unchanged.
+func TestKanban_BoardIDScopesListAndCreate(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	if _, err := db.Exec(`INSERT INTO kanban_boards (id, name, backlog_path) VALUES (2, 'Second Board', NULL)`); err != nil {
+		t.Fatalf("seed board 2: %v", err)
+	}
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := kanbanHandlerWithAuth(keys, db)
+
+	// Real, existing-caller-shaped card -- no board_id in the request body at all.
+	postKanbanCard(t, h, token, "S1-01", "Board 1 card", "")
+
+	// Real, new-caller-shaped card -- explicit board_id=2.
+	board2Body, _ := json.Marshal(map[string]any{
+		"backlog_item_id": "SELF-01", "title": "Board 2 card", "board_id": 2,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/kanban/cards", bytes.NewReader(board2Body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create on board 2 status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// The real, existing default listing (no ?board_id=) must show ONLY the board-1 card --
+	// the real backward-compatibility guarantee this whole phase depends on.
+	defaultCards := listKanbanCards(t, h, token, "")
+	if len(defaultCards) != 1 || defaultCards[0].BacklogItemID != "S1-01" {
+		t.Fatalf("default (board 1) listing should show only the board-1 card, got %+v", defaultCards)
+	}
+
+	// A real, explicit ?board_id=2 request shows only board 2's own card.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/kanban/cards?board_id=2", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var board2Cards []kanbanCardOut
+	if err := json.Unmarshal(rec.Body.Bytes(), &board2Cards); err != nil {
+		t.Fatalf("decode board-2 listing: %v", err)
+	}
+	if len(board2Cards) != 1 || board2Cards[0].BacklogItemID != "SELF-01" {
+		t.Fatalf("board-2 listing should show only the board-2 card, got %+v", board2Cards)
+	}
+	t.Logf("PASS: board 1 and board 2 stay real, independently scoped card lists")
 }
 
 func TestKanban_NewCardLandsAtEndOfItsColumn(t *testing.T) {
