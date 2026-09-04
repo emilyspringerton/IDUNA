@@ -528,6 +528,15 @@ func main() {
 	kanbanInboxH := &handlers.KanbanInboxHandler{DB: db, BacklogPath: backlogPath}
 	mux.Handle("/admin/kanban/api/inbox", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanInboxH)))
 
+	// IDUNA Notebook Phase 1 (IN-000/IN-001, docs/IDUNA_NOTEBOOK_NORTHSTAR.md): plain, owner-
+	// scoped notes CRUD -- gated by ordinary RequireAuth only, no admin/kanban-style shared
+	// permission, since ownership itself (the caller's own real JWT sub) is the real access
+	// control for a personal, self-serve feature.
+	notesH := &handlers.NotesHandler{DB: db}
+	notesProtected := middleware.RequireAuth(keys)(notesH)
+	mux.Handle("/api/v1/notes", notesProtected)
+	mux.Handle("/api/v1/notes/", notesProtected)
+
 	// GFD Item Builder (ITEM_BUILDER_NORTHSTAR.md Phase 2a) -- same direct-file-access precedent
 	// as the kanban/BACKLOG.md bridge above: IDUNA and GoblinFoxDragon are sibling checkouts on
 	// this box, so this reads/writes GoblinFoxDragon/data/items.json directly.

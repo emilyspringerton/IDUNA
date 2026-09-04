@@ -1,5 +1,25 @@
 # IDUNA Changelog
 
+## 2026-09-04 (22)
+- feat(notes): real IDUNA Notebook Phase 1 shipped (kanban `IN-000`/`IN-001`, "icloud like
+  affordances for creating notes... notebooks are sarena based but actually just advertised as
+  regular notes"; full real scoping in `docs/IDUNA_NOTEBOOK_NORTHSTAR.md`). New
+  `202609040005_notes.sql` (`notes` table, `owner_subject` = the raw real JWT `sub` string, not a
+  numeric FK — sidesteps this repo's own already-known "local-auth subjects don't resolve the
+  same way Google-OAuth ones do" gap entirely rather than depending on it) and new
+  `NotesHandler` (`GET/POST/PATCH/DELETE /api/v1/notes[/:id]`), gated by ordinary `RequireAuth`
+  only — no shared admin permission, since ownership itself (the caller's own real subject) is
+  the real access control for this personal, self-serve feature. Deliberately, per that scoping
+  pass's own real recommendation: a genuinely separate CRUD feature, no JEWEL/Jupyter
+  code-execution concept anywhere in this file. Real, decisive design: ownership checks live in
+  the SQL `WHERE` clause itself (`id = ? AND owner_subject = ?`), so a caller can never even learn
+  whether another user's note exists — a real, honest 404, never a 403 that would leak existence.
+  New `TestNotes_CreateAndListAreOwnerScoped`/`TestNotes_CreateDefaultsBlankTitle`/
+  `TestNotes_UpdateAndDeleteAreOwnerScoped`, all real, live-tested ownership-isolation and
+  cross-user-hijack-attempt cases. `go build/vet/test ./...` (GOWORK=off) clean, zero
+  regressions. Real, deliberately NOT built this phase (matches that doc's own Phase 2/3): a real
+  UI, and a PARENA-backed ("sarena based") implementation — plain Go CRUD needs neither yet.
+
 ## 2026-09-04 (21)
 - feat(kanban): real multi-board support, Phase 1 (kanban `MULTIKANBAN-000`, "move [kanban] up
   the abstraction layer... IDUNA and IDUNA PRO... ability to create multiple kanbans"), Phase 1
