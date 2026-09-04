@@ -1,5 +1,28 @@
 # IDUNA Changelog
 
+## 2026-09-04 (9)
+
+### GFD registration waitlist toggle (kanban GFD-UA-001, second half)
+
+- New migration `202609040002_gfd_registration_settings.sql`: single-row `gfd_registration_settings`
+  (mode `open`/`waitlist`, default `open`) + `gfd_waitlist` (email, display_name, bcrypt password
+  hash, requested character name/job, requested/approved timestamps).
+- `PlayerEmailAuthHandler.handleRegister` now checks the mode (after the duplicate-email check,
+  so a returning player still gets the ordinary "already registered" error) -- in waitlist mode
+  it stores the request (password already hashed) in `gfd_waitlist` and returns `202 Accepted`
+  with `{"waitlisted":true}` instead of creating a real account.
+- New `/admin/gfd-registration` page + `GfdRegistrationHandler` API: view/toggle the mode, list
+  the waitlist, and approve an entry -- approval creates the exact same `players`/
+  `player_credentials`/`characters` rows a normal registration would, reusing the password hash
+  captured at signup time so the player never has to re-register. Idempotent-safe: a
+  double-approve is refused with `409`.
+- Back Office nav gained a "GFD Registration" link.
+- 6 new tests (default mode, waitlist blocks real-account creation, duplicate rejection,
+  returning-player-with-real-account not waitlisted, approve creates a working login, double
+  approve refused). `go build/vet/test ./...` clean. Redeployed the live IDUNA instance (real DB
+  backup taken first, migration applied automatically at startup, seed row confirmed), live-
+  verified both new routes return a real 401, correctly auth-gated.
+
 ## 2026-09-04 (8)
 
 ### Back Office nav: GFD Items + GFD Mob Drops (kanban GFD-IM-0013)

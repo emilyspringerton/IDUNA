@@ -553,6 +553,14 @@ func main() {
 	mux.Handle("/admin/gfd-mob-drops/api/tables/", gfdMobDropsAdminProtected)
 	mux.Handle("/admin/gfd-mob-drops", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdMobDropsPageHandler{})))
 
+	// GFD Registration waitlist toggle (kanban GFD-UA-001, second half).
+	gfdRegistrationH := &handlers.GfdRegistrationHandler{DB: db}
+	gfdRegistrationAdminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(gfdRegistrationH))
+	mux.Handle("/admin/gfd-registration/api/mode", gfdRegistrationAdminProtected)
+	mux.Handle("/admin/gfd-registration/api/waitlist", gfdRegistrationAdminProtected)
+	mux.Handle("/admin/gfd-registration/api/waitlist/", gfdRegistrationAdminProtected)
+	mux.Handle("/admin/gfd-registration", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdRegistrationPageHandler{})))
+
 	// Static files (registration SPA + event stream).
 	idunaRoot := getenv("IDUNA_ROOT", ".")
 	serveStatic := func(name string) http.HandlerFunc {

@@ -49,6 +49,28 @@ func newTestEmailAuthDB(t *testing.T) *sql.DB {
 	)`); err != nil {
 		t.Fatalf("create characters: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE gfd_registration_settings (
+		id         INTEGER PRIMARY KEY CHECK (id = 1),
+		mode       TEXT NOT NULL DEFAULT 'open',
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatalf("create gfd_registration_settings: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO gfd_registration_settings (id, mode) VALUES (1, 'open')`); err != nil {
+		t.Fatalf("seed gfd_registration_settings: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE gfd_waitlist (
+		id             INTEGER PRIMARY KEY AUTOINCREMENT,
+		email          TEXT NOT NULL UNIQUE,
+		display_name   TEXT NOT NULL DEFAULT '',
+		password_hash  TEXT NOT NULL,
+		character_name TEXT NOT NULL DEFAULT '',
+		character_job  TEXT NOT NULL DEFAULT '',
+		requested_at   TEXT NOT NULL DEFAULT (datetime('now')),
+		approved_at    TEXT
+	)`); err != nil {
+		t.Fatalf("create gfd_waitlist: %v", err)
+	}
 	return db
 }
 

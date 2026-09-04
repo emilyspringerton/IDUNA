@@ -104,6 +104,40 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Waitlist mode (kanban GFD-UA-001, second half: "need a toggle in iduna back office to
+	// turn it into a waiting list once we have some initial testers"). Checked after the
+	// duplicate-email check above so a returning player still gets the real "already
+	// registered" error rather than a confusing "you're on the waitlist" for an account they
+	// already have. Stores the hashed password now so an admin approval later doesn't need the
+	// player to re-register.
+	mode, err := gfdRegistrationMode(r.Context(), h.DB)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	if mode == gfdRegistrationModeWaitlist {
+		_, err := h.DB.ExecContext(r.Context(),
+			`INSERT INTO gfd_waitlist (email, display_name, password_hash, character_name, character_job)
+			 VALUES (?,?,?,?,?)`,
+			req.Email, req.DisplayName, string(hash), strings.TrimSpace(req.CharacterName), strings.TrimSpace(strings.ToUpper(req.CharacterJob)),
+		)
+		if err != nil {
+			if strings.Contains(err.Error(), "UNIQUE") {
+				http.Error(w, "you're already on the waitlist", http.StatusConflict)
+				return
+			}
+			http.Error(w, "waitlist signup failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]any{
+			"waitlisted": true,
+			"message":    "GFD registration is currently invite-only. You've been added to the waitlist.",
+		})
+		return
+	}
+
 	playerID := uuid.New().String()
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
