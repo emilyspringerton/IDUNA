@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"iduna/internal/http/middleware"
 )
 
 type hatResponse struct {
@@ -73,6 +75,39 @@ func (h *MMOHandler) handleListHatCatalog(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, out)
 }
 
+// checkHatOwnership: real, found-live security gap fix (2026-09-04, WOTAN Phase 2 prep) --
+// handleBuyHat/handleEquipHat had NO ownership check at all despite living behind the exact
+// same "any valid player JWT" RequireAuth every other MMO route uses, unlike
+// handleUpdatePosition's own already-established "not your character" check just above this
+// file's sibling in mmo.go. Before this fix, ANY authenticated player (any real JWT from
+// /api/v1/auth/email/login) could POST .../hats/buy against a completely different player's own
+// character_id and spend THEIR Flow, or equip a hat on someone else's character -- silent
+// because nothing in this repo's test suite or WOTAN's own not-yet-built Phase 2 page had ever
+// driven this endpoint with a real player (non-agent) JWT before. Matches
+// handleUpdatePosition's own pattern exactly: M2M agent tokens (carry an `agent_name` claim)
+// stay exempt, since apps2/mud's own real GFD-side Flow sync legitimately acts on any
+// character's behalf.
+func checkHatOwnership(h *MMOHandler, r *http.Request, characterID string) (ok bool, status int, msg string) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		return true, 0, ""
+	}
+	if _, isAgent := claims["agent_name"]; isAgent {
+		return true, 0, ""
+	}
+	sub, _ := claims["sub"].(string)
+	var ownerPlayerID string
+	if err := h.DB.QueryRowContext(r.Context(),
+		`SELECT player_id FROM characters WHERE character_id=?`, characterID,
+	).Scan(&ownerPlayerID); err != nil {
+		return false, http.StatusNotFound, "character not found"
+	}
+	if sub == "" || sub != ownerPlayerID {
+		return false, http.StatusForbidden, "not your character"
+	}
+	return true, 0, ""
+}
+
 func (h *MMOHandler) handleListCharacterHats(w http.ResponseWriter, r *http.Request, characterID string) {
 	rows, err := h.DB.QueryContext(r.Context(),
 		`SELECT ch.hat_id, hats.name, hats.description, hats.image_asset, ch.acquired_at, ch.equipped
@@ -103,6 +138,11 @@ func (h *MMOHandler) handleListCharacterHats(w http.ResponseWriter, r *http.Requ
 // ownership, both inside one real DB transaction so a crash between the two steps can never
 // leave Flow spent with no hat granted (or vice versa).
 func (h *MMOHandler) handleBuyHat(w http.ResponseWriter, r *http.Request, characterID string) {
+	if ok, status, msg := checkHatOwnership(h, r, characterID); !ok {
+		mmoWriteError(w, status, msg)
+		return
+	}
+
 	var req struct {
 		HatID string `json:"hat_id"`
 	}
@@ -179,6 +219,11 @@ func (h *MMOHandler) handleBuyHat(w http.ResponseWriter, r *http.Request, charac
 // multi-hat layering, see the migration's own doc comment). Un-equips every other owned hat
 // first, inside one transaction, so a crash mid-request can't leave two hats equipped at once.
 func (h *MMOHandler) handleEquipHat(w http.ResponseWriter, r *http.Request, characterID string) {
+	if ok, status, msg := checkHatOwnership(h, r, characterID); !ok {
+		mmoWriteError(w, status, msg)
+		return
+	}
+
 	var req struct {
 		HatID string `json:"hat_id"`
 	}

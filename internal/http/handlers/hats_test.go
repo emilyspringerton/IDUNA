@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
+	"iduna/internal/http/middleware"
 )
 
 func seedHat(t *testing.T, db *sql.DB, hatID, name string, flowCost int) {
@@ -198,6 +200,110 @@ func TestEquipHat_SwapsExclusively(t *testing.T) {
 	db.QueryRow(`SELECT hat_id FROM character_hats WHERE character_id='char-equip-1' AND equipped=1`).Scan(&equippedHat)
 	if equippedHat != "hat-2" {
 		t.Errorf("expected hat-2 to be the equipped hat, got %s", equippedHat)
+	}
+}
+
+// Real, found-live security gap fix (2026-09-04, WOTAN Phase 2 prep): handleBuyHat/
+// handleEquipHat had no ownership check at all before this -- any authenticated player JWT
+// could buy/equip against ANY character_id, spending someone else's own Flow. These tests
+// mirror mmo_position_test.go's own already-established agent/owning-player/non-owning-player
+// coverage for handleUpdatePosition's identical ownership-check pattern.
+
+func TestBuyHat_NonOwningPlayerJWTRejected(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-buy-5") // player_id = "player-1"
+	seedHat(t, db, "hat-1", "Top Hat", 100)
+	db.Exec(`UPDATE characters SET gold_balance = 1000 WHERE character_id = 'char-buy-5'`)
+
+	keys, _ := jwt.GenerateKeys()
+	h := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
+	token := makePlayerToken(t, keys, "some-other-player")
+
+	body, _ := json.Marshal(map[string]string{"hat_id": "hat-1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/char-buy-5/hats/buy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owning player JWT: expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var balance int
+	db.QueryRow(`SELECT gold_balance FROM characters WHERE character_id = 'char-buy-5'`).Scan(&balance)
+	if balance != 1000 {
+		t.Errorf("expected no Flow spent on a rejected buy, balance should stay 1000, got %d", balance)
+	}
+}
+
+func TestBuyHat_OwningPlayerJWTSucceeds(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-buy-6") // player_id = "player-1"
+	seedHat(t, db, "hat-1", "Top Hat", 100)
+	db.Exec(`UPDATE characters SET gold_balance = 1000 WHERE character_id = 'char-buy-6'`)
+
+	keys, _ := jwt.GenerateKeys()
+	h := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
+	token := makePlayerToken(t, keys, "player-1")
+
+	body, _ := json.Marshal(map[string]string{"hat_id": "hat-1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/char-buy-6/hats/buy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("owning player JWT: expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBuyHat_AgentJWTCanBuyForAnyCharacter(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-buy-7") // player_id = "player-1"
+	seedHat(t, db, "hat-1", "Top Hat", 100)
+	db.Exec(`UPDATE characters SET gold_balance = 1000 WHERE character_id = 'char-buy-7'`)
+
+	keys, _ := jwt.GenerateKeys()
+	h := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
+	token := makeAgentTokenWithName(t, keys, "agent-uuid-1", "DRAGONSNSHIT-MUD")
+
+	body, _ := json.Marshal(map[string]string{"hat_id": "hat-1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/char-buy-7/hats/buy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("agent JWT: expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEquipHat_NonOwningPlayerJWTRejected(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-equip-3") // player_id = "player-1"
+	seedHat(t, db, "hat-1", "Top Hat", 100)
+	db.Exec(`INSERT INTO character_hats (character_id, hat_id, acquired_at, equipped) VALUES ('char-equip-3','hat-1','now',0)`)
+
+	keys, _ := jwt.GenerateKeys()
+	h := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
+	token := makePlayerToken(t, keys, "some-other-player")
+
+	body, _ := json.Marshal(map[string]string{"hat_id": "hat-1"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/characters/char-equip-3/hats/equip", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owning player JWT: expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var equipped int
+	db.QueryRow(`SELECT equipped FROM character_hats WHERE character_id='char-equip-3' AND hat_id='hat-1'`).Scan(&equipped)
+	if equipped != 0 {
+		t.Errorf("expected the rejected equip to leave the hat unequipped, got equipped=%d", equipped)
 	}
 }
 

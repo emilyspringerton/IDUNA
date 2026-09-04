@@ -1,6 +1,29 @@
 # IDUNA Changelog
 
-## 2026-09-04
+## 2026-09-04 (2)
+
+### WOTAN hat store — real security gap fix, found live while scoping Phase 2
+
+- `internal/http/handlers/hats.go`: `handleBuyHat`/`handleEquipHat` had **no ownership check at
+  all**, despite living behind the same `RequireAuth` "any valid JWT" every other MMO route
+  uses -- unlike `handleUpdatePosition`'s own already-established "not your character" pattern
+  right next to it in `mmo.go`. Any authenticated player JWT (from
+  `POST /api/v1/auth/email/login`) could call `POST /api/v1/characters/<ANY-character-id>/hats/
+  buy` and spend a completely different player's own Flow, or equip a hat onto someone else's
+  character. Found while scoping WOTAN_HAT_STORE_NORTHSTAR.md's own Phase 2 (a real, browser-
+  facing store page means real player JWTs reaching this endpoint for the first time -- nothing
+  in the existing test suite or Phase 2.5's own GFD-MUD proxy had ever driven it with a
+  non-agent JWT before, so the gap stayed silent).
+- Fix: new `checkHatOwnership` helper, mirroring `handleUpdatePosition`'s exact pattern --
+  M2M agent tokens (carry `agent_name`) stay exempt (GFD's own real Flow sync legitimately acts
+  on any character's behalf), a real player JWT must have `sub == character.player_id` or gets
+  403. Wired into both `handleBuyHat` and `handleEquipHat`; read-only `handleListCharacterHats`
+  intentionally left unguarded, matching every other read endpoint's existing convention.
+- 5 new tests (`hats_test.go`): owning-player buy succeeds, non-owning-player buy rejected
+  (with a real "Flow balance unchanged" assertion), agent-JWT buy-for-any-character still
+  works, non-owning-player equip rejected, plus the existing no-middleware-claims-nil regression
+  case already covered implicitly (claims-nil is a no-op, matching `handleUpdatePosition`'s own
+  `TestUpdatePosition_NoMiddlewareStillWorks`). `go build`/`go vet`/`go test ./...` all clean.
 
 ### IDUXN-003 — kanban board quick filter
 
