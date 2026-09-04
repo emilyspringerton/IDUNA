@@ -196,7 +196,7 @@ func TestGfdItems_RoundTripPreservesRealFieldsApps2MudExpects(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"name": "Beginner Sword", "category": "weapon", "level": 1,
 		"equip_slots": []string{"main"}, "jobs": []string{"WAR"},
-		"stats": map[string]int{"attack": 5}, "model_id": "sword_beginner",
+		"stats": map[string]int{"attack": 5}, "model_id": "sword_beginner", "delay": 234,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/admin/gfd-items/api/items", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -211,9 +211,65 @@ func TestGfdItems_RoundTripPreservesRealFieldsApps2MudExpects(t *testing.T) {
 		t.Fatalf("decode raw JSON: %v", err)
 	}
 	row := generic[0]
-	for _, field := range []string{"id", "name", "category", "equip_slots", "jobs", "level", "stats", "stack_size", "model_id"} {
+	for _, field := range []string{"id", "name", "category", "equip_slots", "jobs", "level", "stats", "stack_size", "model_id", "delay"} {
 		if _, ok := row[field]; !ok {
 			t.Errorf("expected real field %q in the written JSON, got keys: %v", field, row)
 		}
+	}
+}
+
+// TestGfdItems_Delay_IsIndividualNotACategoryConstant confirms two weapons of the same
+// category can carry different real delay values -- founder: "not a standard delay per item
+// type." Real, direct check that nothing in create/update coerces or shares this field.
+func TestGfdItems_Delay_IsIndividualNotACategoryConstant(t *testing.T) {
+	path := newGfdItemsTestFile(t, `[]`)
+	h := &handlers.GfdItemsHandler{ItemsJSONPath: path}
+
+	for _, tc := range []struct {
+		name  string
+		delay int
+	}{
+		{"Fast Dagger", 168},
+		{"Heavy Broadsword", 258},
+	} {
+		body, _ := json.Marshal(map[string]any{"name": tc.name, "category": "weapon", "stack_size": 1, "delay": tc.delay})
+		req := httptest.NewRequest(http.MethodPost, "/admin/gfd-items/api/items", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 for %s, got %d: %s", tc.name, rec.Code, rec.Body.String())
+		}
+	}
+
+	raw, _ := os.ReadFile(path)
+	var items []handlers.GfdItemDef
+	json.Unmarshal(raw, &items)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].Delay == items[1].Delay {
+		t.Errorf("expected two different weapons to keep their own distinct delay values, got %d and %d", items[0].Delay, items[1].Delay)
+	}
+}
+
+// TestGfdItems_Delay_OmittedForNonWeapons confirms a non-weapon item with no delay set writes
+// no "delay" key at all (real omitempty behavior), not a spurious 0.
+func TestGfdItems_Delay_OmittedForNonWeapons(t *testing.T) {
+	path := newGfdItemsTestFile(t, `[]`)
+	h := &handlers.GfdItemsHandler{ItemsJSONPath: path}
+
+	body, _ := json.Marshal(map[string]any{"name": "Potion", "category": "consumable", "stack_size": 12})
+	req := httptest.NewRequest(http.MethodPost, "/admin/gfd-items/api/items", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	raw, _ := os.ReadFile(path)
+	var generic []map[string]any
+	json.Unmarshal(raw, &generic)
+	if _, ok := generic[0]["delay"]; ok {
+		t.Errorf("expected no delay key for a non-weapon item, got %v", generic[0])
 	}
 }

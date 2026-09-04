@@ -113,6 +113,8 @@ Ancient Bow of the Vale"></textarea>
         <input type="number" id="f-level" value="0">
         <label>Stack Size</label>
         <input type="number" id="f-stack" value="1">
+        <label>Delay <span style="font-weight:400">(weapons only -- attack speed in delay-units, 60 ≈ 1s; blank for non-weapons)</span></label>
+        <input type="number" id="f-delay" placeholder="e.g. 240 for a typical 1H sword">
       </div>
       <div>
         <label>Equip Slots <span style="font-weight:400">(comma-separated, blank if not equippable)</span></label>
@@ -135,7 +137,7 @@ Ancient Bow of the Vale"></textarea>
   </div>
 
   <table id="items-table">
-    <thead><tr><th>ID</th><th>Name</th><th>Category</th><th>Level</th><th>Slots</th><th>Model</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Name</th><th>Category</th><th>Level</th><th>Delay</th><th>Slots</th><th>Model</th><th></th></tr></thead>
     <tbody id="items-body"></tbody>
   </table>
 </main>
@@ -174,12 +176,14 @@ function formToItem() {
     throw new Error('Stats must be valid JSON: ' + e.message);
   }
   const idVal = document.getElementById('f-id').value;
+  const delayVal = document.getElementById('f-delay').value;
   return {
     id: idVal ? parseInt(idVal, 10) : 0,
     name: document.getElementById('f-name').value.trim(),
     category: document.getElementById('f-category').value,
     level: parseInt(document.getElementById('f-level').value || '0', 10),
     stack_size: parseInt(document.getElementById('f-stack').value || '1', 10),
+    delay: delayVal ? parseInt(delayVal, 10) : 0,
     equip_slots: splitCsv(document.getElementById('f-slots').value),
     jobs: splitCsv(document.getElementById('f-jobs').value),
     model_id: document.getElementById('f-model').value.trim(),
@@ -194,6 +198,7 @@ function itemToForm(item) {
   document.getElementById('f-category').value = item.category || 'weapon';
   document.getElementById('f-level').value = item.level || 0;
   document.getElementById('f-stack').value = item.stack_size || 1;
+  document.getElementById('f-delay').value = item.delay || '';
   document.getElementById('f-slots').value = (item.equip_slots || []).join(', ');
   document.getElementById('f-jobs').value = (item.jobs || []).join(', ');
   document.getElementById('f-model').value = item.model_id || '';
@@ -205,7 +210,7 @@ function clearForm() {
   editingID = null;
   document.getElementById('form-title').textContent = 'Add new item';
   document.getElementById('cancel-btn').hidden = true;
-  ['f-id','f-name','f-slots','f-jobs','f-model','f-flags'].forEach(id => document.getElementById(id).value = '');
+  ['f-id','f-name','f-slots','f-jobs','f-model','f-flags','f-delay'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-level').value = 0;
   document.getElementById('f-stack').value = 1;
   document.getElementById('f-stats').value = '{}';
@@ -230,6 +235,7 @@ async function loadItems() {
       '<td>' + escapeHtml(item.name) + '</td>' +
       '<td>' + escapeHtml(item.category) + '</td>' +
       '<td>' + (item.level || 0) + '</td>' +
+      '<td>' + (item.delay || '') + '</td>' +
       '<td>' + escapeHtml(slots) + '</td>' +
       '<td>' + escapeHtml(item.model_id || '') + '</td>';
     const tdActions = document.createElement('td');
@@ -336,6 +342,7 @@ function renderQueueRow(p) {
         '<label>Category</label><select class="q-category"></select>' +
         '<label>Level</label><input type="number" class="q-level" value="' + (item.level || 0) + '">' +
         '<label>Stack Size</label><input type="number" class="q-stack" value="' + (item.stack_size || 1) + '">' +
+        '<label>Delay (weapons only)</label><input type="number" class="q-delay" value="' + (item.delay || '') + '">' +
       '</div>' +
       '<div>' +
         '<label>Equip Slots (comma-separated)</label><input type="text" class="q-slots" value="' + escapeHtml((item.equip_slots || []).join(', ')) + '">' +
@@ -369,6 +376,7 @@ function renderQueueRow(p) {
       category: row.querySelector('.q-category').value,
       level: parseInt(row.querySelector('.q-level').value || '0', 10),
       stack_size: parseInt(row.querySelector('.q-stack').value || '1', 10),
+      delay: row.querySelector('.q-delay').value ? parseInt(row.querySelector('.q-delay').value, 10) : 0,
       equip_slots: splitCsv(row.querySelector('.q-slots').value),
       jobs: splitCsv(row.querySelector('.q-jobs').value),
       model_id: row.querySelector('.q-model').value.trim(),

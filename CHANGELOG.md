@@ -1,5 +1,25 @@
 # IDUNA Changelog
 
+## 2026-09-04 (6)
+
+### GFD Item Builder — real attack speed (delay) field
+
+- Founder real-time: "before we go too far i think we need to add attack speed to the items...
+  no every item has a delay specified on that item i mean all the weapons do... not a standard
+  delay per item type." New `Delay int` field on `GfdItemDef` (mirroring `server/itemdef.
+  ItemDef`'s own new field, see `GoblinFoxDragon/CHANGELOG.md`'s own entry), individually set
+  per weapon rather than a fixed constant per weapon category.
+- `/admin/gfd-items` gained a real "Delay" input on the add/edit form, a "Delay" column in the
+  items table, and a "Delay" field on the batch-propose review queue rows.
+- The Vertex batch-propose prompt now asks for a real, individually-varied per-weapon delay
+  (with rough reference ranges by weapon archetype, explicitly told NOT to copy the same value
+  for every weapon of a given type) and includes `delay` in the requested JSON schema.
+- 2 new tests confirming two different weapons keep distinct delay values (not coerced to a
+  shared constant) and that `delay` is correctly omitted (`omitempty`) for non-weapon items;
+  the existing field-name round-trip test now also covers `delay`. `go build/vet/test ./...`
+  clean. Redeployed the live IDUNA instance (real DB backup taken first), live-verified
+  (`/admin/gfd-items` returns a real 401, correctly auth-gated).
+
 ## 2026-09-04 (5)
 
 ### GFD Item Builder — Vertex-powered batch propose assistant (ITEM_BUILDER_NORTHSTAR.md Phase 2d)

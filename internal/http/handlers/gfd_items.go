@@ -54,6 +54,11 @@ type GfdItemDef struct {
 	ModelID         string         `json:"model_id,omitempty"`
 	IconID          int            `json:"icon_id,omitempty"`
 	DisguiseFaction string         `json:"disguise_faction,omitempty"`
+	// Delay is a weapon's own attack speed, in server/combat's own real delay-units (60 du ≈ 1
+	// second) -- mirrors itemdef.ItemDef.Delay exactly. Real, individually-set per weapon, not
+	// a fixed value per weapon type (founder: "not a standard delay per item type"). Only
+	// meaningful for Category == "weapon"; 0 means "not set yet."
+	Delay int `json:"delay,omitempty"`
 }
 
 // GfdItemCategories is the real, fixed category set itemdef.Category itself defines --
