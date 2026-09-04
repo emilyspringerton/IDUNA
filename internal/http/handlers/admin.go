@@ -546,6 +546,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/kanban">Kanban</a>
   <a href="/admin/gfd-items">GFD Items</a>
   <a href="/admin/gfd-mob-drops">GFD Mob Drops</a>
+  <a href="/admin/gfd-mob-spawns">GFD Mob Spawns</a>
   <a href="/admin/gfd-registration">GFD Registration</a>
   <a href="/admin/logout" class="signout">Sign out</a>
 </nav>

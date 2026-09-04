@@ -1,5 +1,26 @@
 # IDUNA Changelog
 
+## 2026-09-04 (10)
+
+### GFD Mob Spawns manager (GFD-MOBSPAWN-001 Phase 3)
+
+- New admin page `/admin/gfd-mob-spawns`, complementary to `/admin/gfd-items` and
+  `/admin/gfd-mob-drops`: list/create/toggle/delete real per-(zone, kind) spawn rules in
+  `GoblinFoxDragon/data/mob_spawns.json` -- same direct-file-access precedent, applied to the
+  newly data-driven `server/spawn.Registry` (see `GoblinFoxDragon/CHANGELOG.md`'s own entry).
+- `GfdMobSpawnsHandler` (`GET/POST /admin/gfd-mob-spawns/api/rules`,
+  `PATCH/DELETE /admin/gfd-mob-spawns/api/rules/{zone_id}/{kind}`) -- rows keyed by the real
+  composite (zone_id, kind) pair the registry itself looks up by, not a separate id space.
+- Real, honest scope named on the page itself: this edits the on/off toggle only -- exact spawn
+  positions/counts still live in `server/mob`'s own per-Kind `*Spawns()` constructors, a
+  per-grid-cell placement editor (Phase 1's own grid math notwithstanding) is separate,
+  not-yet-built follow-up.
+- 11 new tests (list, create, duplicate rejection, same-kind-different-zone allowed, empty-kind
+  rejection, toggle, not-found, malformed path, delete, a real field-shape round-trip test).
+  `go build/vet/test ./...` clean. Redeployed the live IDUNA instance (real DB backup taken
+  first), live-verified both new routes return a real 401, correctly auth-gated. Back Office nav
+  and the other two GFD admin pages gained cross-links.
+
 ## 2026-09-04 (9)
 
 ### GFD registration waitlist toggle (kanban GFD-UA-001, second half)
