@@ -1,5 +1,16 @@
 # IDUNA Changelog
 
+## 2026-09-04 (18)
+- docs: `docs/MULTI_KANBAN_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban
+  `MULTIKANBAN-000` ("move [kanban] up the abstraction layer... IDUNA and IDUNA PRO... ability to
+  create multiple kanbans"). Real, decisive finding: `kanban_cards` is a single, global,
+  hardcoded table (no board column, `backlog_item_id` tied to the one `EMILY_BACKLOG_PATH` file,
+  a single shared `iduna.admin` auth gate) — a real structural mismatch with `IDUNA_PRO`'s own
+  tenants, who have no `EMILY/BACKLOG.md` at all. 4 real open questions named, 4-phase plan
+  (real `kanban_boards` table + `board_id`, per-board auth, board management UI, conditional
+  custom columns). Registered as golden doc `MULTI-KANBAN-NORTH`. No schema/API changes —
+  planning only.
+
 ## 2026-09-04 (17)
 - feat(kanban): real optimistic "Done" animation (kanban card `KBUX-092929`, "hitting done on a
   card can be optimistic and immediately disappear or like fly off the screen to the right and
