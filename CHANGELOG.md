@@ -1,5 +1,29 @@
 # IDUNA Changelog
 
+## 2026-09-04 (7)
+
+### GFD Mob Drops manager (kanban GFD-MD-001)
+
+- New admin page `/admin/gfd-mob-drops`, complementary to `/admin/gfd-items`: list/create/edit/
+  delete real drop tables in `GoblinFoxDragon/data/mob_drops.json` -- same direct-file-access
+  precedent as the Item Builder, applied to a newly data-driven `server/mobdrop.Registry` (see
+  `GoblinFoxDragon/CHANGELOG.md`'s own entry; that registry replaced apps2/mud's own hardcoded
+  `dropsForMob` switch statement in the same pass).
+- `GfdMobDropsHandler` (`GET/POST /admin/gfd-mob-drops/api/tables`,
+  `PATCH/DELETE /admin/gfd-mob-drops/api/tables/{kind}`) -- rows are keyed by mob Kind (a
+  string, case-insensitive) rather than a numeric id, since Kind already is the real key.
+- Real, honest limitation named on the page itself, not hidden: a drop table applies to every
+  mob of a given Kind everywhere it spawns -- there's no (Kind, zone) dimension yet, matching
+  the same real gap already named for the NPC vendor catalog (S251-06). Deliberately shipped
+  without a Vertex batch-propose assistant -- that was a separate, explicit ask scoped to items,
+  not requested here.
+- 10 new tests (list, create, duplicate-kind rejection case-insensitively, empty-kind
+  rejection, update, URL-kind-authoritative, not-found on update/delete, delete, a real
+  field-shape round-trip test matching `mobdrop.Registry.LoadJSON`'s own tags). `go build/vet/
+  test ./...` clean. Redeployed the live IDUNA instance (real DB backup taken first),
+  live-verified (`/admin/gfd-mob-drops` and its API both return a real 401, correctly
+  auth-gated).
+
 ## 2026-09-04 (6)
 
 ### GFD Item Builder — real attack speed (delay) field

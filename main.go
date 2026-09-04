@@ -544,6 +544,15 @@ func main() {
 	mux.Handle("/admin/gfd-items/api/proposals", gfdItemProposalsProtected)
 	mux.Handle("/admin/gfd-items/api/proposals/", gfdItemProposalsProtected)
 
+	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
+	// Builder above, applied to the newly data-driven data/mob_drops.json.
+	gfdMobDropsJSONPath := getenv("GFD_MOB_DROPS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/mob_drops.json")
+	gfdMobDropsH := &handlers.GfdMobDropsHandler{DropsJSONPath: gfdMobDropsJSONPath}
+	gfdMobDropsAdminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(gfdMobDropsH))
+	mux.Handle("/admin/gfd-mob-drops/api/tables", gfdMobDropsAdminProtected)
+	mux.Handle("/admin/gfd-mob-drops/api/tables/", gfdMobDropsAdminProtected)
+	mux.Handle("/admin/gfd-mob-drops", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdMobDropsPageHandler{})))
+
 	// Static files (registration SPA + event stream).
 	idunaRoot := getenv("IDUNA_ROOT", ".")
 	serveStatic := func(name string) http.HandlerFunc {

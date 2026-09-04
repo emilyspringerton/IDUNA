@@ -53,7 +53,7 @@ const gfdItemsPageHTML = `<!DOCTYPE html>
 <body>
 <header>
   <h1>GFD Item Builder</h1>
-  <div class="sub"><a href="/admin">← Back Office</a> — creates/edits real entries in GoblinFoxDragon's own data/items.json</div>
+  <div class="sub"><a href="/admin">← Back Office</a> · <a href="/admin/gfd-mob-drops">Mob Drops</a> — creates/edits real entries in GoblinFoxDragon's own data/items.json</div>
 </header>
 <main>
   <div class="warning">
