@@ -1,5 +1,14 @@
 # IDUNA Changelog
 
+## 2026-09-04 (8)
+
+### Back Office nav: GFD Items + GFD Mob Drops (kanban GFD-IM-0013)
+
+- Both admin pages were only reachable by typing the URL directly. Added real `<a>` entries to
+  the Back Office nav bar for `/admin/gfd-items` and `/admin/gfd-mob-drops`, and a cross-link
+  between the two pages themselves. `go build/vet/test ./...` clean. Redeployed the live IDUNA
+  instance (real DB backup taken first), live-verified `/health` + a manual nav check.
+
 ## 2026-09-04 (7)
 
 ### GFD Mob Drops manager (kanban GFD-MD-001)
