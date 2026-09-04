@@ -1,5 +1,31 @@
 # IDUNA Changelog
 
+## 2026-09-04
+
+### IDUXN-003 — kanban board quick filter
+
+- `internal/http/handlers/kanban_page.go` (`KanbanPageHandler`'s inline `kanbanPageHTML`): a new
+  `#quick-filter` text input in the board header, next to the "← Back Office" link. Real,
+  client-side, instant filter (`applyFilter()`) over every already-loaded `.card` element across
+  the Inbox and all 3 columns -- no server round-trip, matches as you type, case-insensitive
+  substring match against a card's `.title` and `.id` text.
+- Real "filtering on the card name priority over the rest of the text" (the card's own literal
+  wording): while a filter is active, cards whose title matches are re-sorted ahead of id-only
+  matches within each column's own DOM order. Purely visual -- the real, server-confirmed
+  `kanbanOrder` position is untouched, and the whole reorder step is skipped entirely when the
+  filter box is empty, so default drag/sort behavior is unaffected unless something is actually
+  typed.
+- `applyFilter()` is also called at the end of `render()`/`renderInbox()` so a reload (after a
+  card move/add/delete) keeps respecting whatever filter text the operator already typed, not
+  just the instant it's typed.
+- `go build ./...`, `go vet ./...`, and the existing `-run Kanban` test suite (`kanban_test.go`,
+  `kanban_bare_section_test.go`, `kanban_complete_test.go`, `kanban_inbox_test.go`,
+  `kanban_git_sync_test.go`) all clean. Real, honest gap: no new automated test was added for the
+  filter itself, since it's pure client-side JS embedded in an HTML string constant with no
+  existing test harness in this repo that drives the page's own JS (every existing kanban test
+  exercises the JSON API handlers, not the rendered page) -- live-verifying this would need a
+  headless browser, not present in this sandbox.
+
 ## 2026-09-03 (10)
 - ops: redeployed the live IDUNA instance to pick up the real hat-store routes/migration
   shipped earlier this session (commit `5bf170c`) -- the running `~/.local/bin/iduna` binary

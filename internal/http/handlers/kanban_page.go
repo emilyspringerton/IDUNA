@@ -138,6 +138,13 @@ const kanbanPageHTML = `<!doctype html>
   }
   button:hover { background: color-mix(in srgb, var(--gold) 32%, var(--panel) 68%); }
   #status { font-size: 0.82rem; color: var(--text-muted); min-height: 1.2em; margin-top: 0.5rem; }
+  /* Quick filter (kanban IDUXN-003 -- "kanban needs a quick filter at the top to help me find
+     cards quick when i think of one that needs to move, filtering on the card name priority
+     over the rest of the text"): a real, client-side, instant filter over every already-loaded
+     card -- no server round-trip, matches as you type. Real-value cards (title matched) sort
+     ahead of id-only matches within a column, per the card's own "name priority" ask. */
+  #quick-filter { min-width: 220px; }
+  .card.filtered-out { display: none; }
 </style>
 </head>
 <body>
@@ -146,7 +153,11 @@ const kanbanPageHTML = `<!doctype html>
     <h1>Kanban</h1>
     <div class="sub">Priority layer over EMILY/BACKLOG.md — drag a card between columns, or drag a real open backlog item in from Inbox to sort it. Backlog item ids/content stay authoritative in BACKLOG.md itself; completed items are hidden here to save DOM nodes (view those in BACKLOG.md directly).</div>
   </div>
-  <div class="sub"><a href="/admin">← Back Office</a></div>
+  <div class="sub">
+    <input type="text" id="quick-filter" placeholder="Filter cards…" oninput="applyFilter()"
+           title="Instant filter over every loaded card, by id or title -- matches nothing typed yet show every card">
+    <a href="/admin">← Back Office</a>
+  </div>
 </header>
 <main>
   <div class="board">
@@ -282,6 +293,7 @@ function renderInbox(items) {
       moveToSelectHTML('inbox', it.id, it.title, null);
     container.appendChild(el);
   }
+  applyFilter();
 }
 
 // kanbanOrder caches each column's current id order (server-confirmed, not
@@ -332,6 +344,38 @@ function render(cards) {
       container.appendChild(el);
     });
   }
+  applyFilter();
+}
+
+// applyFilter -- real, client-side, instant filter (IDUXN-003: "kanban needs a quick filter at
+// the top to help me find cards quick when i think of one that needs to move, filtering on the
+// card name priority over the rest of the text"). Runs over every already-loaded .card element
+// (Inbox + all 3 columns) -- no server round-trip, so it stays instant regardless of board size.
+// Re-called at the end of render()/renderInbox() too, so a reload (after a move/add/delete)
+// keeps respecting whatever the operator already typed, not just the moment they type it.
+function applyFilter() {
+  const q = document.getElementById('quick-filter').value.trim().toLowerCase();
+  document.querySelectorAll('.card').forEach(el => {
+    if (!q) { el.classList.remove('filtered-out'); return; }
+    const title = (el.querySelector('.title')?.textContent || '').toLowerCase();
+    const id = (el.querySelector('.id')?.textContent || '').toLowerCase();
+    el.classList.toggle('filtered-out', !(title.includes(q) || id.includes(q)));
+  });
+  if (!q) return;
+  // Real "card name priority over the rest of the text" -- a title match sorts ahead of an
+  // id-only match within each column while a filter is active. Purely visual/DOM-order; the
+  // real, server-confirmed position (kanbanOrder) is untouched, and this whole reorder is
+  // skipped entirely when the filter is empty (the default state), so normal drag/sort behavior
+  // is unaffected unless a filter is actually typed.
+  document.querySelectorAll('.cards').forEach(container => {
+    const cards = Array.from(container.children).filter(el => el.classList.contains('card') && !el.classList.contains('filtered-out'));
+    cards.sort((a, b) => {
+      const aTitle = (a.querySelector('.title')?.textContent || '').toLowerCase().includes(q);
+      const bTitle = (b.querySelector('.title')?.textContent || '').toLowerCase().includes(q);
+      return aTitle === bTitle ? 0 : (aTitle ? -1 : 1);
+    });
+    cards.forEach(el => container.appendChild(el));
+  });
 }
 
 function onDragStart(e) {
