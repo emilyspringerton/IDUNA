@@ -1,5 +1,44 @@
 # IDUNA Changelog
 
+## 2026-09-04 (3)
+
+### IUS-001 — git commit indexing for unified search
+
+- New `cmd/git-log-indexer`: a real, minimal v0 tool that walks a local git repo's HEAD commit
+  history and ingests each commit as an event into the existing unified logging backend
+  (`internal/http/handlers/logs.go`'s own Splunk-HEC-shaped `POST /services/collector`) --
+  `sourcetype=git_commit`, `source=<repo name>`, `time=<commit unix timestamp>`,
+  `event={repo, hash, author_name, author_email, subject}`. No new search-side code needed:
+  commits are immediately searchable via the existing `GET /services/search/jobs` /
+  `/portal/logs` UI (`type=git_commit`, `source=<repo>`, or a free-text `q=` match).
+- Real idempotency: a small per-repo cursor file (last-indexed commit hash) under
+  `-state-dir` (default `~/.cache/iduna-git-indexer`), so a cron/timer rerun only costs work
+  proportional to what's new since the last run -- same idempotent-cron shape
+  `cmd/promptoverse-thumbnails` already established. Advances the cursor only past commits whose
+  HEC POST actually succeeded, so a mid-run failure (server down, bad token) is safely retried
+  on the next run rather than silently skipped or double-posted.
+- Real bug caught by its own test suite before shipping: the original failure-path code wrote
+  the FAILED commit's own hash to the cursor file, which would have wrongly marked a failed
+  commit as indexed and silently dropped it on every future rerun. Fixed to leave the cursor
+  untouched on failure.
+- 5 new tests, all against real git repos (`t.TempDir()` + actual `git init`/`commit`, not
+  mocked) and a real `httptest.Server` exercising the real HEC contract: full-history first run,
+  since-cursor delta, no-new-commits-at-HEAD, successful-post-advances-cursor-and-is-idempotent-
+  on-rerun, stops-on-first-failure-without-advancing-past-it. `go build/vet/test ./...` clean.
+- Real, live, end-to-end smoke-verified (not just unit-tested): ran the actual compiled binary
+  against a real `handlers.LogsHandler` + `userlog.FileEventLog` on a real `httptest.Server`,
+  indexing a real throwaway git repo's 2 commits -- confirmed both landed correctly in the real
+  NDJSON event log with correct hash/author/subject, and a rerun indexed 0 new commits.
+- **Real, honest, found-live gap, not fixed here**: the actual production IDUNA instance has no
+  `IDUNA_HEC_TOKEN` configured -- `POST /services/collector` returns `{"code":3,"text":"HEC
+  disabled: IDUNA_HEC_TOKEN not configured"}` against the live server today. This tool (and the
+  unified logging backend generally) can't ingest anything in production until an operator sets
+  that env var and restarts IDUNA -- a real, separate, ops-level blocker, not a code gap in this
+  change.
+- Real, honest, not attempted here: indexing every repo in the monorepo automatically (the tool
+  takes explicit repo paths; a wrapper script naming the full repo list is real, separate
+  follow-up), and non-HEAD branches/tags.
+
 ## 2026-09-04 (2)
 
 ### WOTAN hat store — real security gap fix, found live while scoping Phase 2
