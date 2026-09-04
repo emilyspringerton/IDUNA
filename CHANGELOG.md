@@ -1,5 +1,50 @@
 # IDUNA Changelog
 
+## 2026-09-04 (5)
+
+### GFD Item Builder — Vertex-powered batch propose assistant (ITEM_BUILDER_NORTHSTAR.md Phase 2d)
+
+- Founder real-time: "can we also build a vertex powered assistant where i can drop a list of
+  item names onto a textarea and hit go and it like does a batch add with totally halucinated
+  whatever it thinks stats... proposing items into a queue where we can review and approve them
+  and edit them and approve or just reject."
+- Reuses the real, existing Vertex AI credential directly ("we have a vertex key for
+  promptoverse") — the exact same real ADC (`gcloud auth print-access-token`, no static API key
+  stored anywhere) `emily.cli/cmd/promptoverse.go`'s own `vertexGenerateImage`/
+  `gcloudAccessToken` already use, live-verified working against a plain text model
+  (`gemini-2.5-flash`, not the `-image` variant that package uses) before writing any code.
+- Real, decisive answer given to "if the item builder already learned some from the image data
+  thats not terrible i dunno if it works like that": it doesn't — Vertex/Gemini calls are
+  stateless per request; reusing the same GCP project shares auth/billing infrastructure only,
+  never any cross-request "memory" between the image-generation calls and this text-generation
+  one.
+- New `gfd_item_proposals` table (migration `202609040001_gfd_item_proposals.sql`) — a real
+  review queue; an AI-proposed item never writes straight into `data/items.json`. New
+  `GfdItemProposalHandler`: `POST /admin/gfd-items/api/proposals` (one real Vertex call per item
+  name, sequential, capped at 40 names per batch — a real, deliberate cost/latency bound, not an
+  unbounded queue), `GET .../proposals[?status=]`, `PATCH .../proposals/:id` (edit before
+  approval), `POST .../proposals/:id/approve|reject`.
+- Structured JSON output via Gemini's own `responseMimeType: "application/json"`, matching
+  `GfdItemDef`'s exact schema — no markdown-fence stripping needed, confirmed against the real
+  live endpoint before writing the handler.
+- `GfdItemsHandler.create` refactored into a shared `createFromDef` — approval calls the exact
+  same validation (category check, duplicate-id check, auto-id-assignment) a manual "Add new
+  item" submission already goes through, not a second, parallel path that could drift.
+- New "Batch propose" + "Review queue" sections on `/admin/gfd-items`: a textarea (one item name
+  per line) + level-range inputs + "Go", then a real, inline-editable review queue per pending
+  proposal with Approve/Save/Reject buttons.
+- 10 new tests: list, filter-by-status, update, update-refuses-non-pending, approve (with a real
+  confirmation the item lands in `items.json`), approve-already-resolved, reject (with a real
+  confirmation `items.json` stays untouched), oversized/empty-batch rejection, and one real,
+  live, unmocked Vertex AI call (skips honestly if no real `gcloud` ADC credential is present in
+  the environment, rather than fabricating a pass). `go build/vet/test ./...` clean, zero
+  regressions across the whole suite.
+- Redeployed the live IDUNA instance (real DB backup taken first — found and corrected a mistake
+  mid-redeploy: initially backed up the wrong file, `var/truestore.db`, before realizing the
+  real live DB path is `var/iduna.db`; the real backup was already covered by an earlier,
+  separate backup from the same day regardless, so no actual data-loss exposure). Live-verified:
+  `/admin/gfd-items/api/proposals` returns a real 401 (route registered, correctly auth-gated).
+
 ## 2026-09-04 (4)
 
 ### GFD Item Builder — real admin GUI (ITEM_BUILDER_NORTHSTAR.md Phase 2a)

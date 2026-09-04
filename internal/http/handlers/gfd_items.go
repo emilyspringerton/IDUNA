@@ -136,13 +136,29 @@ func (h *GfdItemsHandler) create(w http.ResponseWriter, r *http.Request) {
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if def.Name == "" {
-		mmoWriteError(w, http.StatusBadRequest, "name required")
+	created, err := h.createFromDef(def)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "already exists") {
+			status = http.StatusConflict
+		}
+		mmoWriteError(w, status, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+// createFromDef is the real, shared create-item logic -- used by the HTTP create endpoint
+// above AND by GfdItemProposalHandler's own approve path, so an AI-proposed item that gets
+// approved goes through the exact same validation (category check, duplicate-id check,
+// auto-id-assignment) a manual "Add new item" submission already does, not a second, separate
+// path that could silently drift from it.
+func (h *GfdItemsHandler) createFromDef(def GfdItemDef) (GfdItemDef, error) {
+	if def.Name == "" {
+		return GfdItemDef{}, fmt.Errorf("name required")
+	}
 	if !validGfdCategory(def.Category) {
-		mmoWriteError(w, http.StatusBadRequest, "invalid category")
-		return
+		return GfdItemDef{}, fmt.Errorf("invalid category")
 	}
 	if def.StackSize == 0 {
 		def.StackSize = 1
@@ -152,24 +168,21 @@ func (h *GfdItemsHandler) create(w http.ResponseWriter, r *http.Request) {
 	defer h.mu.Unlock()
 	items, err := h.readAll()
 	if err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, err.Error())
-		return
+		return GfdItemDef{}, err
 	}
 	if def.ID == 0 {
 		def.ID = nextGfdItemID(items)
 	}
 	for _, existing := range items {
 		if existing.ID == def.ID {
-			mmoWriteError(w, http.StatusConflict, fmt.Sprintf("item id %d already exists", def.ID))
-			return
+			return GfdItemDef{}, fmt.Errorf("item id %d already exists", def.ID)
 		}
 	}
 	items = append(items, def)
 	if err := h.writeAll(items); err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, err.Error())
-		return
+		return GfdItemDef{}, err
 	}
-	writeJSON(w, http.StatusCreated, def)
+	return def, nil
 }
 
 func (h *GfdItemsHandler) update(w http.ResponseWriter, r *http.Request, idStr string) {

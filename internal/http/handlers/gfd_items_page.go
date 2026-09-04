@@ -64,6 +64,42 @@ const gfdItemsPageHTML = `<!DOCTYPE html>
   </div>
 
   <div class="form-card">
+    <h3 style="margin-top:0">Batch propose (Vertex AI)</h3>
+    <p style="font-size:0.85rem;color:#7a6f5a;margin-top:0">
+      One item name per line. Stats/category/jobs are AI-hallucinated from the item name alone —
+      review every proposal below before approving it. Nothing is added to the real item table
+      until you explicitly approve a row.
+    </p>
+    <label>Item names (one per line)</label>
+    <textarea id="propose-names" rows="5" placeholder="Griffon Claymore
+Sunken Cuirass
+Ancient Bow of the Vale"></textarea>
+    <div class="grid2" style="margin-top:0.5rem">
+      <div>
+        <label>Min level</label>
+        <input type="number" id="propose-min-level" value="1">
+      </div>
+      <div>
+        <label>Max level</label>
+        <input type="number" id="propose-max-level" value="75">
+      </div>
+    </div>
+    <div style="margin-top:0.75rem">
+      <button id="propose-btn">Go</button>
+    </div>
+    <div class="msg" id="propose-msg"></div>
+  </div>
+
+  <div class="form-card" id="queue-card" hidden>
+    <h3 style="margin-top:0">Review queue</h3>
+    <p style="font-size:0.85rem;color:#7a6f5a;margin-top:0">
+      Edit any field before approving. Approving runs the exact same validation as "Add new
+      item" below. Rejecting keeps the row for audit but never touches items.json.
+    </p>
+    <div id="queue-body"></div>
+  </div>
+
+  <div class="form-card">
     <h3 id="form-title" style="margin-top:0">Add new item</h3>
     <div class="grid2">
       <div>
@@ -243,8 +279,137 @@ document.getElementById('save-btn').addEventListener('click', async () => {
 });
 document.getElementById('cancel-btn').addEventListener('click', () => { clearForm(); setMsg(''); });
 
+// ---- Batch propose + review queue (Vertex AI assistant) ----
+
+function setProposeMsg(text, kind) {
+  const el = document.getElementById('propose-msg');
+  el.textContent = text || '';
+  el.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+document.getElementById('propose-btn').addEventListener('click', async () => {
+  const names = document.getElementById('propose-names').value
+    .split('\n').map(s => s.trim()).filter(s => s.length > 0);
+  if (names.length === 0) { setProposeMsg('Enter at least one item name.', 'error'); return; }
+  const minLevel = parseInt(document.getElementById('propose-min-level').value || '1', 10);
+  const maxLevel = parseInt(document.getElementById('propose-max-level').value || '75', 10);
+
+  setProposeMsg('Generating ' + names.length + ' proposal(s) via Vertex AI — this calls the model once per name, sequentially, so it may take a while…');
+  document.getElementById('propose-btn').disabled = true;
+  try {
+    await api('/admin/gfd-items/api/proposals', {
+      method: 'POST',
+      body: JSON.stringify({ item_names: names, level_range: [minLevel, maxLevel] }),
+    });
+    document.getElementById('propose-names').value = '';
+    setProposeMsg('Done. Review the proposals below.', 'ok');
+    await loadQueue();
+  } catch (e) {
+    setProposeMsg(e.message, 'error');
+  } finally {
+    document.getElementById('propose-btn').disabled = false;
+  }
+});
+
+async function loadQueue() {
+  const proposals = await api('/admin/gfd-items/api/proposals?status=pending');
+  const card = document.getElementById('queue-card');
+  const body = document.getElementById('queue-body');
+  body.innerHTML = '';
+  if (proposals.length === 0) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  proposals.forEach(p => body.appendChild(renderQueueRow(p)));
+}
+
+function renderQueueRow(p) {
+  const item = p.proposed_item || {};
+  const row = document.createElement('div');
+  row.style.cssText = 'border:1px solid var(--line); border-radius:6px; padding:0.75rem; margin-bottom:0.75rem; background:#fbf8f0';
+  row.innerHTML =
+    '<div style="font-size:0.8rem;color:#7a6f5a;margin-bottom:0.4rem">Proposed from: "' + escapeHtml(p.item_name) + '"</div>' +
+    '<div class="grid2">' +
+      '<div>' +
+        '<label>Name</label><input type="text" class="q-name" value="' + escapeHtml(item.name || '') + '">' +
+        '<label>Category</label><select class="q-category"></select>' +
+        '<label>Level</label><input type="number" class="q-level" value="' + (item.level || 0) + '">' +
+        '<label>Stack Size</label><input type="number" class="q-stack" value="' + (item.stack_size || 1) + '">' +
+      '</div>' +
+      '<div>' +
+        '<label>Equip Slots (comma-separated)</label><input type="text" class="q-slots" value="' + escapeHtml((item.equip_slots || []).join(', ')) + '">' +
+        '<label>Jobs (comma-separated)</label><input type="text" class="q-jobs" value="' + escapeHtml((item.jobs || []).join(', ')) + '">' +
+        '<label>Model ID</label><input type="text" class="q-model" value="' + escapeHtml(item.model_id || '') + '">' +
+        '<label>Description</label><input type="text" class="q-desc" value="' + escapeHtml(item.description || '') + '">' +
+      '</div>' +
+    '</div>' +
+    '<label>Stats (JSON)</label><textarea class="q-stats" rows="1">' + escapeHtml(JSON.stringify(item.stats || {})) + '</textarea>' +
+    '<div style="margin-top:0.6rem">' +
+      '<button class="q-approve">Approve</button> ' +
+      '<button class="secondary q-save">Save edits</button> ' +
+      '<button class="danger q-reject">Reject</button>' +
+    '</div>' +
+    '<div class="msg q-msg"></div>';
+
+  const catSel = row.querySelector('.q-category');
+  ['weapon','armor','accessory','consumable','material','crystal','key_item','temporary'].forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    if (c === item.category) opt.selected = true;
+    catSel.appendChild(opt);
+  });
+
+  const readRowItem = () => {
+    let stats;
+    try { stats = JSON.parse(row.querySelector('.q-stats').value || '{}'); }
+    catch (e) { throw new Error('Stats must be valid JSON: ' + e.message); }
+    return {
+      name: row.querySelector('.q-name').value.trim(),
+      category: row.querySelector('.q-category').value,
+      level: parseInt(row.querySelector('.q-level').value || '0', 10),
+      stack_size: parseInt(row.querySelector('.q-stack').value || '1', 10),
+      equip_slots: splitCsv(row.querySelector('.q-slots').value),
+      jobs: splitCsv(row.querySelector('.q-jobs').value),
+      model_id: row.querySelector('.q-model').value.trim(),
+      description: row.querySelector('.q-desc').value.trim(),
+      stats: stats,
+    };
+  };
+  const rowMsg = (text, kind) => {
+    const el = row.querySelector('.q-msg');
+    el.textContent = text || '';
+    el.className = 'msg q-msg' + (kind ? ' ' + kind : '');
+  };
+
+  row.querySelector('.q-save').addEventListener('click', async () => {
+    try {
+      await api('/admin/gfd-items/api/proposals/' + p.id, { method: 'PATCH', body: JSON.stringify(readRowItem()) });
+      rowMsg('Saved.', 'ok');
+    } catch (e) { rowMsg(e.message, 'error'); }
+  });
+  row.querySelector('.q-approve').addEventListener('click', async () => {
+    try {
+      await api('/admin/gfd-items/api/proposals/' + p.id, { method: 'PATCH', body: JSON.stringify(readRowItem()) });
+      await api('/admin/gfd-items/api/proposals/' + p.id + '/approve', { method: 'POST' });
+      await loadQueue();
+      await loadItems();
+    } catch (e) { rowMsg(e.message, 'error'); }
+  });
+  row.querySelector('.q-reject').addEventListener('click', async () => {
+    if (!confirm('Reject this proposal? It stays in the audit log but nothing is added.')) return;
+    try {
+      await api('/admin/gfd-items/api/proposals/' + p.id + '/reject', { method: 'POST' });
+      await loadQueue();
+    } catch (e) { rowMsg(e.message, 'error'); }
+  });
+
+  return row;
+}
+
 populateCategories();
 loadItems().catch(e => setMsg(e.message, 'error'));
+loadQueue().catch(e => setProposeMsg(e.message, 'error'));
 </script>
 </body>
 </html>`

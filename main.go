@@ -537,6 +537,12 @@ func main() {
 	mux.Handle("/admin/gfd-items/api/items", gfdItemsAdminProtected)
 	mux.Handle("/admin/gfd-items/api/items/", gfdItemsAdminProtected)
 	mux.Handle("/admin/gfd-items", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdItemsPageHandler{})))
+	// Batch-propose assistant (ITEM_BUILDER_NORTHSTAR.md Phase 2d) -- reuses gfdItemsH's own
+	// real create-item logic on approval, see GfdItemProposalHandler's own header comment.
+	gfdItemProposalsH := &handlers.GfdItemProposalHandler{DB: db, Items: gfdItemsH}
+	gfdItemProposalsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(gfdItemProposalsH))
+	mux.Handle("/admin/gfd-items/api/proposals", gfdItemProposalsProtected)
+	mux.Handle("/admin/gfd-items/api/proposals/", gfdItemProposalsProtected)
 
 	// Static files (registration SPA + event stream).
 	idunaRoot := getenv("IDUNA_ROOT", ".")
