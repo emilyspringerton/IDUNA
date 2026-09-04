@@ -561,6 +561,14 @@ func main() {
 	mux.Handle("/admin/gfd-registration/api/waitlist/", gfdRegistrationAdminProtected)
 	mux.Handle("/admin/gfd-registration", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdRegistrationPageHandler{})))
 
+	// Real, general per-user settings home (WOTAN-24412) + the first real setting, high
+	// contrast (ACCESSABILITY-14441). Deliberately RequireCookieAuth ALONE, no
+	// RequirePermission wrapper -- unlike every admin/devportal page above, this is for ANY
+	// authenticated user, not an admin-gated tool.
+	userSettingsH := &handlers.UserSettingsHandler{DB: db}
+	mux.Handle("/api/v1/settings/me", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(userSettingsH))
+	mux.Handle("/settings", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(&handlers.UserSettingsPageHandler{DB: db}))
+
 	// GFD Mob Spawns (GFD-MOBSPAWN-001 Phase 3) -- same direct-file-access precedent as the
 	// other two GFD admin pages, applied to the newly data-driven data/mob_spawns.json.
 	gfdMobSpawnsJSONPath := getenv("GFD_MOB_SPAWNS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/mob_spawns.json")
