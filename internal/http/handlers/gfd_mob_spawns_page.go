@@ -55,7 +55,7 @@ const gfdMobSpawnsPageHTML = `<!DOCTYPE html>
 <body>
 <header>
   <h1>GFD Mob Spawns</h1>
-  <div class="sub"><a href="/admin">← Back Office</a> · <a href="/admin/gfd-mob-drops">Mob Drops</a> · <a href="/admin/gfd-items">Items</a> — edits GoblinFoxDragon's own data/mob_spawns.json</div>
+  <div class="sub"><a href="/admin">← Back Office</a> · <a href="/admin/gfd-mob-drops">Mob Drops</a> · <a href="/admin/gfd-items">Items</a> · <a href="/admin/gfd-dungeon-roster">Dungeon Roster</a> — edits GoblinFoxDragon's own data/mob_spawns.json</div>
 </header>
 <main>
   <div class="warning">

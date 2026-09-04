@@ -1,5 +1,28 @@
 # IDUNA Changelog
 
+## 2026-09-04 (11)
+
+### GFD Dungeon Roster manager (GFD-MOBSPAWN-001 Phase 5, final phase)
+
+- New admin page `/admin/gfd-dungeon-roster`, complementary to the other three GFD admin pages:
+  list/create/update/delete dungeon boss+elite assignments in
+  `GoblinFoxDragon/data/dungeon_roster.json` -- same direct-file-access precedent, applied to a
+  newly override-able `mob.DungeonRoster` (see `GoblinFoxDragon/CHANGELOG.md`'s own entry).
+- `GfdDungeonRosterHandler` (`GET/POST /admin/gfd-dungeon-roster/api/dungeons`,
+  `PATCH/DELETE /admin/gfd-dungeon-roster/api/dungeons/{index}`) -- rows addressed by real array
+  index, since `GenerateDungeonSpawns` selects `DungeonRoster[dungeonIndex % len(...)]`; create
+  always appends at the end rather than inserting, to avoid silently reshuffling every later
+  dungeon's own resolved index.
+- Real, honest difference from the other three GFD admin pages named on the page itself: this
+  data has a real, compiled-in Go fallback (server/mob's own `DungeonRoster` var) that keeps the
+  dungeon system working even if this file is ever missing or malformed -- editing here changes
+  the override file, not that compiled safety net.
+- 8 new tests (order preservation, append-not-insert, missing-field rejection, in-place update,
+  out-of-range on update/delete, delete preserves remaining order, a real field-shape round-trip
+  test). `go build/vet/test ./...` clean. Redeployed the live IDUNA instance (real DB backup
+  taken first), live-verified both new routes return a real 401. Back Office nav + cross-link
+  from the Mob Spawns page added.
+
 ## 2026-09-04 (10)
 
 ### GFD Mob Spawns manager (GFD-MOBSPAWN-001 Phase 3)

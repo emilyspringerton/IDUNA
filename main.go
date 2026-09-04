@@ -570,6 +570,15 @@ func main() {
 	mux.Handle("/admin/gfd-mob-spawns/api/rules/", gfdMobSpawnsAdminProtected)
 	mux.Handle("/admin/gfd-mob-spawns", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdMobSpawnsPageHandler{})))
 
+	// GFD Dungeon Roster (GFD-MOBSPAWN-001 Phase 5, the final phase) -- same direct-file-access
+	// precedent as the other three GFD admin pages.
+	gfdDungeonRosterJSONPath := getenv("GFD_DUNGEON_ROSTER_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/dungeon_roster.json")
+	gfdDungeonRosterH := &handlers.GfdDungeonRosterHandler{RosterJSONPath: gfdDungeonRosterJSONPath}
+	gfdDungeonRosterAdminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(gfdDungeonRosterH))
+	mux.Handle("/admin/gfd-dungeon-roster/api/dungeons", gfdDungeonRosterAdminProtected)
+	mux.Handle("/admin/gfd-dungeon-roster/api/dungeons/", gfdDungeonRosterAdminProtected)
+	mux.Handle("/admin/gfd-dungeon-roster", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdDungeonRosterPageHandler{})))
+
 	// Static files (registration SPA + event stream).
 	idunaRoot := getenv("IDUNA_ROOT", ".")
 	serveStatic := func(name string) http.HandlerFunc {
