@@ -19,6 +19,7 @@ import (
 	"iduna/internal/backlog"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
+	"iduna/internal/userlog"
 )
 
 // KanbanHandler is the prioritization layer on top of EMILY/BACKLOG.md's own
@@ -83,6 +84,10 @@ type KanbanHandler struct {
 	BacklogPath  string
 	Store        store.IAMStore
 	ApplesGitDir string
+	// EventLog: kanban card 3243242 ("ensure kanban does log streaming and checks in to the
+	// unified log"). Nil-safe (emitAuthEvent no-ops if unset) -- matching every other real
+	// handler's own EventLog field, wired post-construction in main.go, not required here.
+	EventLog userlog.EventLog
 }
 
 // kanbanArchiveSectionHeading is the one standing, real section a "done"
@@ -279,6 +284,18 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 	// bare section reference (see resolveBareSectionID's own doc comment) finds out which real
 	// id actually got assigned.
 	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "backlog_item_id": body.BacklogItemID})
+
+	// PENT-0011 / kanban card 3243242 ("ensure kanban does log streaming and checks in to the
+	// unified log... additional integrations a card can assign"): real event into the same
+	// unified logging backend every other real IDUNA code path already emits into (S226-01
+	// through S226-04, see this repo's own CLAUDE.md "Unified Logging Backend" section) --
+	// kanban was the one real, load-bearing subsystem missing from that list. Same nil-safe,
+	// fire-and-forget emitAuthEvent helper every other handler already reuses (not
+	// auth-specific despite the name -- admin.go's own iduna:admin.* events already establish
+	// that this helper is this codebase's real, shared event-emission choke point).
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:kanban.card.create", "iduna-kanban", map[string]any{
+		"id": id, "backlog_item_id": body.BacklogItemID, "title": body.Title, "queue": body.Queue,
+	})
 
 	// Fire-and-forget: never let a slow/failed git sync hold up the response
 	// a caller (the kanban page's own fetch, or a real bearer-auth agent
@@ -510,6 +527,16 @@ func (h *KanbanHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+
+	// kanban card 3243242: real move event, only when a real queue change was part of this
+	// update -- a pure position/title edit within the same column isn't the "card moved" event
+	// a real downstream integration (per this card's own "additional integrations a card can
+	// assign" framing) would want to react to.
+	if body.Queue != nil {
+		emitAuthEvent(r.Context(), h.EventLog, "iduna:kanban.card.move", "iduna-kanban", map[string]any{
+			"id": id, "queue": *body.Queue,
+		})
+	}
 }
 
 // completeCard is PATCH .../cards/{id} {"queue":"done"} -- see KanbanHandler's
@@ -547,6 +574,10 @@ func (h *KanbanHandler) completeCard(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:kanban.card.complete", "iduna-kanban", map[string]any{
+		"id": id, "backlog_item_id": backlogItemID, "title": title, "archived": archived,
+	})
 }
 
 // archiveBacklogItem moves backlogItemID's own real, complete text (every

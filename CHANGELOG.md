@@ -1,5 +1,24 @@
 # IDUNA Changelog
 
+## 2026-09-04 (16)
+- feat(kanban): real unified-log event emission (kanban priority-queue card 3243242, "ensure
+  kanban does log streaming and checks in to the unified log ensure that we can build on top of
+  the kanban system as a load bearing system ie aditional integrations a card can assig"). Real,
+  decisive finding: `KanbanHandler` only ever used plain `log.Printf` (ephemeral stdout/journal,
+  not searchable via `/portal/logs` or `GET /services/search/jobs`) — it was the one real,
+  load-bearing subsystem missing from the S226-01..04 unified-logging rollout every other real
+  IDUNA code path (auth, admin, HEIMDAL, Apples) already joined. New `KanbanHandler.EventLog`
+  field (nil-safe, wired post-construction in `main.go` exactly like every sibling handler's own
+  `EventLog` field already is), reusing the same shared `emitAuthEvent` helper every other domain
+  already reuses (not auth-specific despite the name). Three real emission points: `create`
+  (`iduna:kanban.card.create`), `update` when a real queue change is part of the patch
+  (`iduna:kanban.card.move`), `completeCard` (`iduna:kanban.card.complete`, carrying the real
+  `backlog_item_id`/`archived` outcome). New `TestKanban_EmitsUnifiedLogEvents` (real
+  `userlog.NewFileEventLog(t.TempDir())`-backed, same convention `TestApplesCreate_EmitsEvent`
+  already established) — create/move/complete all land real events with the real expected
+  types/payload. `go build/vet/test ./...` (GOWORK=off, real standalone CI path) clean, zero
+  regressions.
+
 ## 2026-09-04 (15)
 - feat(settings): WOTAN-24412/ACCESSABILITY-14441 -- "IDUNA (and WOTAN) USER SETTINGS IN GENERAL
   WE NEED A PLACE FOR THE USER TO CHANGE SETTINGS" + "WE NEED A HIGH CONTRAST SETTING... TO

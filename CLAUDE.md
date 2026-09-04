@@ -115,7 +115,10 @@ closed): `GoogleAuthHandler`/`AgentAuthHandler`/`LocalAuthHandler`/`AdminLoginHa
 (`iduna:admin.agent_permission.grant`/`.revoke`), and agent secret rotation
 (`iduna:admin.agent.secret_rotate` — records that a rotation happened, never the freshly-generated
 plaintext); `HeimdalHandler.submit`/`.patch` (`iduna:heimdal.submit`, `iduna:heimdal.transition`
-with real `from_status`/`to_status`); `ApplesHandler.create` (`iduna:apples.create`). Every
+with real `from_status`/`to_status`); `ApplesHandler.create` (`iduna:apples.create`);
+`KanbanHandler.create`/`.update`/`.completeCard` (`iduna:kanban.card.create`/`.move`/`.complete`
+— kanban card 3243242, "ensure kanban does log streaming and checks in to the unified log").
+Every
 emission point is nil-safe (an unset `EventLog` field is a no-op, not a panic) and fire-and-forget
 (a logging-backend outage never breaks the real auth/admin/heimdal/apples flow it's observing).
 

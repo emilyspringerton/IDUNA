@@ -671,6 +671,11 @@ func main() {
 	heimdalH.EventLog = unifiedLog
 	applesH.EventLog = unifiedLog
 
+	// kanban card 3243242: kanban was the one real, load-bearing subsystem missing from this
+	// list -- card create/move/complete now emit into the same unified log every other real
+	// IDUNA code path already does.
+	kanbanH.EventLog = unifiedLog
+
 	// Wire the developer portal's real IDUNA login now that userProj exists
 	// (see the portalH declaration above, in the /portal route block, for
 	// why this is set here rather than in the struct literal there).

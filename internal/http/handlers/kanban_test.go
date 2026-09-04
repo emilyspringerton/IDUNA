@@ -2,10 +2,12 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -13,6 +15,7 @@ import (
 	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
+	"iduna/internal/userlog"
 
 	"github.com/google/uuid"
 )
@@ -138,6 +141,64 @@ func TestKanban_MoveCardBetweenQueues(t *testing.T) {
 	backlogCards := listKanbanCards(t, h, token, "backlog")
 	if len(backlogCards) != 0 {
 		t.Fatalf("expected the backlog queue to be empty after the move, got %+v", backlogCards)
+	}
+}
+
+// TestKanban_EmitsUnifiedLogEvents -- kanban card 3243242 ("ensure kanban does log streaming
+// and checks in to the unified log"): create/move/complete each land a real event in the same
+// unified logging backend every other real IDUNA code path already emits into, same real
+// userlog.NewFileEventLog(t.TempDir())-backed test convention TestApplesCreate_EmitsEvent
+// already established.
+func TestKanban_EmitsUnifiedLogEvents(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	kh := &handlers.KanbanHandler{DB: db, EventLog: eventLog}
+	h := middleware.RequireAuth(keys)(kh)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+
+	id := postKanbanCard(t, h, token, "S1-01", "Test card", "")
+
+	moveBody, _ := json.Marshal(map[string]any{"queue": "priority"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/kanban/cards/"+jsonInt(id), bytes.NewReader(moveBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("move status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	doneBody, _ := json.Marshal(map[string]any{"queue": "done"})
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/kanban/cards/"+jsonInt(id), bytes.NewReader(doneBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	recs, err := eventLog.ReadFrom(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if len(recs) != 3 {
+		t.Fatalf("expected 3 events (create/move/complete), got %d: %+v", len(recs), recs)
+	}
+	wantTypes := []string{"iduna:kanban.card.create", "iduna:kanban.card.move", "iduna:kanban.card.complete"}
+	for i, want := range wantTypes {
+		if recs[i].Event.Type != want {
+			t.Errorf("event[%d].Type = %q, want %q", i, recs[i].Event.Type, want)
+		}
+	}
+	if !strings.Contains(string(recs[1].Event.Data), `"queue":"priority"`) {
+		t.Errorf("move event should carry the real target queue, got: %s", recs[1].Event.Data)
+	}
+	if !strings.Contains(string(recs[2].Event.Data), `"backlog_item_id":"S1-01"`) {
+		t.Errorf("complete event should carry the real backlog_item_id, got: %s", recs[2].Event.Data)
 	}
 }
 
