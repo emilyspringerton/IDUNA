@@ -1,5 +1,23 @@
 # IDUNA Changelog
 
+## 2026-09-04 (12)
+- feat(admin/gfd-mob-spawns): GFD-NM-124 -- "actual web interface for modifying the notorious
+  monsters... keep it simple ish." `GfdMobSpawnRule` gained an optional `NM *GfdNMRule` field
+  mirroring `server/spawn.NMRule` exactly (GFD-NM-123's own new data model). PATCH now sets
+  both `enabled` and `nm` together (omit/null `nm` clears it, a real, stated full-set contract,
+  not a partial merge) -- 3 new tests plus the existing 10 all green. Page gained a real
+  "Notorious Monster" column plus Add/Edit NM and Clear NM buttons (plain `prompt()`-based
+  fields, matching the "simple ish" framing over a full modal form); fixed a real footgun found
+  while wiring this in: the existing plain enable/disable toggle button omitted `nm` entirely,
+  which under the new full-set PATCH contract would have silently wiped any existing NM on every
+  toggle -- fixed to always re-send `rule.nm`. `go build`/`go vet`/`go test ./...` clean,
+  redeployed live under `iduna.service` (systemd), clean restart with no errors. Real, honest,
+  explicitly NOT built: the card's other half, "allow plugins call special abilities via special
+  named functions" -- no generic special-ability-hook mechanism exists for any mob today, and a
+  one-off NM-only version would duplicate the real, general mod-event-broker mechanism
+  GFD-x-123/GFD-x-124 (next in the priority queue) are about to scope; flagged there, not
+  duplicated here.
+
 ## 2026-09-04 (11)
 
 ### GFD Dungeon Roster manager (GFD-MOBSPAWN-001 Phase 5, final phase)

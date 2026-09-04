@@ -111,6 +111,78 @@ func TestGfdMobSpawns_Update_TogglesEnabled(t *testing.T) {
 	t.Fatal("rabbit rule missing after update")
 }
 
+// GFD-NM-124: "actual web interface for modifying the notorious monsters."
+
+func TestGfdMobSpawns_Create_WithNM(t *testing.T) {
+	h := newMobSpawnsHandler(t, seedMobSpawns)
+	rule := GfdMobSpawnRule{ZoneID: 3, Kind: "slime", Enabled: true, NM: &GfdNMRule{
+		ID: "nm-slime-king", SpawnChance: 0.2, WindowOpenSec: 300, WindowCloseSec: 1800, RespawnMinutes: 60,
+	}}
+	body, _ := json.Marshal(rule)
+	req := httptest.NewRequest(http.MethodPost, "/admin/gfd-mob-spawns/api/rules", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	rules, _ := h.readAll()
+	for _, r := range rules {
+		if r.ZoneID == 3 && r.Kind == "slime" {
+			if r.NM == nil || r.NM.ID != "nm-slime-king" || r.NM.SpawnChance != 0.2 {
+				t.Fatalf("expected the NM block to round-trip, got %+v", r.NM)
+			}
+			return
+		}
+	}
+	t.Fatal("slime rule missing after create")
+}
+
+func TestGfdMobSpawns_Update_SetsNM(t *testing.T) {
+	h := newMobSpawnsHandler(t, seedMobSpawns)
+	body, _ := json.Marshal(map[string]any{
+		"enabled": true,
+		"nm":      GfdNMRule{ID: "nm-fierce-rabbit", SpawnChance: 0.3, RespawnMinutes: 45},
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/admin/gfd-mob-spawns/api/rules/1/rabbit", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	rules, _ := h.readAll()
+	for _, r := range rules {
+		if r.ZoneID == 1 && r.Kind == "rabbit" {
+			if r.NM == nil || r.NM.ID != "nm-fierce-rabbit" {
+				t.Fatalf("expected rabbit to now carry an NM block, got %+v", r.NM)
+			}
+			return
+		}
+	}
+	t.Fatal("rabbit rule missing after update")
+}
+
+func TestGfdMobSpawns_Update_ClearsNM_WhenOmitted(t *testing.T) {
+	seed := `[{"zone_id":3,"kind":"slime","enabled":true,"nm":{"id":"nm-slime-king","spawn_chance":0.2}}]`
+	h := newMobSpawnsHandler(t, seed)
+	body, _ := json.Marshal(map[string]bool{"enabled": true}) // no "nm" key at all
+	req := httptest.NewRequest(http.MethodPatch, "/admin/gfd-mob-spawns/api/rules/3/slime", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	rules, _ := h.readAll()
+	for _, r := range rules {
+		if r.ZoneID == 3 && r.Kind == "slime" {
+			if r.NM != nil {
+				t.Fatalf("expected NM to be cleared when the PATCH omits it, got %+v", r.NM)
+			}
+			return
+		}
+	}
+	t.Fatal("slime rule missing after update")
+}
+
 func TestGfdMobSpawns_Update_NotFound(t *testing.T) {
 	h := newMobSpawnsHandler(t, seedMobSpawns)
 	body, _ := json.Marshal(map[string]bool{"enabled": false})

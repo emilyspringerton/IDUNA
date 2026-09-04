@@ -26,11 +26,24 @@ import (
 	"sync"
 )
 
+// GfdNMRule mirrors server/spawn.NMRule's own real JSON shape exactly (GFD-NM-124, "actual web
+// interface for modifying the notorious monsters"). A nil NM on a rule means that base mob has
+// no Notorious Monster associated -- the common case, matching server/spawn's own real
+// "nm,omitempty" convention.
+type GfdNMRule struct {
+	ID             string  `json:"id"`
+	SpawnChance    float64 `json:"spawn_chance"`
+	WindowOpenSec  int     `json:"window_open_sec"`
+	WindowCloseSec int     `json:"window_close_sec"`
+	RespawnMinutes int     `json:"respawn_minutes"`
+}
+
 // GfdMobSpawnRule mirrors server/spawn.Rule's own real JSON shape exactly.
 type GfdMobSpawnRule struct {
-	ZoneID  int    `json:"zone_id"`
-	Kind    string `json:"kind"`
-	Enabled bool   `json:"enabled"`
+	ZoneID  int        `json:"zone_id"`
+	Kind    string     `json:"kind"`
+	Enabled bool       `json:"enabled"`
+	NM      *GfdNMRule `json:"nm,omitempty"`
 }
 
 // GfdZoneNames is the real, fixed zone roster zone.DefaultZones() itself defines -- duplicated
@@ -50,7 +63,9 @@ var GfdZoneNames = map[int]string{
 //
 //	GET    /admin/gfd-mob-spawns/api/rules                    -> [GfdMobSpawnRule, ...] (sorted by zone then kind)
 //	POST   /admin/gfd-mob-spawns/api/rules                    {GfdMobSpawnRule} -> 201, rejects a duplicate (zone_id, kind)
-//	PATCH  /admin/gfd-mob-spawns/api/rules/{zone_id}/{kind}   {"enabled":bool} -> 200
+//	PATCH  /admin/gfd-mob-spawns/api/rules/{zone_id}/{kind}   {"enabled":bool,"nm":GfdNMRule|null} -> 200
+//	       (GFD-NM-124: PATCH always sets BOTH fields to exactly what's sent -- omit "nm" or send
+//	       it as null to clear any existing NM association, not a partial merge)
 //	DELETE /admin/gfd-mob-spawns/api/rules/{zone_id}/{kind}   -> 204, reverts that pair to the registry's own default-enabled
 type GfdMobSpawnsHandler struct {
 	RulesJSONPath string
@@ -177,7 +192,8 @@ func (h *GfdMobSpawnsHandler) update(w http.ResponseWriter, r *http.Request, res
 		return
 	}
 	var body struct {
-		Enabled bool `json:"enabled"`
+		Enabled bool       `json:"enabled"`
+		NM      *GfdNMRule `json:"nm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
@@ -195,6 +211,7 @@ func (h *GfdMobSpawnsHandler) update(w http.ResponseWriter, r *http.Request, res
 	for i := range rules {
 		if rules[i].ZoneID == zoneID && strings.EqualFold(rules[i].Kind, kind) {
 			rules[i].Enabled = body.Enabled
+			rules[i].NM = body.NM
 			found = true
 			break
 		}
@@ -207,7 +224,7 @@ func (h *GfdMobSpawnsHandler) update(w http.ResponseWriter, r *http.Request, res
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, GfdMobSpawnRule{ZoneID: zoneID, Kind: kind, Enabled: body.Enabled})
+	writeJSON(w, http.StatusOK, GfdMobSpawnRule{ZoneID: zoneID, Kind: kind, Enabled: body.Enabled, NM: body.NM})
 }
 
 func (h *GfdMobSpawnsHandler) delete(w http.ResponseWriter, r *http.Request, rest string) {

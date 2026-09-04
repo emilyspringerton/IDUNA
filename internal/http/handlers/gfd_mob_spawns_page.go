@@ -2,6 +2,16 @@ package handlers
 
 // gfd_mob_spawns_page.go — the real Mob Spawns manager UI (GFD-MOBSPAWN-001 Phase 3), same
 // cream/gold ceremony style and list-then-edit-inline pattern the other GFD admin pages use.
+//
+// GFD-NM-124 ("actual web interface for modifying the notorious monsters... keep it simple ish"):
+// each rule's real, optional NM association (server/spawn.NMRule, GFD-NM-123) is now editable
+// here too -- a real Add/Edit NM button (plain prompt()-based fields, matching the "simple ish"
+// framing rather than a full modal form) plus a Clear NM button. Real, honest, explicitly NOT
+// built here: the card's other half, "allow plugins call special abilities via special named
+// functions" -- there is no generic special-ability-hook mechanism for ANY mob today (regular or
+// NM), and building one just for NMs would be a redundant, NM-only one-off instead of the real,
+// general mod-event-broker mechanism GFD-x-123/GFD-x-124 (next in the priority queue) are
+// already about to scope -- flagged there, not duplicated here.
 
 import "net/http"
 
@@ -92,7 +102,7 @@ const gfdMobSpawnsPageHTML = `<!DOCTYPE html>
   </div>
 
   <table id="rules-table">
-    <thead><tr><th>Zone</th><th>Kind</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Zone</th><th>Kind</th><th>Status</th><th>Notorious Monster</th><th></th></tr></thead>
     <tbody id="rules-body"></tbody>
   </table>
 </main>
@@ -141,19 +151,65 @@ async function loadRules() {
     tr.innerHTML =
       '<td>' + escapeHtml(zoneName) + ' (' + rule.zone_id + ')</td>' +
       '<td>' + escapeHtml(rule.kind) + '</td>' +
-      '<td><span class="pill ' + (rule.enabled ? 'on' : 'off') + '">' + (rule.enabled ? 'Enabled' : 'Disabled') + '</span></td>';
+      '<td><span class="pill ' + (rule.enabled ? 'on' : 'off') + '">' + (rule.enabled ? 'Enabled' : 'Disabled') + '</span></td>' +
+      '<td>' + (rule.nm
+        ? escapeHtml(rule.nm.id) + ' <span style="color:#7a6f5a;font-size:0.8rem">(' + Math.round(rule.nm.spawn_chance * 100) + '% · ' + rule.nm.respawn_minutes + 'min respawn)</span>'
+        : '<span style="color:#7a6f5a">— none —</span>') + '</td>';
     const tdActions = document.createElement('td');
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'secondary';
     toggleBtn.textContent = rule.enabled ? 'Disable' : 'Enable';
     toggleBtn.onclick = async () => {
       try {
+        // nm: rule.nm (not omitted) -- PATCH always sets both fields together (see the
+        // handler's own doc comment), so a plain enable/disable toggle must re-send any
+        // existing NM or it would silently get cleared.
         await api('/admin/gfd-mob-spawns/api/rules/' + rule.zone_id + '/' + encodeURIComponent(rule.kind), {
-          method: 'PATCH', body: JSON.stringify({ enabled: !rule.enabled }),
+          method: 'PATCH', body: JSON.stringify({ enabled: !rule.enabled, nm: rule.nm || null }),
         });
         await loadRules();
       } catch (e) { alert(e.message); }
     };
+    const nmBtn = document.createElement('button');
+    nmBtn.className = 'secondary';
+    nmBtn.style.marginLeft = '0.4rem';
+    nmBtn.textContent = rule.nm ? 'Edit NM' : 'Add NM';
+    nmBtn.onclick = async () => {
+      const cur = rule.nm || { id: '', spawn_chance: 0.25, window_open_sec: 300, window_close_sec: 1800, respawn_minutes: 0 };
+      const id = prompt('NM mob ID (e.g. nm-slime-king):', cur.id);
+      if (id === null) return; // cancelled
+      if (!id.trim()) { alert('NM ID is required — use "Clear NM" instead to remove it.'); return; }
+      const chance = parseFloat(prompt('Spawn chance per check, 0.0-1.0:', cur.spawn_chance));
+      const openSec = parseInt(prompt('Window opens N seconds after the placeholder dies:', cur.window_open_sec), 10);
+      const closeSec = parseInt(prompt('Window closes N seconds after the placeholder dies:', cur.window_close_sec), 10);
+      const respawn = parseInt(prompt('Respawn minutes after the NM is killed (0 = no respawn):', cur.respawn_minutes), 10);
+      if ([chance, openSec, closeSec, respawn].some(Number.isNaN)) { alert('All fields must be real numbers.'); return; }
+      try {
+        await api('/admin/gfd-mob-spawns/api/rules/' + rule.zone_id + '/' + encodeURIComponent(rule.kind), {
+          method: 'PATCH', body: JSON.stringify({ enabled: rule.enabled, nm: {
+            id: id.trim(), spawn_chance: chance, window_open_sec: openSec, window_close_sec: closeSec, respawn_minutes: respawn,
+          } }),
+        });
+        await loadRules();
+      } catch (e) { alert(e.message); }
+    };
+    tdActions.appendChild(nmBtn);
+    if (rule.nm) {
+      const clearNmBtn = document.createElement('button');
+      clearNmBtn.className = 'secondary';
+      clearNmBtn.style.marginLeft = '0.4rem';
+      clearNmBtn.textContent = 'Clear NM';
+      clearNmBtn.onclick = async () => {
+        if (!confirm('Remove the ' + rule.nm.id + ' Notorious Monster from ' + rule.kind + ' in ' + zoneName + '?')) return;
+        try {
+          await api('/admin/gfd-mob-spawns/api/rules/' + rule.zone_id + '/' + encodeURIComponent(rule.kind), {
+            method: 'PATCH', body: JSON.stringify({ enabled: rule.enabled }), // omits "nm" -> cleared, see handler's own doc comment
+          });
+          await loadRules();
+        } catch (e) { alert(e.message); }
+      };
+      tdActions.appendChild(clearNmBtn);
+    }
     const delBtn = document.createElement('button');
     delBtn.className = 'danger';
     delBtn.textContent = 'Delete';
