@@ -29,8 +29,11 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 
 	"golang.org/x/crypto/argon2"
@@ -136,6 +139,70 @@ func NewCanary(passphrase string, salt []byte) (ciphertext, nonce []byte, err er
 	key := argon2.IDKey([]byte(passphrase), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	defer zero(key)
 	return encryptWithKey(key, []byte(canaryPlain))
+}
+
+// -- S245-01: config/file-key vault-unlock mode --
+//
+// Alternate to the human-passphrase path above, for a product tenant that
+// needs signups to keep working after an unattended redeploy/crash with no
+// operator standing by (EINHORN_FOR_BUSINESS_NORTHSTAR.md's own "just work"
+// requirement — see EMILY/BACKLOG.md S245-01). Real, explicit trade-off, not
+// hidden: a key read from a local file is genuine encryption-at-rest (it
+// protects a leaked backup or stolen disk image that doesn't ALSO carry the
+// key file), but weaker than the passphrase model against an attacker who
+// already has live access to the running server's own filesystem/config —
+// the key sits right there, no human memory involved. EINHORN's own instance
+// keeps the existing passphrase path; this is an opt-in alternative, not a
+// replacement.
+//
+// The key file holds a single hex-encoded 32-byte AES-256 key (64 hex chars,
+// optionally trailing whitespace/newline) — no Argon2 derivation, since a
+// file key already IS the key, unlike a human passphrase which needs
+// stretching. The canary check works exactly as it does for the passphrase
+// path: it catches a wrong/mismatched key file without ever needing to store
+// the key itself anywhere the vault can be inspected for it.
+
+// NewFileKey generates a fresh random 32-byte AES-256 key for a one-time
+// key-file vault initialization.
+func NewFileKey() ([]byte, error) {
+	key := make([]byte, argonKeyLen)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generate file key: %w", err)
+	}
+	return key, nil
+}
+
+// NewCanaryFromKey encrypts the canary plaintext directly with a raw key —
+// the file-key mode's equivalent of NewCanary, skipping Argon2 derivation
+// since the file key needs no stretching.
+func NewCanaryFromKey(key []byte) (ciphertext, nonce []byte, err error) {
+	return encryptWithKey(key, []byte(canaryPlain))
+}
+
+// UnlockFromKeyFile reads a hex-encoded AES-256 key from path and verifies it
+// against the stored canary ciphertext, exactly like Unlock does for a
+// passphrase — returns ErrWrongPassword (not a distinct error type) on
+// mismatch, so callers don't need a separate failure case for this path.
+func (v *Vault) UnlockFromKeyFile(path string, canaryCiphertext, canaryNonce []byte) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read key file %s: %w", path, err)
+	}
+	key, err := hex.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil || len(key) != argonKeyLen {
+		return fmt.Errorf("key file %s must contain a %d-byte hex-encoded key (%d hex chars)", path, argonKeyLen, argonKeyLen*2)
+	}
+
+	plain, err := decryptWithKey(key, canaryCiphertext, canaryNonce)
+	if err != nil || subtle.ConstantTimeCompare(plain, []byte(canaryPlain)) != 1 {
+		zero(key)
+		return ErrWrongPassword
+	}
+
+	v.mu.Lock()
+	v.key = key
+	v.mu.Unlock()
+	return nil
 }
 
 func encryptWithKey(key, plaintext []byte) (ciphertext, nonce []byte, err error) {

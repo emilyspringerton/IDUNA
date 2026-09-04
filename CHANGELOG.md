@@ -1,5 +1,21 @@
 # IDUNA Changelog
 
+## 2026-09-04 (23)
+- feat(mailinglist): S245-01 real config/file-key vault-unlock mode shipped, alongside (not
+  replacing) the existing human-passphrase path. `Vault.UnlockFromKeyFile` verifies a hex-encoded
+  32-byte key from a local file against the same canary mechanism the passphrase path uses — no
+  Argon2 derivation needed since a file key already is the key. New `mailingListAutoUnlock` in
+  `main.go`, opt-in via `MAILING_LIST_KEY_FILE`: unset (the default, including EINHORN's own
+  instance) leaves signups locked-until-a-human-runs-`cmd/mailing-list-unlock` exactly as before;
+  set, it generates+persists a key on first boot and reuses it on every restart, so signups keep
+  working after an unattended redeploy/crash with no operator standing by — the real, product-
+  facing gap S243-02/EMILY_FOR_BUSINESS_NORTHSTAR.md named. Real, explicit trade-off documented in
+  code, not hidden: weaker than the passphrase model against an attacker with live access to the
+  running server's own filesystem, stronger than plaintext-at-rest against a leaked backup/stolen
+  disk image that doesn't also carry the key file. 6 new tests (`crypto_test.go`: correct/wrong
+  key-file unlock, empty-salt InitVault mode; `main_test.go`: first-boot generate+unlock, reboot
+  reuses the existing key file without regenerating it). Unblocks S245-02/03/04/05.
+
 ## 2026-09-04 (22)
 - feat(notes): real IDUNA Notebook Phase 1 shipped (kanban `IN-000`/`IN-001`, "icloud like
   affordances for creating notes... notebooks are sarena based but actually just advertised as

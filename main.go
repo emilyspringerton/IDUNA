@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -196,7 +198,19 @@ func main() {
 			"freehoodie": os.Getenv("MAILCHIMP_FREEHOODIE_LIST_ID"),
 		},
 	}
-	log.Printf("mailinglist: vault locked — run cmd/mailing-list-unlock to accept signups")
+	// S245-01: opt-in config/file-key unlock mode, for a product tenant that
+	// needs signups to keep working after an unattended redeploy/crash with
+	// no operator standing by. Unset (the default, including EINHORN's own
+	// instance) leaves the existing human-passphrase path exactly as before
+	// — this never runs unless a deployer explicitly opts in.
+	if keyFilePath := os.Getenv("MAILING_LIST_KEY_FILE"); keyFilePath != "" {
+		if err := mailingListAutoUnlock(mailingListStore, mailingListVault, keyFilePath); err != nil {
+			log.Fatalf("mailinglist: file-key auto-unlock failed: %v", err)
+		}
+		log.Printf("mailinglist: vault auto-unlocked from key file %s", keyFilePath)
+	} else {
+		log.Printf("mailinglist: vault locked — run cmd/mailing-list-unlock to accept signups")
+	}
 
 	// IDUNA Vault — founder-only password manager (S170-03b, VS0 per
 	// docs/NORTHSTAR_PASSWORD_MANAGER.md). Same never-at-rest-unencrypted
@@ -922,4 +936,43 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// mailingListAutoUnlock implements S245-01's config/file-key vault mode: on
+// first boot (vault not yet initialized) it generates a fresh key, writes it
+// to keyFilePath (0600), and initializes the vault with it; on every
+// subsequent boot it reads the existing key file back and unlocks with it.
+// Either way the vault ends up unlocked in-process with no human involved —
+// the whole point of this mode over the default passphrase path.
+func mailingListAutoUnlock(store *mailinglist.Store, v *mailinglist.Vault, keyFilePath string) error {
+	initialized, err := store.Initialized()
+	if err != nil {
+		return fmt.Errorf("check vault init state: %w", err)
+	}
+	if !initialized {
+		key, err := mailinglist.NewFileKey()
+		if err != nil {
+			return err
+		}
+		canaryCT, canaryNonce, err := mailinglist.NewCanaryFromKey(key)
+		if err != nil {
+			return err
+		}
+		// Empty salt: file-key mode does no Argon2 derivation, so the
+		// vault_meta salt column (NOT NULL, but not length-checked) goes
+		// unused here — kept only so InitVault/VaultMeta's shared schema
+		// doesn't need a passphrase-vs-keyfile branch.
+		if err := store.InitVault([]byte{}, canaryCT, canaryNonce); err != nil {
+			return fmt.Errorf("init vault: %w", err)
+		}
+		if err := os.WriteFile(keyFilePath, []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
+			return fmt.Errorf("write key file: %w", err)
+		}
+	}
+
+	_, canaryCT, canaryNonce, err := store.VaultMeta()
+	if err != nil {
+		return fmt.Errorf("read vault meta: %w", err)
+	}
+	return v.UnlockFromKeyFile(keyFilePath, canaryCT, canaryNonce)
 }
