@@ -3,7 +3,10 @@ package handlers
 // gfd_dungeon_roster_page.go — the real Dungeon Roster manager UI (GFD-MOBSPAWN-001 Phase 5),
 // same cream/gold ceremony style the other three GFD admin pages use.
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // GfdDungeonRosterPageHandler serves the real Dungeon Roster admin page at
 // /admin/gfd-dungeon-roster.
@@ -11,7 +14,12 @@ type GfdDungeonRosterPageHandler struct{}
 
 func (h *GfdDungeonRosterPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(gfdDungeonRosterPageHTML))
+	// GFD-XX-123: real, server-rendered <datalist> of every real ARENA_HERO_* identifier (see
+	// gfd_datalists.go) for the Boss field -- Elite deliberately stays free text (it's a
+	// comma-separated multi-value field; a native <datalist> replaces the WHOLE field value on
+	// selection, which would actively break typing a second/third name, not just fail to help).
+	page := strings.Replace(gfdDungeonRosterPageHTML, "<!--ARENA_HERO_DATALIST-->", gfdDatalistHTML("arena-hero-list", gfdArenaHeroIDs), 1)
+	w.Write([]byte(page))
 }
 
 const gfdDungeonRosterPageHTML = `<!DOCTYPE html>
@@ -69,7 +77,8 @@ const gfdDungeonRosterPageHTML = `<!DOCTYPE html>
     <label>Dungeon name</label>
     <input type="text" id="f-name" placeholder="The Sealed Archive">
     <label>Boss <span style="font-weight:400">(real ARENA_HERO_* identifier)</span></label>
-    <input type="text" id="f-boss" placeholder="ARENA_HERO_CART">
+    <input type="text" id="f-boss" placeholder="ARENA_HERO_CART" list="arena-hero-list" autocomplete="off">
+    <!--ARENA_HERO_DATALIST-->
     <label>Elites <span style="font-weight:400">(comma-separated ARENA_HERO_* identifiers, blank for none)</span></label>
     <input type="text" id="f-elite" placeholder="ARENA_HERO_NOOR1, ARENA_HERO_GARY">
     <div style="margin-top:0.75rem">

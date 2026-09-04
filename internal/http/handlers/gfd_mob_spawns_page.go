@@ -13,14 +13,20 @@ package handlers
 // general mod-event-broker mechanism GFD-x-123/GFD-x-124 (next in the priority queue) are
 // already about to scope -- flagged there, not duplicated here.
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // GfdMobSpawnsPageHandler serves the real Mob Spawns admin page at /admin/gfd-mob-spawns.
 type GfdMobSpawnsPageHandler struct{}
 
 func (h *GfdMobSpawnsPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(gfdMobSpawnsPageHTML))
+	// GFD-XX-123: real, server-rendered <datalist> of every known mob kind, same "fatbaby ticker
+	// search" native-autocomplete pattern -- see gfd_datalists.go's own doc comment.
+	page := strings.Replace(gfdMobSpawnsPageHTML, "<!--MOB_KIND_DATALIST-->", gfdDatalistHTML("mob-kind-list", gfdMobKinds), 1)
+	w.Write([]byte(page))
 }
 
 const gfdMobSpawnsPageHTML = `<!DOCTYPE html>
@@ -85,7 +91,8 @@ const gfdMobSpawnsPageHTML = `<!DOCTYPE html>
       </div>
       <div>
         <label>Mob kind <span style="font-weight:400">(e.g. rabbit, cave-bat)</span></label>
-        <input type="text" id="f-kind" placeholder="rabbit">
+        <input type="text" id="f-kind" placeholder="rabbit" list="mob-kind-list" autocomplete="off">
+        <!--MOB_KIND_DATALIST-->
       </div>
       <div>
         <label>Enabled</label>

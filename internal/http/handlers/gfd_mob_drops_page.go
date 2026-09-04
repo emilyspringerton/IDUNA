@@ -5,14 +5,20 @@ package handlers
 // Deliberately no Vertex batch-propose assistant here -- that was a real, separate, explicit
 // ask scoped to items specifically; not requested for mob drops, not added speculatively.
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // GfdMobDropsPageHandler serves the real Mob Drops admin page at /admin/gfd-mob-drops.
 type GfdMobDropsPageHandler struct{}
 
 func (h *GfdMobDropsPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(gfdMobDropsPageHTML))
+	// GFD-XX-123: real, server-rendered <datalist> of every known mob kind (see
+	// gfd_datalists.go), same shared list gfd_mob_spawns_page.go's own kind field uses.
+	page := strings.Replace(gfdMobDropsPageHTML, "<!--MOB_KIND_DATALIST-->", gfdDatalistHTML("mob-kind-list", gfdMobKinds), 1)
+	w.Write([]byte(page))
 }
 
 const gfdMobDropsPageHTML = `<!DOCTYPE html>
@@ -69,7 +75,8 @@ const gfdMobDropsPageHTML = `<!DOCTYPE html>
   <div class="form-card">
     <h3 id="form-title" style="margin-top:0">Add drop table</h3>
     <label>Mob kind <span style="font-weight:400">(e.g. worm, cave-bat, King Worm for a boss/NM)</span></label>
-    <input type="text" id="f-kind" placeholder="worm">
+    <input type="text" id="f-kind" placeholder="worm" list="mob-kind-list" autocomplete="off">
+    <!--MOB_KIND_DATALIST-->
     <label>Drops</label>
     <div id="f-items"></div>
     <button class="secondary" id="add-item-btn" type="button">+ Add drop item</button>

@@ -1,5 +1,25 @@
 # IDUNA Changelog
 
+## 2026-09-04 (13)
+- feat(admin/gfd-*): GFD-XX-123 -- "UI UX WEB for EQUIPMENT DUNGEONS MOBS use enhancable field
+  for specifying the machine names for certain things like model names it should auto complete
+  and have dropdown like fatbaby ticker search." Real precedent reused, not reinvented:
+  `PRRJECT_FATBABY`'s own ticker search (`internal/newssite/templates.go`) is a plain HTML5
+  `<input list>` + `<datalist>`, native browser autocomplete, no JS library -- applied the same
+  way here. New `gfd_datalists.go`: `gfdMobKinds` (the 12 real `server/mob` Kind* constants) and
+  `gfdArenaHeroIDs` (all 30 real `ArenaHeroID` values from `arena_game.h`), plus a real
+  `gfdDatalistHTML` renderer (HTML-escaped) -- 4 new tests. Wired into 3 pages: Mob Spawns'
+  and Mob Drops' `kind` field (shared `mob-kind-list`), Dungeon Roster's `boss` field
+  (`arena-hero-list` -- `elite` deliberately left free text, a native datalist replaces the
+  WHOLE field value on selection, which would actively break typing a second/third comma-
+  separated name, not just fail to help). `go build`/`go vet`/`go test ./...` clean, redeployed
+  live under `iduna.service`. Real, honest, explicitly NOT done: EQUIPMENT's own `model_id`
+  field (`server/itemdef.Item`) -- checked directly and confirmed no real, canonical model-name
+  list exists to autocomplete against anywhere in this monorepo (GoldenBand's real assets are
+  character animation rigs, not equipment models; equipment-model rendering itself doesn't
+  exist yet) -- a fake/empty datalist there would look supported without being real, left as
+  free text and named honestly rather than hidden.
+
 ## 2026-09-04 (12)
 - feat(admin/gfd-mob-spawns): GFD-NM-124 -- "actual web interface for modifying the notorious
   monsters... keep it simple ish." `GfdMobSpawnRule` gained an optional `NM *GfdNMRule` field
