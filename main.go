@@ -528,6 +528,16 @@ func main() {
 	kanbanInboxH := &handlers.KanbanInboxHandler{DB: db, BacklogPath: backlogPath}
 	mux.Handle("/admin/kanban/api/inbox", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanInboxH)))
 
+	// GFD Item Builder (ITEM_BUILDER_NORTHSTAR.md Phase 2a) -- same direct-file-access precedent
+	// as the kanban/BACKLOG.md bridge above: IDUNA and GoblinFoxDragon are sibling checkouts on
+	// this box, so this reads/writes GoblinFoxDragon/data/items.json directly.
+	gfdItemsJSONPath := getenv("GFD_ITEMS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/items.json")
+	gfdItemsH := &handlers.GfdItemsHandler{ItemsJSONPath: gfdItemsJSONPath}
+	gfdItemsAdminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(gfdItemsH))
+	mux.Handle("/admin/gfd-items/api/items", gfdItemsAdminProtected)
+	mux.Handle("/admin/gfd-items/api/items/", gfdItemsAdminProtected)
+	mux.Handle("/admin/gfd-items", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdItemsPageHandler{})))
+
 	// Static files (registration SPA + event stream).
 	idunaRoot := getenv("IDUNA_ROOT", ".")
 	serveStatic := func(name string) http.HandlerFunc {

@@ -1,5 +1,34 @@
 # IDUNA Changelog
 
+## 2026-09-04 (4)
+
+### GFD Item Builder — real admin GUI (ITEM_BUILDER_NORTHSTAR.md Phase 2a)
+
+- Founder real-time: "we need some kind of big gui to help us manage our items" -> "if i wanted
+  to add another potion like max potion i should be able to do that via GFD world building
+  tools either in iduna or whatever." New `/admin/gfd-items` page (`GfdItemsPageHandler`) +
+  `/admin/gfd-items/api/items[/:id]` CRUD API (`GfdItemsHandler`), gated behind the same
+  `iduna.admin` permission every other admin page uses.
+- Same direct-file-access precedent `KanbanHandler`'s own `BacklogPath` already established for
+  `EMILY/BACKLOG.md`: reads/writes `GoblinFoxDragon/data/items.json` directly
+  (`GFD_ITEMS_JSON_PATH` env var, default `/home/fatbaby/GoblinFoxDragon/data/items.json`) --
+  IDUNA and GoblinFoxDragon are sibling checkouts on the same box, no new cross-process API
+  needed. `GfdItemDef` mirrors `server/itemdef.ItemDef`'s own real JSON field names exactly
+  (checked directly against that file, not guessed) since this can't import that module
+  (`GOWORK=off` breaks the cross-repo import, same reason `logs.go`'s own header comment
+  already names for a different package).
+- Real, honest limitation named on the page itself: the live `apps2/mud` process only loads
+  `items.json` once, at startup -- an edit here takes effect on next restart, not live.
+- 10 new tests (list, create with auto-assigned id, duplicate-id rejection, invalid-category
+  rejection, update, URL-id-wins-over-body-id, update-not-found, delete, delete-not-found, a
+  real field-name round-trip check confirming the written JSON keeps every field
+  `itemdef.LoadFile` expects). `go build/vet/test ./...` clean (one pre-existing, unrelated
+  flaky test in a real git-push integration test, confirmed by re-running with `-count=1`).
+- Real content dogfooded through the tool itself, not hand-edited: 18 new GFD items (3 swords,
+  3 full armor sets) -- see `GoblinFoxDragon/CHANGELOG.md`'s own entry for the content details
+  and a real, separate pre-existing bug found along the way (two existing items use
+  un-hyphenated `equip_slots` that never matched the real canonical slot names).
+
 ## 2026-09-04 (3)
 
 ### IUS-001 — git commit indexing for unified search
