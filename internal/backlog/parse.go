@@ -24,6 +24,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Item is one real "- [ ] **S###-##: title...**" line found in BACKLOG.md,
@@ -61,15 +63,60 @@ var (
 	itemRe = regexp.MustCompile(`(?ms)^- \[([ xX])\] \*\*([A-Za-z][A-Za-z0-9_-]*):\s*(.*?)\*\*`)
 )
 
+// GFD-OPTIM-1244 ("this bitch is slow... some kind of caching... for now can you hack around
+// it?"): real, measured problem, not guessed -- ParseFile against the real, live
+// EMILY/BACKLOG.md (29,808 lines and growing every card closed) took ~250ms per call, and
+// kanban.go's own real handlers call it 2-3 times in a row for a single HTTP request (read
+// current state, write, read back to confirm). A real "hack around it for now" fix, matching
+// the founder's own explicit framing (not a rewrite to a real database/index -- that's the
+// real, deferred, bigger fix if this file's growth ever outpaces this): a simple, self-
+// invalidating cache keyed by the file's own mtime+size. Any real edit (this session's own
+// commits, IDUNA's own kanban-git auto-commits, or a human editing the file directly) changes
+// at least one of those, so a stale read is not possible -- this is a real correctness-safe
+// cache, not a "remember to bust it" foot-gun. Real, honest, named caveat: a same-second edit
+// that happens to leave the file's exact byte size unchanged (mtime resolution is 1s on many
+// real filesystems) could theoretically be missed within that same second -- an accepted,
+// narrow risk for a "hack around it for now" fix, not the real, deferred bigger fix (a real
+// index/database) this card's own framing already names as future work.
+var (
+	parseFileCacheMu sync.Mutex
+	parseFileCache   = map[string]parseFileCacheEntry{}
+)
+
+type parseFileCacheEntry struct {
+	modTime time.Time
+	size    int64
+	items   []Item
+}
+
 // ParseFile reads path and parses it. A missing/unreadable file is a real
 // error, not a silently-empty result -- callers (the kanban inbox endpoint)
 // should surface that rather than pretend the backlog is empty.
 func ParseFile(path string) ([]Item, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	parseFileCacheMu.Lock()
+	if entry, ok := parseFileCache[path]; ok && entry.modTime.Equal(info.ModTime()) && entry.size == info.Size() {
+		items := append([]Item(nil), entry.items...) // shallow copy: never hand out the cache's own backing array
+		parseFileCacheMu.Unlock()
+		return items, nil
+	}
+	parseFileCacheMu.Unlock()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(string(data)), nil
+	items := Parse(string(data))
+
+	parseFileCacheMu.Lock()
+	parseFileCache[path] = parseFileCacheEntry{modTime: info.ModTime(), size: info.Size(), items: items}
+	parseFileCacheMu.Unlock()
+
+	return append([]Item(nil), items...), nil
 }
 
 // Parse scans text for every real item line, in file order.

@@ -1,8 +1,10 @@
 package backlog
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 const sample = `# EMILY BACKLOG
@@ -151,5 +153,72 @@ func TestExtractItemRaw_NotFound(t *testing.T) {
 func TestParseFile_MissingFileIsRealError(t *testing.T) {
 	if _, err := ParseFile("/nonexistent/path/BACKLOG.md"); err == nil {
 		t.Errorf("expected a real error for a missing file, got nil")
+	}
+}
+
+// GFD-OPTIM-1244: real cache correctness tests, not just "does it exist."
+
+func TestParseFile_CacheReturnsSameContentOnRepeatedCalls(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/BACKLOG.md"
+	if err := os.WriteFile(path, []byte("## SECTION 1: Test\n- [ ] **S1-01: first**\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	first, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	second, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile (cached): %v", err)
+	}
+	if len(first) != 1 || len(second) != 1 || first[0].ID != second[0].ID {
+		t.Fatalf("expected the cached read to match the first read, got %+v vs %+v", first, second)
+	}
+}
+
+func TestParseFile_CacheInvalidatesOnRealChange(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/BACKLOG.md"
+	if err := os.WriteFile(path, []byte("## SECTION 1: Test\n- [ ] **S1-01: first**\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	before, err := ParseFile(path)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("ParseFile before: items=%+v err=%v", before, err)
+	}
+	// A real, different-length edit (not same-second-same-size, the one named caveat) --
+	// appending a whole new item changes both size and (on most real filesystems) mtime.
+	time.Sleep(10 * time.Millisecond)
+	appended := "## SECTION 1: Test\n- [ ] **S1-01: first**\n- [ ] **S1-02: second, appended for real**\n"
+	if err := os.WriteFile(path, []byte(appended), 0644); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	after, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile after: %v", err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("expected the cache to invalidate and see the real new item, got %d items: %+v", len(after), after)
+	}
+}
+
+func TestParseFile_ReturnedSliceIsNotTheCacheBackingArray(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/BACKLOG.md"
+	if err := os.WriteFile(path, []byte("## SECTION 1: Test\n- [ ] **S1-01: first**\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	items, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	items[0].Title = "mutated by the caller"
+	again, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	if again[0].Title == "mutated by the caller" {
+		t.Fatal("expected the cache's own backing array to be unaffected by a caller mutating its returned slice")
 	}
 }

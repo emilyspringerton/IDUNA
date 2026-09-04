@@ -1,5 +1,25 @@
 # IDUNA Changelog
 
+## 2026-09-04 (14)
+- perf(internal/backlog): GFD-OPTIM-1244 -- "can we do some indexing or something on the data
+  some kind of caching some kind of compression this bitch is slow... for now can you hack
+  around it?" Real, measured problem, not guessed: `backlog.ParseFile` against the real, live
+  `EMILY/BACKLOG.md` (29,808 lines and growing every card closed) took ~250ms per call, and
+  `kanban.go`'s own real handlers call it 2-3 times per single HTTP request. Real "hack around
+  it for now" fix, matching the founder's own framing (not a rewrite to a real database/index --
+  named as the real, deferred bigger fix if growth ever outpaces this): a simple, self-
+  invalidating cache keyed by the file's own mtime+size, so a real edit (this session's own
+  commits, IDUNA's own kanban-git auto-commits, or a human edit) always invalidates it -- no
+  "remember to bust it" foot-gun. Real, honest, named caveat: a same-second edit that happens to
+  leave the file's exact byte size unchanged could theoretically be missed within that same
+  second (1s mtime resolution on many real filesystems) -- an accepted, narrow risk for this
+  fix's own stated scope. 3 new tests (repeated-call correctness, real invalidation on an actual
+  content change, and that the returned slice is a copy, not the cache's own backing array a
+  caller could corrupt). `go build`/`go vet`/`go test ./...` clean. Real, measured result against
+  the real live file: cold parse 249ms, cached read 29µs (~8,600x) -- live-verified end to end
+  via `emily kanban list` against the real running service (295ms cold, 13ms warm) after
+  redeploying under `iduna.service`.
+
 ## 2026-09-04 (13)
 - feat(admin/gfd-*): GFD-XX-123 -- "UI UX WEB for EQUIPMENT DUNGEONS MOBS use enhancable field
   for specifying the machine names for certain things like model names it should auto complete
