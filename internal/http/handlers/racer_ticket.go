@@ -49,6 +49,9 @@ const racerTicketPayloadLen = 16 + 4
 // (ported from shankpit-460's own, itself RFC-4231-verified).
 type RacerTicketHandler struct {
 	Secret []byte // RACER_TICKET_SECRET, shared with the racer game server
+	// Game, when set, rejects a caller whose JWT carries a non-matching "game" claim (S241-01).
+	// Empty (unset) skips the check entirely -- wired to "racer" in main.go.
+	Game string
 }
 
 func (h *RacerTicketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +80,10 @@ func (h *RacerTicketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Non-player tokens (agents, etc.) have non-UUID subjects -- this endpoint is
 		// player-tickets only.
 		http.Error(w, "token subject is not a player id", http.StatusBadRequest)
+		return
+	}
+	if !gameClaimMatches(claims, h.Game) {
+		http.Error(w, "this account is scoped to a different game", http.StatusForbidden)
 		return
 	}
 

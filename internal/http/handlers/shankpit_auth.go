@@ -132,15 +132,18 @@ func (h *ShankpitAuthHandler) handleCallback(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Register or update player in IDUNA DB.
-	playerID, displayName, err := h.upsertPlayer(r.Context(), userInfo)
+	playerID, displayName, game, err := h.upsertPlayer(r.Context(), userInfo)
 	if err != nil {
 		http.Error(w, "player registration failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Issue IDUNA JWT with player_id as sub + display_name claim.
+	// Issue IDUNA JWT with player_id as sub + display_name claim. game (S241-01) reflects
+	// whatever is actually stored on the player row -- "shankpit" for a brand-new player (this
+	// endpoint is unambiguously SHANKPIT's own OAuth flow), or whatever an existing row already
+	// had (never silently overwritten on login -- see upsertPlayer's own doc comment).
 	expiresAt := time.Now().Add(72 * time.Hour)
-	token, err := authjwt.Sign(h.Keys, map[string]any{
+	claims := map[string]any{
 		"sub":          playerID,
 		"display_name": displayName,
 		"email":        userInfo.Email,
@@ -148,7 +151,11 @@ func (h *ShankpitAuthHandler) handleCallback(w http.ResponseWriter, r *http.Requ
 		"aud":          "shankpit",
 		"iat":          time.Now().Unix(),
 		"exp":          expiresAt.Unix(),
-	})
+	}
+	if game != "" {
+		claims["game"] = game
+	}
+	token, err := authjwt.Sign(h.Keys, claims)
 	if err != nil {
 		http.Error(w, "JWT signing failed", http.StatusInternalServerError)
 		return
@@ -218,7 +225,12 @@ func (h *ShankpitAuthHandler) fetchUserInfo(ctx context.Context, accessToken str
 	return &ui, nil
 }
 
-func (h *ShankpitAuthHandler) upsertPlayer(ctx context.Context, ui *googleUserInfo) (playerID, displayName string, err error) {
+// upsertPlayer returns the player's stored game scope (S241-01) alongside the existing
+// id/display-name pair. A brand-new player gets "shankpit" (this endpoint is unambiguously
+// SHANKPIT's own OAuth flow); an existing player's stored game is read back as-is and never
+// overwritten here -- an account that predates this column, or was somehow created scoped to
+// something else, keeps that state rather than being silently reassigned on a routine login.
+func (h *ShankpitAuthHandler) upsertPlayer(ctx context.Context, ui *googleUserInfo) (playerID, displayName, game string, err error) {
 	name := ui.Name
 	if name == "" {
 		name = ui.GivenName
@@ -233,10 +245,11 @@ func (h *ShankpitAuthHandler) upsertPlayer(ctx context.Context, ui *googleUserIn
 	}
 
 	db := h.DB
+	var gameCol sql.NullString
 	err = db.QueryRowContext(ctx,
-		`SELECT player_id, display_name FROM players WHERE provider='google' AND provider_sub=?`,
+		`SELECT player_id, display_name, game FROM players WHERE provider='google' AND provider_sub=?`,
 		ui.Sub,
-	).Scan(&playerID, &displayName)
+	).Scan(&playerID, &displayName, &gameCol)
 
 	if err == nil {
 		// Update display_name + last_seen.
@@ -245,18 +258,18 @@ func (h *ShankpitAuthHandler) upsertPlayer(ctx context.Context, ui *googleUserIn
 			`UPDATE players SET display_name=?, email=?, last_seen=CURRENT_TIMESTAMP WHERE player_id=?`,
 			displayName, ui.Email, playerID,
 		)
-		return playerID, displayName, nil
+		return playerID, displayName, gameCol.String, nil
 	}
 	if err != sql.ErrNoRows {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	// New player.
 	playerID = uuid.New().String()
 	displayName = name
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO players (player_id, display_name, provider, provider_sub, email) VALUES (?,?,?,?,?)`,
-		playerID, displayName, "google", ui.Sub, ui.Email,
+		`INSERT INTO players (player_id, display_name, provider, provider_sub, email, game) VALUES (?,?,?,?,?,?)`,
+		playerID, displayName, "google", ui.Sub, ui.Email, "shankpit",
 	)
-	return playerID, displayName, err
+	return playerID, displayName, "shankpit", err
 }

@@ -19,8 +19,41 @@ import (
 )
 
 func racerTicketHandlerWithAuth(keys *jwt.Keys, secret []byte) http.Handler {
-	h := &handlers.RacerTicketHandler{Secret: secret}
+	h := &handlers.RacerTicketHandler{Secret: secret, Game: "racer"}
 	return middleware.RequireAuth(keys)(h)
+}
+
+// TestRacerTicket_RejectsMismatchedGameClaim -- S241-01's real fix: an
+// account scoped to a different game must not mint a racer connect ticket.
+func TestRacerTicket_RejectsMismatchedGameClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	token := makePlayerTokenWithGame(t, keys, uuid.New().String(), "papercraft")
+
+	h := racerTicketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/racer/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (game claim mismatch)", rec.Code)
+	}
+}
+
+// TestRacerTicket_AllowsAbsentGameClaim -- backward compatibility.
+func TestRacerTicket_AllowsAbsentGameClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	token := makePlayerTokenWithGame(t, keys, uuid.New().String(), "")
+
+	h := racerTicketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/racer/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (absent game claim stays unscoped), body = %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestRacerTicket_MintsValidTicket(t *testing.T) {

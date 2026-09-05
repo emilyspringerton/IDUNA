@@ -19,8 +19,60 @@ import (
 )
 
 func papercraftTicketHandlerWithAuth(keys *jwt.Keys, secret []byte) http.Handler {
-	h := &handlers.PapercraftTicketHandler{Secret: secret}
+	h := &handlers.PapercraftTicketHandler{Secret: secret, Game: "papercraft"}
 	return middleware.RequireAuth(keys)(h)
+}
+
+// TestPapercraftTicket_RejectsMismatchedGameClaim -- S241-01's real fix: an
+// account scoped to a different game (e.g. registered with game=shankpit)
+// must not be able to mint a PAPERCRAFT connect ticket.
+func TestPapercraftTicket_RejectsMismatchedGameClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	token := makePlayerTokenWithGame(t, keys, uuid.New().String(), "shankpit")
+
+	h := papercraftTicketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/papercraft/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (game claim mismatch)", rec.Code)
+	}
+}
+
+// TestPapercraftTicket_AllowsMatchingGameClaim -- the real, matching case.
+func TestPapercraftTicket_AllowsMatchingGameClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	token := makePlayerTokenWithGame(t, keys, uuid.New().String(), "papercraft")
+
+	h := papercraftTicketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/papercraft/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (matching game claim), body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPapercraftTicket_AllowsAbsentGameClaim -- backward compatibility: every
+// account that predates S241-01 (or never set game) has no claim at all, and
+// must keep working exactly as before this fix existed.
+func TestPapercraftTicket_AllowsAbsentGameClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	token := makePlayerTokenWithGame(t, keys, uuid.New().String(), "")
+
+	h := papercraftTicketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/papercraft/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (absent game claim stays unscoped), body = %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestPapercraftTicket_MintsValidTicket(t *testing.T) {

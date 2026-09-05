@@ -44,6 +44,9 @@ const papercraftTicketPayloadLen = 16 + 4
 // packages/common/hmac_sha256.h in the PAPERCRAFT repo for the C-side implementation.
 type PapercraftTicketHandler struct {
 	Secret []byte // PAPERCRAFT_TICKET_SECRET, shared with the game server
+	// Game, when set, rejects a caller whose JWT carries a non-matching "game" claim (S241-01).
+	// Empty (unset) skips the check entirely -- wired to "papercraft" in main.go.
+	Game string
 }
 
 func (h *PapercraftTicketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +75,10 @@ func (h *PapercraftTicketHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		// Non-player tokens (agents, etc.) have non-UUID subjects -- this endpoint is
 		// player-tickets only.
 		http.Error(w, "token subject is not a player id", http.StatusBadRequest)
+		return
+	}
+	if !gameClaimMatches(claims, h.Game) {
+		http.Error(w, "this account is scoped to a different game", http.StatusForbidden)
 		return
 	}
 

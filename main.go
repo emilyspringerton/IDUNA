@@ -796,6 +796,7 @@ func main() {
 	// resulting ticket itself via HMAC (S156-02).
 	shankpitTicketH := middleware.RequireAuth(keys)(&handlers.ShankpitTicketHandler{
 		Secret: []byte(os.Getenv("SHANKPIT_TICKET_SECRET")),
+		Game:   "shankpit", // S241-01
 	})
 	mux.Handle("/api/v1/shankpit/ticket", shankpitTicketH)
 
@@ -893,6 +894,7 @@ func main() {
 	// no new queue implementation needed, just a second instance with its own ServerAddr).
 	racerTicketH := middleware.RequireAuth(keys)(&handlers.RacerTicketHandler{
 		Secret: []byte(os.Getenv("RACER_TICKET_SECRET")),
+		Game:   "racer", // S241-01
 	})
 	mux.Handle("/api/v1/racer/ticket", racerTicketH)
 
@@ -915,6 +917,7 @@ func main() {
 	// matchmaking flow just above.
 	papercraftTicketH := middleware.RequireAuth(keys)(&handlers.PapercraftTicketHandler{
 		Secret: []byte(os.Getenv("PAPERCRAFT_TICKET_SECRET")),
+		Game:   "papercraft", // S241-01
 	})
 	mux.Handle("/api/v1/papercraft/ticket", papercraftTicketH)
 

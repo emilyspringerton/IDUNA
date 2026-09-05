@@ -62,6 +62,14 @@ type emailAuthRequest struct {
 	// equivalent field, since a returning player's character already exists.
 	CharacterName string `json:"character_name"`
 	CharacterJob  string `json:"character_job"`
+	// Game, if set, scopes this account to one game (S241-01 -- "make sure that account only for
+	// papercraft"): persisted on the player row and stamped into every JWT issued for this
+	// player from then on (register AND login). Registration-only, same reasoning as
+	// CharacterName -- a returning player's scope was already decided when the row was created.
+	// Optional and unvalidated against a fixed game list on purpose: an unrecognized value just
+	// means no ticket handler's own Game field will ever match it, the same safe "scoped to a
+	// game nothing currently checks for" outcome as leaving it unset, not a security hole.
+	Game string `json:"game"`
 }
 
 func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -138,15 +146,21 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	game := strings.ToLower(strings.TrimSpace(req.Game))
+
 	playerID := uuid.New().String()
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
+	var gameCol sql.NullString
+	if game != "" {
+		gameCol = sql.NullString{String: game, Valid: true}
+	}
 	_, err = tx.ExecContext(r.Context(),
-		`INSERT INTO players (player_id, display_name, provider, provider_sub, email) VALUES (?,?,?,?,?)`,
-		playerID, req.DisplayName, "email", req.Email, req.Email,
+		`INSERT INTO players (player_id, display_name, provider, provider_sub, email, game) VALUES (?,?,?,?,?,?)`,
+		playerID, req.DisplayName, "email", req.Email, req.Email, gameCol,
 	)
 	if err != nil {
 		tx.Rollback()
@@ -193,7 +207,7 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	token, err := h.issueJWT(playerID, req.DisplayName, req.Email)
+	token, err := h.issueJWT(playerID, req.DisplayName, req.Email, game)
 	if err != nil {
 		http.Error(w, "JWT signing failed", http.StatusInternalServerError)
 		return
@@ -203,6 +217,9 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		"player_id":    playerID,
 		"display_name": req.DisplayName,
 		"token":        token,
+	}
+	if game != "" {
+		resp["game"] = game
 	}
 	if characterID != "" {
 		resp["character_id"] = characterID
@@ -225,12 +242,12 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 	}
 
 	var playerID, displayName, hash string
-	var disabledAt sql.NullString
+	var disabledAt, gameCol sql.NullString
 	err := h.DB.QueryRowContext(r.Context(),
-		`SELECT pc.player_id, p.display_name, pc.password_hash, p.disabled_at
+		`SELECT pc.player_id, p.display_name, pc.password_hash, p.disabled_at, p.game
 		 FROM player_credentials pc JOIN players p ON pc.player_id=p.player_id
 		 WHERE pc.email=?`, req.Email,
-	).Scan(&playerID, &displayName, &hash, &disabledAt)
+	).Scan(&playerID, &displayName, &hash, &disabledAt, &gameCol)
 	if err == sql.ErrNoRows {
 		http.Error(w, "invalid email or password", http.StatusUnauthorized)
 		return
@@ -259,22 +276,29 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 		`UPDATE players SET last_seen=CURRENT_TIMESTAMP WHERE player_id=?`, playerID,
 	)
 
-	token, err := h.issueJWT(playerID, displayName, req.Email)
+	token, err := h.issueJWT(playerID, displayName, req.Email, gameCol.String)
 	if err != nil {
 		http.Error(w, "JWT signing failed", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	resp := map[string]string{
 		"player_id":    playerID,
 		"display_name": displayName,
 		"token":        token,
-	})
+	}
+	if gameCol.Valid && gameCol.String != "" {
+		resp["game"] = gameCol.String
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *PlayerEmailAuthHandler) issueJWT(playerID, displayName, email string) (string, error) {
-	return authjwt.Sign(h.Keys, map[string]any{
+// issueJWT stamps a "game" claim (S241-01) only when game is non-empty --
+// an absent claim, not an empty-string one, is what every ticket handler's
+// own backward-compatible "unscoped" check relies on.
+func (h *PlayerEmailAuthHandler) issueJWT(playerID, displayName, email, game string) (string, error) {
+	claims := map[string]any{
 		"sub":          playerID,
 		"display_name": displayName,
 		"email":        email,
@@ -282,5 +306,9 @@ func (h *PlayerEmailAuthHandler) issueJWT(playerID, displayName, email string) (
 		"aud":          "shankpit",
 		"iat":          time.Now().Unix(),
 		"exp":          time.Now().Add(72 * time.Hour).Unix(),
-	})
+	}
+	if game != "" {
+		claims["game"] = game
+	}
+	return authjwt.Sign(h.Keys, claims)
 }

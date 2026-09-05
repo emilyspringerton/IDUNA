@@ -42,6 +42,9 @@ const shankpitTicketPayloadLen = 16 + 4
 // implementation and its RFC 4231 test-vector verification.
 type ShankpitTicketHandler struct {
 	Secret []byte // SHANKPIT_TICKET_SECRET, shared with the game server
+	// Game, when set, rejects a caller whose JWT carries a non-matching "game" claim (S241-01).
+	// Empty (unset) skips the check entirely -- wired to "shankpit" in main.go.
+	Game string
 }
 
 func (h *ShankpitTicketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +73,10 @@ func (h *ShankpitTicketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		// Non-player tokens (agents, etc.) have non-UUID subjects — this
 		// endpoint is player-tickets only.
 		http.Error(w, "token subject is not a player id", http.StatusBadRequest)
+		return
+	}
+	if !gameClaimMatches(claims, h.Game) {
+		http.Error(w, "this account is scoped to a different game", http.StatusForbidden)
 		return
 	}
 

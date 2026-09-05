@@ -1,5 +1,27 @@
 # IDUNA Changelog
 
+## 2026-09-05 (3)
+- fix(players): S241-01 real security fix — player accounts are now scoped per game, closing a
+  found-not-fixed gap (founder, setting up Gary's PAPERCRAFT account: "make sure that account only
+  for papercraft"). Before this, one email/password was a single shared identity that could mint a
+  connect ticket for PAPERCRAFT, SHANKPIT, or WEAKNIGHT_BEDROCK_RACERS interchangeably. New
+  nullable `players.game` column (`202609050003_players_game_scope.sql`) — an optional `game`
+  field on `POST /api/v1/auth/email/register`, persisted on the row and stamped into every JWT
+  issued for that player (register AND login); `ShankpitAuthHandler`'s Google OAuth flow stamps
+  `game="shankpit"` on a brand-new player (never overwrites an existing row's stored value on
+  login). New shared `gameClaimMatches` helper (`game_scope.go`): `PapercraftTicketHandler`/
+  `RacerTicketHandler`/`ShankpitTicketHandler` each get a `Game` field (wired to `"papercraft"`/
+  `"racer"`/`"shankpit"` in `main.go`) and reject a JWT whose `game` claim doesn't match with a 403
+  — an absent claim (every account that predates this column, or never set one) stays unscoped,
+  backward compatible by construction. 21 new tests across `game_scope_test.go`,
+  `player_email_auth_test.go`, and the three ticket handler test files. `go test ./...` clean.
+  Live-verified against real prod `var/iduna.db`: migration applied, a live papercraft-scoped
+  registration correctly minted a papercraft ticket (200) and was rejected minting a shankpit
+  ticket (403) — the exact founder-named scenario, reproduced and fixed; test account then
+  deleted. Honest scope boundary: `ShankpitAuthHandler`'s OAuth callback (Google login) has no
+  test coverage here — no existing test harness mocks its external token-exchange/userinfo calls,
+  a bigger lift than this change justified on its own.
+
 ## 2026-09-05 (2)
 - feat(mailinglist): S245-03 real per-instance, admin-configurable Mailchimp settings shipped —
   not just an env var anymore. New `mailchimp_settings` table (single-row, encrypted the same way

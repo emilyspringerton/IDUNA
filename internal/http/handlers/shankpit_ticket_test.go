@@ -19,8 +19,45 @@ import (
 )
 
 func ticketHandlerWithAuth(keys *jwt.Keys, secret []byte) http.Handler {
-	h := &handlers.ShankpitTicketHandler{Secret: secret}
+	h := &handlers.ShankpitTicketHandler{Secret: secret, Game: "shankpit"}
 	return middleware.RequireAuth(keys)(h)
+}
+
+// TestShankpitTicket_RejectsMismatchedGameClaim -- S241-01's real fix: an
+// account scoped to a different game must not mint a SHANKPIT connect
+// ticket -- the exact founder-named scenario ("make sure that account only
+// for papercraft"), checked from the other direction.
+func TestShankpitTicket_RejectsMismatchedGameClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	token := makePlayerTokenWithGame(t, keys, uuid.New().String(), "papercraft")
+
+	h := ticketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/shankpit/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (game claim mismatch)", rec.Code)
+	}
+}
+
+// TestShankpitTicket_AllowsAbsentGameClaim -- backward compatibility: every
+// account that predates S241-01 keeps working with SHANKPIT exactly as
+// before.
+func TestShankpitTicket_AllowsAbsentGameClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	token := makePlayerTokenWithGame(t, keys, uuid.New().String(), "")
+
+	h := ticketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/shankpit/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (absent game claim stays unscoped), body = %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestShankpitTicket_MintsValidTicket(t *testing.T) {
