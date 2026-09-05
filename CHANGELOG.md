@@ -1,5 +1,23 @@
 # IDUNA Changelog
 
+## 2026-09-05 (4)
+
+- fix: KBUX-CACHE-001 — founder real-time report ("my web interface shows 30 items in priority
+  queue - is that right? ... maybe we lost state ... maybe we can get a little refresh icon in
+  the top right to do a full cache clear"). Cross-checked the CLI, the live `var/iduna.db`
+  `kanban_cards` table, and the unified event log directly: 30 is the real, current, correct
+  count. The event log shows what actually happened — a real bulk move of ~37 other cards from
+  priority to cruise succeeded and is durable (cruise now holds 49); a separate, untouched set
+  of 30 cards stayed in priority the whole time; subsequent within-column drag/sort activity on
+  them produced a bursty repeated-`iduna:kanban.card.move` log signature (every reorder PATCHes
+  the whole column) that could look like cards jumping back in, but never crossed queues. No
+  caching bug found in this specific incident. Still hardened for real: none of the kanban page
+  (`/admin/kanban`), cards API, or inbox API responses carried any `Cache-Control` header at
+  all — added explicit `no-store` on all three, `cache: 'no-store'` on the board's own `fetch()`
+  calls, and the requested manual "⟳ Refresh" button that force-reloads both panes with visible
+  click feedback. `go test ./...` clean; service rebuilt and restarted live, health check
+  passing. Apple #17907.
+
 ## 2026-09-05 (3)
 - fix(players): S241-01 real security fix — player accounts are now scoped per game, closing a
   found-not-fixed gap (founder, setting up Gary's PAPERCRAFT account: "make sure that account only
