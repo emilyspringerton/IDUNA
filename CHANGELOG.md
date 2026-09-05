@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-05 (4)
+- Restored IDUNA after home-config loss: rebuilt binary, recreated ~/.config/iduna/env with fresh JWT_SECRET (ES256 signing keys were intact), reinstalled systemd unit (sess-20260905-0720-ec33e7c5)
 
 - fix: KBUX-CACHE-001 — founder real-time report ("my web interface shows 30 items in priority
   queue - is that right? ... maybe we lost state ... maybe we can get a little refresh icon in
