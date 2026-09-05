@@ -34,6 +34,9 @@ type KanbanInboxHandler struct {
 }
 
 func (h *KanbanInboxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// KBUX-CACHE-001 -- see kanban.go's ServeHTTP for the full real-time report/investigation
+	// this responds to. Same explicit no-store, for the same reason.
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

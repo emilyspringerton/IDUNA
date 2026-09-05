@@ -155,6 +155,16 @@ func kanbanBoardIDFromQuery(r *http.Request) (int64, error) {
 var validKanbanQueues = map[string]bool{"backlog": true, "priority": true, "cruise": true}
 
 func (h *KanbanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// KBUX-CACHE-001 (founder real-time, 2026-09-05: "my web interface shows 30 items in
+	// priority queue - is that right? ... it seems like there may be a caching issue"). Real
+	// investigation found this specific report wasn't a caching bug -- the board's own
+	// fetch()/render() cycle re-fetches live on every load, and the DB itself already held the
+	// same count the board showed -- but this endpoint had NO Cache-Control header at all, so
+	// nothing actually ruled out an intermediate cache (a CDN/proxy in front of a future
+	// deployment, a browser's aggressive heuristic caching of a credentialed fetch) ever
+	// serving something stale. Explicit no-store closes that off for real, not just for this
+	// one report.
+	w.Header().Set("Cache-Control", "no-store")
 	if h.DB == nil {
 		http.Error(w, "kanban not available", http.StatusServiceUnavailable)
 		return

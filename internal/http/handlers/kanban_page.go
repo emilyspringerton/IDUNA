@@ -26,6 +26,11 @@ func (h *KanbanPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// KBUX-CACHE-001 -- see kanban.go's ServeHTTP doc comment for the full real-time
+	// report/investigation. The page shell itself had no explicit cache header either;
+	// no-store here rules out a stale HTML document (with the "Refresh" button's own
+	// no-store fetches below covering the live card data on top of that).
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(kanbanPageHTML))
 }
 
@@ -159,6 +164,11 @@ const kanbanPageHTML = `<!doctype html>
      ahead of id-only matches within a column, per the card's own "name priority" ask. */
   #quick-filter { min-width: 220px; }
   .card.filtered-out { display: none; }
+  /* KBUX-CACHE-001 (founder real-time: "maybe we can get a little refresh icon in the top
+     right to do a full cache clear for the kanban board") -- reuses the existing button
+     style, just tightened to sit inline with the filter box and the Back Office link. */
+  #refresh-btn { padding: 0.45rem 0.7rem; margin: 0 0.6rem; font-size: 0.82rem; }
+  #refresh-btn.spinning { opacity: 0.6; cursor: default; }
 </style>
 </head>
 <body>
@@ -170,6 +180,7 @@ const kanbanPageHTML = `<!doctype html>
   <div class="sub">
     <input type="text" id="quick-filter" placeholder="Filter cards…" oninput="applyFilter()"
            title="Instant filter over every loaded card, by id or title -- matches nothing typed yet show every card">
+    <button type="button" id="refresh-btn" onclick="hardRefresh()" title="Re-fetch everything from the server right now, bypassing any cache (KBUX-CACHE-001)">⟳ Refresh</button>
     <a href="/admin">← Back Office</a>
   </div>
 </header>
@@ -251,7 +262,10 @@ function setStatus(msg, isError) {
 async function loadCards() {
   setStatus('Loading…');
   try {
-    const res = await fetch(API, { credentials: 'same-origin' });
+    // cache: 'no-store' -- KBUX-CACHE-001: belt-and-suspenders alongside the server's own new
+    // Cache-Control: no-store response header (kanban.go's ServeHTTP) so a stale response can
+    // never come from either side, whatever sits between this tab and IDUNA.
+    const res = await fetch(API, { credentials: 'same-origin', cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const cards = await res.json();
     render(cards);
@@ -267,7 +281,7 @@ async function loadCards() {
 // leaving/entering "un-carded" status changes what belongs here.
 async function loadInbox() {
   try {
-    const res = await fetch(INBOX_API, { credentials: 'same-origin' });
+    const res = await fetch(INBOX_API, { credentials: 'same-origin', cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const items = await res.json();
     renderInbox(items || []);
@@ -607,6 +621,28 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
     setStatus('Failed to add card: ' + e2.message, true);
   }
 });
+
+// hardRefresh: the "⟳ Refresh" button (KBUX-CACHE-001). A real investigation into "my web
+// interface shows 30 items in priority queue - is that right? ... maybe we lost state" found
+// this wasn't actually a caching bug this time (the board's own live fetch already matched the
+// real, current server state) -- but there was genuinely no way for an operator to force a
+// from-scratch reload short of a full page reload, and no server response here carried any
+// cache header at all to rule a cache out with confidence. This does both at once: a real
+// re-fetch of the page's own live data (loadCards already sends cache: no-store, so this is
+// already a real hard refresh of the board state, not a cosmetic spinner) plus a visible
+// spin/disable so a click always gets visible feedback.
+function hardRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  btn.classList.add('spinning');
+  const label = btn.textContent;
+  btn.textContent = '⟳ Refreshing…';
+  Promise.all([loadCards(), loadInbox()]).finally(() => {
+    btn.disabled = false;
+    btn.classList.remove('spinning');
+    btn.textContent = label;
+  });
+}
 
 loadCards();
 loadInbox();
