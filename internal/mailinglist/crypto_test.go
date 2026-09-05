@@ -225,6 +225,59 @@ func TestStore_ListForExport(t *testing.T) {
 	}
 }
 
+// TestStore_MailchimpSettings_NotConfiguredByDefault -- S245-03's real
+// backward-compatible starting state: a brand-new store has no stored
+// settings, so callers fall back to the env-var-configured client.
+func TestStore_MailchimpSettings_NotConfiguredByDefault(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	_, _, _, _, ok, err := s.MailchimpSettings()
+	if err != nil {
+		t.Fatalf("MailchimpSettings: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false on a brand-new store")
+	}
+}
+
+// TestStore_SetMailchimpSettings_RoundtripsAndUpserts -- a second Set call
+// replaces the first (single-row config), not appends.
+func TestStore_SetMailchimpSettings_RoundtripsAndUpserts(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.SetMailchimpSettings([]byte("key1-ct"), []byte("key1-n"), []byte("list1-ct"), []byte("list1-n")); err != nil {
+		t.Fatalf("SetMailchimpSettings 1: %v", err)
+	}
+	apiKeyCT, _, listIDCT, _, ok, err := s.MailchimpSettings()
+	if err != nil || !ok {
+		t.Fatalf("MailchimpSettings after first set: ok=%v err=%v", ok, err)
+	}
+	if string(apiKeyCT) != "key1-ct" || string(listIDCT) != "list1-ct" {
+		t.Fatalf("unexpected first-set values: apiKeyCT=%q listIDCT=%q", apiKeyCT, listIDCT)
+	}
+
+	if err := s.SetMailchimpSettings([]byte("key2-ct"), []byte("key2-n"), []byte("list2-ct"), []byte("list2-n")); err != nil {
+		t.Fatalf("SetMailchimpSettings 2: %v", err)
+	}
+	apiKeyCT2, _, listIDCT2, _, ok2, err := s.MailchimpSettings()
+	if err != nil || !ok2 {
+		t.Fatalf("MailchimpSettings after second set: ok=%v err=%v", ok2, err)
+	}
+	if string(apiKeyCT2) != "key2-ct" || string(listIDCT2) != "list2-ct" {
+		t.Fatalf("expected second set to replace the first, got apiKeyCT=%q listIDCT=%q", apiKeyCT2, listIDCT2)
+	}
+}
+
 func TestStore_InitVaultRefusesDoubleInit(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir + "/test.db")

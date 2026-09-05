@@ -1,5 +1,22 @@
 # IDUNA Changelog
 
+## 2026-09-05 (2)
+- feat(mailinglist): S245-03 real per-instance, admin-configurable Mailchimp settings shipped —
+  not just an env var anymore. New `mailchimp_settings` table (single-row, encrypted the same way
+  subscriber emails are), `Store.SetMailchimpSettings`/`MailchimpSettings`. New
+  `GET`/`PUT /api/v1/mailing-list/settings/mailchimp`, gated behind a new dedicated
+  `mailinglist.admin` permission (super_admin, `202609050002_...sql`) — distinct scope from
+  `mailinglist.export` (that one reads subscriber PII, this one reads/writes provider config). GET
+  never echoes the API key back (write-only secret, same posture as agent secret rotation);
+  `list_id` isn't secret and comes back as-is. `MailingListHandler.resolveMailchimpClient` is the
+  real resolution order: stored per-instance settings win when the vault is unlocked, falling back
+  to the existing env-var-configured client (`h.Mailchimp`) if nothing's stored or the vault is
+  locked — `MailchimpClient` itself needed zero redesign, exactly as S245-03's own scoping
+  predicted. `subscribe()` now calls this resolver instead of reading `h.Mailchimp` directly. 9 new
+  tests (store round-trip/upsert, settings API GET/PUT/permission-gate, 3 resolver-priority cases
+  in a new internal `mailinglist_internal_test.go`). Live-verified against real prod `var/iduna.db`
+  + `var/mailinglist.db`, redeployed `iduna.service`. Unblocks S245-04's settings UI.
+
 ## 2026-09-05 (1)
 - feat(mailinglist): S245-02 real export endpoint shipped — `GET /api/v1/mailing-list/export`
   (`?format=csv|json`, default json), gated behind a new dedicated `mailinglist.export` permission

@@ -35,6 +35,20 @@ CREATE TABLE IF NOT EXISTS subscribers (
 	mailchimp_synced  INTEGER  NOT NULL DEFAULT 0,
 	created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- S245-03: per-instance, admin-settable email-provider config, encrypted the
+-- same way subscriber emails are (values are ciphertext, decrypted only via
+-- the already-unlocked Vault) -- a real alternative to the MAILCHIMP_API_KEY
+-- env var, settable without a redeploy. Single-row (id=1), same shape as
+-- vault_meta above.
+CREATE TABLE IF NOT EXISTS mailchimp_settings (
+	id                  INTEGER PRIMARY KEY CHECK (id = 1),
+	api_key_ciphertext  BLOB     NOT NULL,
+	api_key_nonce       BLOB     NOT NULL,
+	list_id_ciphertext  BLOB     NOT NULL,
+	list_id_nonce       BLOB     NOT NULL,
+	updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 // Open opens (creating if absent) the mailing-list SQLite file at path and
@@ -210,4 +224,41 @@ func (s *Store) ListForExport() ([]SubscriberRecord, error) {
 		out = append(out, rec)
 	}
 	return out, rows.Err()
+}
+
+// SetMailchimpSettings stores (or replaces) the single per-instance Mailchimp
+// config row. Ciphertext in, ciphertext stored — encryption happens in the
+// caller (the handler, via the already-unlocked Vault), matching every other
+// encrypted value in this package.
+func (s *Store) SetMailchimpSettings(apiKeyCiphertext, apiKeyNonce, listIDCiphertext, listIDNonce []byte) error {
+	_, err := s.db.Exec(
+		`INSERT INTO mailchimp_settings (id, api_key_ciphertext, api_key_nonce, list_id_ciphertext, list_id_nonce, updated_at)
+		 VALUES (1, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   api_key_ciphertext = excluded.api_key_ciphertext,
+		   api_key_nonce      = excluded.api_key_nonce,
+		   list_id_ciphertext = excluded.list_id_ciphertext,
+		   list_id_nonce      = excluded.list_id_nonce,
+		   updated_at         = excluded.updated_at`,
+		apiKeyCiphertext, apiKeyNonce, listIDCiphertext, listIDNonce, time.Now().UTC(),
+	)
+	return err
+}
+
+// MailchimpSettings returns the stored per-instance Mailchimp config
+// ciphertext, or ok=false if nothing has been configured yet (the normal
+// state for EINHORN's own instance, which stays on the MAILCHIMP_API_KEY
+// env var — see MailingListHandler's own resolution order).
+func (s *Store) MailchimpSettings() (apiKeyCiphertext, apiKeyNonce, listIDCiphertext, listIDNonce []byte, ok bool, err error) {
+	row := s.db.QueryRow(
+		`SELECT api_key_ciphertext, api_key_nonce, list_id_ciphertext, list_id_nonce FROM mailchimp_settings WHERE id = 1`,
+	)
+	err = row.Scan(&apiKeyCiphertext, &apiKeyNonce, &listIDCiphertext, &listIDNonce)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil, nil, false, nil
+	}
+	if err != nil {
+		return nil, nil, nil, nil, false, err
+	}
+	return apiKeyCiphertext, apiKeyNonce, listIDCiphertext, listIDNonce, true, nil
 }

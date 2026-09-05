@@ -415,6 +415,20 @@ func main() {
 	// since this is the one mailing-list route that returns real PII.
 	mux.Handle("/api/v1/mailing-list/export",
 		middleware.RequireAuth(keys)(middleware.RequirePermission("mailinglist.export")(http.HandlerFunc(mailingListH.Export))))
+	// S245-03: per-instance, admin-settable Mailchimp config -- its own
+	// dedicated permission, distinct from mailinglist.export (this one
+	// writes/reads config, not subscriber PII).
+	mailingListSettingsProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("mailinglist.admin")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			mailingListH.GetMailchimpSettings(w, r)
+		case http.MethodPut:
+			mailingListH.PutMailchimpSettings(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})))
+	mux.Handle("/api/v1/mailing-list/settings/mailchimp", mailingListSettingsProtected)
 	disH.Register(mux)
 
 	// CarePyre contact form — carepyre.org's "Contact Us", public + rate-limited

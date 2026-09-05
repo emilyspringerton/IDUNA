@@ -229,8 +229,8 @@ func (h *MailingListHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 	// (still tagged by `source` in IDUNA's own store either way) so a
 	// signup never silently goes nowhere just because a product-specific
 	// Mailchimp audience hasn't been created yet.
-	if h.Mailchimp != nil {
-		targetList := h.Mailchimp.ListID
+	if mc := h.resolveMailchimpClient(); mc != nil {
+		targetList := mc.ListID
 		if source != "general" {
 			if listID, ok := h.MailchimpLists[source]; ok && listID != "" {
 				targetList = listID
@@ -238,13 +238,111 @@ func (h *MailingListHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[mailinglist] no dedicated mailchimp list configured for source=%q — syncing to default list instead", source)
 			}
 		}
-		if err := h.Mailchimp.SubscribeToList(email, targetList); err != nil {
+		if err := mc.SubscribeToList(email, targetList); err != nil {
 			log.Printf("[mailinglist] mailchimp sync failed for subscriber id=%d source=%q: %v", id, source, err)
 		} else if err := h.Store.MarkMailchimpSynced(id); err != nil {
 			log.Printf("[mailinglist] failed to mark synced id=%d: %v", id, err)
 		}
 	}
 
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// resolveMailchimpClient implements S245-03's real resolution order: a
+// per-instance setting stored in the vault-backed Store (admin-configurable,
+// no redeploy needed) takes priority over h.Mailchimp, the env-var-configured
+// fallback every existing instance (including EINHORN's own) already relies
+// on. Returns nil if neither is available -- callers already treat that as
+// "no Mailchimp sync this request", the same as before this feature existed.
+func (h *MailingListHandler) resolveMailchimpClient() *mailinglist.MailchimpClient {
+	if h.Vault.Locked() {
+		return h.Mailchimp
+	}
+	apiKeyCT, apiKeyNonce, listIDCT, listIDNonce, ok, err := h.Store.MailchimpSettings()
+	if err != nil {
+		log.Printf("[mailinglist] failed to read stored mailchimp settings: %v", err)
+		return h.Mailchimp
+	}
+	if !ok {
+		return h.Mailchimp
+	}
+	apiKey, err1 := h.Vault.Decrypt(apiKeyCT, apiKeyNonce)
+	listID, err2 := h.Vault.Decrypt(listIDCT, listIDNonce)
+	if err1 != nil || err2 != nil {
+		log.Printf("[mailinglist] stored mailchimp settings present but failed to decrypt (api_key err=%v, list_id err=%v) — falling back to env config", err1, err2)
+		return h.Mailchimp
+	}
+	return mailinglist.NewMailchimpClient(string(apiKey), string(listID))
+}
+
+type mailchimpSettingsRequest struct {
+	APIKey string `json:"api_key"`
+	ListID string `json:"list_id"`
+}
+
+// GetMailchimpSettings — GET /api/v1/mailing-list/settings/mailchimp
+// (registered in main.go behind RequireAuth + RequirePermission
+// ("mailinglist.admin")). Never returns the API key itself, even to an
+// authorized caller — same write-only-secret posture as agent secret
+// rotation elsewhere in IDUNA. list_id isn't secret, so it's returned as-is.
+func (h *MailingListHandler) GetMailchimpSettings(w http.ResponseWriter, r *http.Request) {
+	_, _, listIDCT, listIDNonce, ok, err := h.Store.MailchimpSettings()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
+		return
+	}
+	if h.Vault.Locked() {
+		writeJSON(w, http.StatusOK, map[string]any{"configured": true, "list_id": nil,
+			"note": "vault is locked — list_id will show once unlocked"})
+		return
+	}
+	listID, err := h.Vault.Decrypt(listIDCT, listIDNonce)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "list_id": string(listID)})
+}
+
+// PutMailchimpSettings — PUT /api/v1/mailing-list/settings/mailchimp. Both
+// fields required together (no partial update) to avoid ever leaving a
+// stored config half-set between an old key and a new list, or vice versa.
+func (h *MailingListHandler) PutMailchimpSettings(w http.ResponseWriter, r *http.Request) {
+	if h.Vault.Locked() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "vault is locked — cannot store settings until unlocked",
+		})
+		return
+	}
+	var req mailchimpSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+		return
+	}
+	if req.APIKey == "" || req.ListID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "api_key and list_id are both required"})
+		return
+	}
+
+	apiKeyCT, apiKeyNonce, err := h.Vault.Encrypt([]byte(req.APIKey))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+	listIDCT, listIDNonce, err := h.Vault.Encrypt([]byte(req.ListID))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+	if err := h.Store.SetMailchimpSettings(apiKeyCT, apiKeyNonce, listIDCT, listIDNonce); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+	log.Printf("[mailinglist] mailchimp settings updated (list_id=%s)", req.ListID)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
