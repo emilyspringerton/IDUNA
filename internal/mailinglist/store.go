@@ -171,3 +171,43 @@ func (s *Store) CountsBySource() ([]SourceCount, error) {
 	}
 	return out, rows.Err()
 }
+
+// SubscriberRecord is one exported subscriber row — S245-02's real dump
+// shape. EmailCiphertext/EmailNonce are handed to the caller undecrypted;
+// ListForExport itself never touches the vault, keeping this Store method
+// usable (and testable) with no live vault at all — the handler is the one
+// real place that decrypts, using its own already-unlocked Vault.
+type SubscriberRecord struct {
+	ID              int64
+	EmailCiphertext []byte
+	EmailNonce      []byte
+	ConsentVersion  string
+	ConsentedAt     time.Time
+	Source          string
+	MailchimpSynced bool
+}
+
+// ListForExport returns every subscriber row, oldest first, for a real
+// export dump (S245-02 — "saves your list in IDUNA in case you need to
+// export it later"). Ciphertext, not plaintext — see SubscriberRecord.
+func (s *Store) ListForExport() ([]SubscriberRecord, error) {
+	rows, err := s.db.Query(
+		`SELECT id, email_ciphertext, email_nonce, consent_version, consented_at, source, mailchimp_synced
+		 FROM subscribers ORDER BY id ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SubscriberRecord
+	for rows.Next() {
+		var rec SubscriberRecord
+		var synced int
+		if err := rows.Scan(&rec.ID, &rec.EmailCiphertext, &rec.EmailNonce, &rec.ConsentVersion, &rec.ConsentedAt, &rec.Source, &synced); err != nil {
+			return nil, err
+		}
+		rec.MailchimpSynced = synced != 0
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}

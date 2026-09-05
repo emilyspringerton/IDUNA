@@ -410,6 +410,11 @@ func main() {
 	// there's no human JWT session for an operator running a CLI on the box.
 	mailingListH.Limiter = middleware.NewIPRateLimiter(5)
 	mailingListH.Register(mux)
+	// S245-02: real export endpoint, gated behind a dedicated permission
+	// (not iduna.admin — least-privilege, same reasoning as kanban.access)
+	// since this is the one mailing-list route that returns real PII.
+	mux.Handle("/api/v1/mailing-list/export",
+		middleware.RequireAuth(keys)(middleware.RequirePermission("mailinglist.export")(http.HandlerFunc(mailingListH.Export))))
 	disH.Register(mux)
 
 	// CarePyre contact form — carepyre.org's "Contact Us", public + rate-limited

@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"log"
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
@@ -48,6 +51,74 @@ func (h *MailingListHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("OPTIONS /api/v1/mailing-list/count", h.preflight)
 	mux.HandleFunc("POST /api/v1/mailing-list/unlock", h.unlock)
 	mux.HandleFunc("POST /api/v1/mailing-list/init", h.init)
+}
+
+// Export is the S245-02 endpoint (registered separately in main.go, behind
+// RequireAuth + RequirePermission("mailinglist.export") — unlike Register's
+// routes above, this one needs a real JWT-bearer identity, not the loopback
+// CLI trust model unlock/init use). GET /api/v1/mailing-list/export
+// (?format=csv|json, default json). Decrypts each stored subscriber via the
+// already-unlocked Vault; fails closed (503) while the vault is locked,
+// same as subscribe.
+func (h *MailingListHandler) Export(w http.ResponseWriter, r *http.Request) {
+	if h.Vault.Locked() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "vault is locked — export unavailable until unlocked",
+		})
+		return
+	}
+
+	records, err := h.Store.ListForExport()
+	if err != nil {
+		log.Printf("[mailinglist] export: list failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+		return
+	}
+
+	type exportedSubscriber struct {
+		ID              int64  `json:"id"`
+		Email           string `json:"email"`
+		ConsentVersion  string `json:"consent_version"`
+		ConsentedAt     string `json:"consented_at"`
+		Source          string `json:"source"`
+		MailchimpSynced bool   `json:"mailchimp_synced"`
+	}
+	out := make([]exportedSubscriber, 0, len(records))
+	for _, rec := range records {
+		plain, err := h.Vault.Decrypt(rec.EmailCiphertext, rec.EmailNonce)
+		if err != nil {
+			// One row's ciphertext/nonce corrupted or mismatched must not
+			// abort the whole export — every other real subscriber still
+			// deserves to come out. Logged with the id, not the ciphertext.
+			log.Printf("[mailinglist] export: decrypt failed for subscriber id=%d: %v", rec.ID, err)
+			continue
+		}
+		out = append(out, exportedSubscriber{
+			ID:              rec.ID,
+			Email:           string(plain),
+			ConsentVersion:  rec.ConsentVersion,
+			ConsentedAt:     rec.ConsentedAt.UTC().Format(time.RFC3339),
+			Source:          rec.Source,
+			MailchimpSynced: rec.MailchimpSynced,
+		})
+	}
+
+	if strings.EqualFold(r.URL.Query().Get("format"), "csv") {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", `attachment; filename="mailinglist-export.csv"`)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"id", "email", "consent_version", "consented_at", "source", "mailchimp_synced"})
+		for _, s := range out {
+			_ = cw.Write([]string{
+				strconv.FormatInt(s.ID, 10), s.Email, s.ConsentVersion, s.ConsentedAt, s.Source,
+				strconv.FormatBool(s.MailchimpSynced),
+			})
+		}
+		cw.Flush()
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"subscribers": out, "count": len(out)})
 }
 
 // GET /api/v1/mailing-list/count?list=<source> — public, CORS-scoped like

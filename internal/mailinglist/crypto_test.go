@@ -188,6 +188,43 @@ func TestStore_InitVault_KeyFileMode(t *testing.T) {
 	}
 }
 
+// TestStore_ListForExport -- S245-02's real read path: rows come back in
+// insertion order, ciphertext untouched (this method never decrypts).
+func TestStore_ListForExport(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	id1, err := s.AddSubscriber([]byte("ct1"), []byte("n1"), "v1", "general")
+	if err != nil {
+		t.Fatalf("AddSubscriber 1: %v", err)
+	}
+	id2, err := s.AddSubscriber([]byte("ct2"), []byte("n2"), "v1", "stinkies")
+	if err != nil {
+		t.Fatalf("AddSubscriber 2: %v", err)
+	}
+	if err := s.MarkMailchimpSynced(id1); err != nil {
+		t.Fatalf("MarkMailchimpSynced: %v", err)
+	}
+
+	records, err := s.ListForExport()
+	if err != nil {
+		t.Fatalf("ListForExport: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+	if records[0].ID != id1 || string(records[0].EmailCiphertext) != "ct1" || !records[0].MailchimpSynced {
+		t.Errorf("record 0 mismatch: %+v", records[0])
+	}
+	if records[1].ID != id2 || string(records[1].EmailCiphertext) != "ct2" || records[1].Source != "stinkies" || records[1].MailchimpSynced {
+		t.Errorf("record 1 mismatch: %+v", records[1])
+	}
+}
+
 func TestStore_InitVaultRefusesDoubleInit(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir + "/test.db")

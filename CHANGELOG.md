@@ -1,5 +1,19 @@
 # IDUNA Changelog
 
+## 2026-09-05 (1)
+- feat(mailinglist): S245-02 real export endpoint shipped — `GET /api/v1/mailing-list/export`
+  (`?format=csv|json`, default json), gated behind a new dedicated `mailinglist.export` permission
+  (granted to `super_admin`, `202609050001_mailinglist_export_permission.sql`) rather than reusing
+  `iduna.admin` — the one mailing-list route that returns real subscriber PII. New
+  `Store.ListForExport` (`internal/mailinglist/store.go`) returns ciphertext rows only; the handler
+  is the one place that decrypts, via the already-unlocked `Vault`. Fails closed (503) while the
+  vault is locked, matches `subscribe`'s own posture. One corrupted/undecryptable row is skipped
+  and logged rather than aborting the whole export. 9 new tests across `crypto_test.go` (store
+  listing) and the new `mailinglist_test.go` (permission gate, locked-vault 503, JSON decrypt,
+  CSV format, corrupt-row skip). Live-verified: migration applied against the real prod
+  `var/iduna.db`, `super_admin` role_permissions row confirmed, redeployed `iduna.service`, live
+  endpoint correctly 401s unauthenticated. Unblocks S245-04's export button.
+
 ## 2026-09-04 (23)
 - feat(mailinglist): S245-01 real config/file-key vault-unlock mode shipped, alongside (not
   replacing) the existing human-passphrase path. `Vault.UnlockFromKeyFile` verifies a hex-encoded
