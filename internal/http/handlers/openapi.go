@@ -1303,7 +1303,116 @@ var idunaOpenAPISpec = map[string]any{
 				},
 			},
 		},
+		"/api/v1/openapi.json": simpleGET("This spec, self-served", "system", true),
+
+		// ── Registration catch-up (2026-09-07 SAGA audit: main.go registers ~128 routes, this
+		// spec covered ~50) — every path below is real and genuinely registered in main.go as of
+		// this pass. Kept intentionally terser than the hand-crafted entries above (summary/tags/
+		// security/generic responses, no invented request/response body schemas this pass didn't
+		// verify byte-for-byte) rather than leaving them undocumented entirely. Fill in real
+		// request/response schemas incrementally as each subsystem gets its own closer look. ──
+
+		"/api/v1/auth/google":   simpleGET("Google OAuth callback — human login", "auth", true),
+		"/api/v1/auth/refresh":  simplePOST("Refresh an ES256 JWT", "auth", false),
+		"/api/v1/auth/register": simplePOST("Local email/password registration (rate-limited)", "auth", true),
+		"/api/v1/jwks":          simpleGET("JWKS alias (see /.well-known/jwks.json)", "system", true),
+		"/api/v1/identities/me": simpleGET("Resolve the calling JWT's own identity (local: or Google subject)", "identity", false),
+		"/me":                   simpleGET("Web ceremony — the calling user's own identity page", "identity", false),
+		"/me/handle":            simplePOST("Set/get the calling user's own display handle", "identity", false),
+		"/honor-code/accept":    simplePOST("Record the calling user's honor-code acceptance", "identity", false),
+		"/settings":             simpleGET("User settings page (cookie session)", "identity", false),
+		"/api/v1/settings/me":   simpleGET("Caller's own settings (cookie session)", "identity", false),
+
+		// MMO backend (DragonsNShit / GoblinFoxDragon) — internal/http/handlers/mmo*.go.
+		"/api/v1/characters":    simpleGET("List/manage GFD characters", "mmo", false),
+		"/api/v1/items":         simpleGET("MMO items", "mmo", false),
+		"/api/v1/guilds":        simpleGET("MMO guilds", "mmo", false),
+		"/api/v1/world-events":  simpleGET("MMO world events", "mmo", false),
+		"/api/v1/fieldoffices":  simpleGET("TRAPX field-office district overlay", "mmo", false),
+		"/api/v1/hats":          simpleGET("WOTAN hat store catalog/inventory (see BRAWLPIT/docs/WOTAN_HAT_STORE_NORTHSTAR.md)", "mmo", false),
+		"/api/v1/players":       simpleGET("Cross-game player identity registration/dispatch", "mmo", false),
+		"/api/v1/chat/messages": simpleGET("Cross-game chat messages", "mmo", false),
+
+		// Per-game ticketing/matchmaking/leaderboards.
+		"/api/v1/redgarden/ticket":            simplePOST("REDGARDEN connect ticket", "redgarden", false),
+		"/api/v1/redgarden/player-ticket":     simplePOST("REDGARDEN player-specific connect ticket", "redgarden", false),
+		"/api/v1/redgarden/self-ticket":       simplePOST("REDGARDEN self-service connect ticket", "redgarden", false),
+		"/api/v1/redgarden/game-result":       simplePOST("REDGARDEN match result ingest", "redgarden", false),
+		"/api/v1/redgarden/leaderboard":       simpleGET("REDGARDEN leaderboard", "redgarden", true),
+		"/api/v1/redgarden/hero-result":       simplePOST("REDGARDEN per-hero result ingest", "redgarden", false),
+		"/api/v1/redgarden/hero-leaderboard":  simpleGET("REDGARDEN per-hero leaderboard", "redgarden", true),
+		"/api/v1/redgarden/live-match":        simplePOST("REDGARDEN live-match state write", "redgarden", false),
+		"/api/v1/redgarden/live-match/latest": simpleGET("REDGARDEN latest live-match state", "redgarden", true),
+		"/api/v1/racer/ticket":                simplePOST("WEAKNIGHT_BEDROCK_RACERS connect ticket", "racer", false),
+		"/api/v1/racer/queue/join":            simplePOST("Join the racer matchmaking queue", "racer", false),
+		"/api/v1/racer/queue/leave":           simplePOST("Leave the racer matchmaking queue", "racer", false),
+		"/api/v1/racer/queue/status":          simpleGET("Racer matchmaking queue status", "racer", false),
+		"/api/v1/papercraft/ticket":           simplePOST("PAPERCRAFT connect ticket", "papercraft", false),
+
+		// Platform-internal.
+		"/api/v1/tenants":                         simpleGET("Multi-tenant registry", "platform", false),
+		"/api/v1/notes":                           simpleGET("EmilyOS notes (slot-scoped)", "platform", false),
+		"/api/v1/supply/":                         simpleGET("Supply-chain vendor/PO CRUD (S136-02/03)", "platform", false),
+		"/api/v1/research/":                       simpleGET("Research cache (S137-03)", "platform", false),
+		"/api/v1/kgraph/":                         simpleGET("EINHORN INDEX knowledge-graph query (S138-06)", "platform", false),
+		"/api/v1/mailing-list/export":             simpleGET("Export the mailing-list vault (mailinglist.export)", "platform", false),
+		"/api/v1/mailing-list/settings/mailchimp": simpleGET("Per-instance Mailchimp settings (mailinglist.admin)", "platform", false),
+		"/api/v1/promptoverse/discovery":          simpleGET("Prompt-o-verse discovery feed", "platform", true),
+		"/api/v1/subscriptions/stripe":            simplePOST("Stripe billing webhook (signature-verified, not bearer)", "platform", true),
+
+		// Cookie-session admin/portal surfaces — NOT bearerAuth; a real browser cookie session
+		// via /admin/login, gated per-route by RequireCookieAuth + RequirePermission. Documented
+		// here for path completeness, not as bearer-auth API consumers would call them.
+		"/admin":                                 simpleGET("Back Office UI (cookie session, admin role)", "admin-ui", true),
+		"/admin/login":                           simplePOST("Admin cookie-session login", "admin-ui", true),
+		"/admin/logout":                          simplePOST("Admin cookie-session logout", "admin-ui", true),
+		"/admin/kanban/api/cards":                simpleGET("Kanban board cards (cookie session, iduna.admin)", "admin-ui", true),
+		"/admin/kanban/api/inbox":                simpleGET("Unfiled BACKLOG.md items bridged to the kanban board", "admin-ui", true),
+		"/portal/logout":                         simpleGET("Developer portal cookie-session logout", "admin-ui", true),
+		"/portal/logs":                           simpleGET("Unified log query UI (devportal.access + logs.read)", "admin-ui", true),
+		"/portal/search":                         simpleGET("Developer portal search", "admin-ui", true),
+		"/admin/gfd-items":                       simpleGET("GFD item-catalog admin tool", "admin-ui", true),
+		"/admin/gfd-items/api/items":             simpleGET("GFD item-catalog CRUD API", "admin-ui", true),
+		"/admin/gfd-items/api/proposals":         simpleGET("GFD Item Builder batch-propose assistant", "admin-ui", true),
+		"/admin/gfd-mob-drops":                   simpleGET("GFD mob drop-table admin tool", "admin-ui", true),
+		"/admin/gfd-mob-drops/api/tables":        simpleGET("GFD mob drop-table CRUD API", "admin-ui", true),
+		"/admin/gfd-mob-spawns":                  simpleGET("GFD mob spawn-rule admin tool", "admin-ui", true),
+		"/admin/gfd-mob-spawns/api/rules":        simpleGET("GFD mob spawn-rule CRUD API", "admin-ui", true),
+		"/admin/gfd-registration":                simpleGET("GFD player registration/waitlist admin tool", "admin-ui", true),
+		"/admin/gfd-registration/api/mode":       simpleGET("GFD registration mode toggle", "admin-ui", true),
+		"/admin/gfd-registration/api/waitlist":   simpleGET("GFD registration waitlist CRUD", "admin-ui", true),
+		"/admin/gfd-dungeon-roster":              simpleGET("GFD dungeon roster admin tool", "admin-ui", true),
+		"/admin/gfd-dungeon-roster/api/dungeons": simpleGET("GFD dungeon roster CRUD API", "admin-ui", true),
 	},
+}
+
+// simpleGET/simplePOST -- terse, real, path-complete stand-ins for the registration-catch-up
+// block above (2026-09-07 SAGA audit): a real summary + tag + generic 200/403 responses, no
+// invented request/response schema for a route this pass didn't verify byte-for-byte. `public`
+// clears the default bearerAuth security requirement for a route confirmed to have none (or to
+// use a different scheme entirely, e.g. a cookie session or a webhook signature) -- never set
+// true by default/guess.
+func simpleGET(summary, tag string, public bool) map[string]any {
+	return simpleOp("get", summary, tag, public)
+}
+
+func simplePOST(summary, tag string, public bool) map[string]any {
+	return simpleOp("post", summary, tag, public)
+}
+
+func simpleOp(method, summary, tag string, public bool) map[string]any {
+	op := map[string]any{
+		"summary": summary,
+		"tags":    []string{tag},
+		"responses": map[string]any{
+			"200": map[string]any{"description": "OK"},
+			"403": errorResponse("Forbidden"),
+		},
+	}
+	if public {
+		op["security"] = []map[string]any{}
+	}
+	return map[string]any{method: op}
 }
 
 // ── schema helpers ─────────────────────────────────────────────────────────

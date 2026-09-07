@@ -1,3 +1,11 @@
+# STALE, ORPHANED (found live, SAGA audit, 2026-09-07): this file is Swagger 2.0, last touched
+# 2026-08-26, covers 19 paths, and nothing in this repo's own Go code ever reads or serves it
+# (`grep -rn "openapi.yaml" --include=*.go .` returns nothing). The REAL, actually-served spec is
+# the Go-embedded `idunaOpenAPISpec` in internal/http/handlers/openapi.go, served live at
+# GET /api/v1/openapi.json -- that one covers ~50 of the ~128 real registered routes, still
+# incomplete but the genuine source of truth, not this file. Kept here rather than deleted since
+# some of its 19 paths' descriptions may still be useful prose to fold into the real spec later;
+# do not treat this file as authoritative for what IDUNA actually serves.
 swagger: "2.0"
 info:
   version: "1.0.0"

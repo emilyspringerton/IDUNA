@@ -32,6 +32,30 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | GET | `/admin/kanban/api/inbox` | Real, open (unchecked), not-yet-carded `EMILY/BACKLOG.md` items — the live bridge from the backlog file to the board (admin role required) |
 | GET | `/health` | Health check |
 
+**This table is a curated subset, not the full route table.** A SAGA audit (2026-09-07) found
+`main.go` registers ~128 distinct routes — this table covered roughly 20 of them, undercounting
+several whole live subsystems. Real, additional, currently-served route families not itemized
+above (see the actual `mux.Handle`/`HandleFunc` calls in `main.go` for the literal paths, and
+`internal/http/handlers/` for the handler file — this list names the subsystem, not every path,
+so it stays true without needing a line-by-line update every time a route is added):
+
+- **GFD MMO backend** (`/api/v1/characters`, `/items`, `/guilds`, `/world-events`,
+  `/fieldoffices`, `/hats`) — `internal/http/handlers/mmo*.go` (~2200 lines). Characters,
+  inventory/equipment, guilds, world events, the WOTAN hat store (see
+  `BRAWLPIT/docs/WOTAN_HAT_STORE_NORTHSTAR.md`).
+- **Per-game ticketing/queues/leaderboards** for SHANKPIT, WEAKNIGHT_BEDROCK_RACERS, REDGARDEN,
+  and PAPERCRAFT — real, live-match/ticket/queue/leaderboard routes, one handler file per game.
+- **GFD admin content tools** — `gfd-items`, `gfd-mob-drops`, `gfd-registration`,
+  `gfd-mob-spawns`, `gfd-dungeon-roster`: five real CRUD admin surfaces.
+- **Organizations/cluster trust** (`/api/v1/organizations`) — `internal/http/handlers/
+  organizations.go`, real (see `CarePyre/docs/HIPAA_COMPLIANCE_NORTHSTAR.md` for the design).
+- **White-label branding** (`GET/PUT /api/v1/branding`) — `internal/http/handlers/branding.go`.
+- **GDPR export/erasure** (`/api/v1/gdpr/`) — `internal/gdpr/`.
+- **Compliance-recording storage** (`/api/v1/compliance/recording`) — `internal/http/handlers/
+  compliance_recording.go`.
+- **Notes, supply chain, research cache, kgraph, tenants, chat messages** — `notes.go`,
+  `supply.go`, `research.go`, `kgraph.go`, `tenants.go`, `chat_messages.go`.
+
 ## Auth Model
 
 - **Humans**: Google OAuth → `user_id` → roles → JWT with `roles[]` + `permissions[]`
@@ -46,8 +70,16 @@ cmd/
   bob-agent/    — MySQL schema admin agent (destructive ops require confirm: true)
 internal/
   auth/         — JWT issuance, validation, Google OAuth flow
-  http/handlers/ — route handlers (apples, heimdal, push-tokens, intelligence, admin)
+  http/handlers/ — route handlers (apples, heimdal, push-tokens, intelligence, admin, mmo*,
+                   organizations, branding, gdpr, compliance_recording, notes, supply,
+                   research, kgraph, tenants, chat_messages, and more — see the endpoint
+                   list above for what's actually live; this directory has grown well past
+                   what a short list here could stay accurate against)
   store/        — database layer (SQLite truestore + migrations)
+  gdpr/         — GDPR export/erasure pipeline
+  blog/, vault/, tenantprovision/, honorcode/, statuspage/, backlog/ — additional real
+                   packages backing specific route families above; not exhaustively
+                   itemized here for the same reason as http/handlers/ above
 migrations/
   truestore/    — SQL migrations (timestamp-prefixed, append-only)
 config/
@@ -56,8 +88,15 @@ config/
 
 ## Database
 
-SQLite at `var/truestore.db` (default). Migrations in `migrations/truestore/` are applied in
-filename order at startup. **Never edit migration files after they've been applied — add new ones.**
+SQLite, default path controlled by `IDUNA_DB_PATH`. **Real, found-live correction (2026-09-07
+SAGA audit)**: the live, actually-used database file on this box is `var/iduna.db`, not
+`var/truestore.db` — `truestore.db` sits at a few KB, untouched since early August, while
+`iduna.db` is the real, actively-growing (20+ MB) file every handler above actually reads/writes.
+Whatever value `IDUNA_DB_PATH` is set to in this environment's own systemd unit/env file governs
+which path is real; don't assume the bare word "truestore" in a path always means the live DB.
+Migrations in `migrations/truestore/` are applied in filename order at startup against whichever
+path is actually configured. **Never edit migration files after they've been applied — add new
+ones.**
 
 ## Key Env Vars
 
