@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-07
+- SAGA audit: CLAUDE.md/openapi.yaml/openapi.go doc catch-up, 50 -> 112 real documented routes, live-verified. (sess-20260905-0720-ec33e7c5)
 - WOTAN hat store Phase 4.5: POST /api/v1/characters/:id/hats/generated (agent-only, creates+grants a generated hat in one transaction), user_generated/generated_by_character_id columns on hats. (sess-20260905-0720-ec33e7c5)
 
 - Real IDUNA_PRO tenant provisioning control plane: new tenants table + internal/tenantprovision spins up a real, separate, live IDUNA_PRO systemd service per tenant (port alloc, JWT secret, env/unit generation, health check), admin-only GET/POST /api/v1/tenants. Verified live end to end. (sess-20260905-0720-ec33e7c5)
