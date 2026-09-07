@@ -176,6 +176,19 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleGetInventory(w, r, id)
 		return
 	}
+	// GET/PUT /api/v1/characters/:id/materials (S252-00) -- apps2/mud's own simple stackable
+	// map[item_id]quantity, deliberately separate from /inventory's slot-based bag system above
+	// (see gfd_stackable_items's own migration comment for the real, checked mismatch).
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/materials") {
+		id := extractSegment(path, "/api/v1/characters/", "/materials")
+		h.handleGetMaterials(w, r, id)
+		return
+	}
+	if r.Method == http.MethodPut && strings.HasSuffix(path, "/materials") {
+		id := extractSegment(path, "/api/v1/characters/", "/materials")
+		h.handleSetMaterials(w, r, id)
+		return
+	}
 	// GET /api/v1/characters/:id/equipment
 	if r.Method == http.MethodGet && strings.HasSuffix(path, "/equipment") {
 		id := extractSegment(path, "/api/v1/characters/", "/equipment")
@@ -187,6 +200,13 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 	if r.Method == http.MethodPost && strings.HasSuffix(path, "/hats/buy") {
 		id := extractSegment(path, "/api/v1/characters/", "/hats/buy")
 		h.handleBuyHat(w, r, id)
+		return
+	}
+	// POST /api/v1/characters/:id/hats/generated (Phase 4.5, "surprise box") -- agent-only,
+	// see handleGenerateHat's own doc comment.
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/hats/generated") {
+		id := extractSegment(path, "/api/v1/characters/", "/hats/generated")
+		h.handleGenerateHat(w, r, id)
 		return
 	}
 	// PATCH /api/v1/characters/:id/hats/equip
@@ -724,6 +744,78 @@ func (h *MMOHandler) handleGetInventory(w http.ResponseWriter, r *http.Request, 
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"bags": bags, "capacity": capacity})
+}
+
+// handleGetMaterials returns a character's flat stackable-material inventory
+// (S252-00) as {"materials": {"earth-crystal": 3, ...}}. An empty/absent row
+// set is a real, valid state (a fresh character or one that's never
+// persisted yet) -- returns {} not an error.
+func (h *MMOHandler) handleGetMaterials(w http.ResponseWriter, r *http.Request, characterID string) {
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT item_id, quantity FROM gfd_stackable_items WHERE character_id=?`, characterID)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	materials := map[string]int{}
+	for rows.Next() {
+		var itemID string
+		var qty int
+		if err := rows.Scan(&itemID, &qty); err != nil {
+			continue
+		}
+		materials[itemID] = qty
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"materials": materials})
+}
+
+// handleSetMaterials replaces a character's ENTIRE stackable-material
+// inventory with the given map (S252-00's own "real, whole-map upsert" --
+// the caller always sends its full, current in-memory map.inventory, not a
+// delta). Zero-quantity entries are dropped rather than stored, so a
+// consumed-to-zero material doesn't linger as a real row forever.
+func (h *MMOHandler) handleSetMaterials(w http.ResponseWriter, r *http.Request, characterID string) {
+	var req struct {
+		Materials map[string]int `json:"materials"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(),
+		`DELETE FROM gfd_stackable_items WHERE character_id=?`, characterID,
+	); err != nil {
+		tx.Rollback()
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for itemID, qty := range req.Materials {
+		if qty <= 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(r.Context(),
+			`INSERT INTO gfd_stackable_items (character_id, item_id, quantity, updated_at) VALUES (?, ?, ?, ?)`,
+			characterID, itemID, qty, now,
+		); err != nil {
+			tx.Rollback()
+			mmoWriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 // handleGetEquipment returns all equipped slots for a character (GET /api/v1/characters/:id/equipment).

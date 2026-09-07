@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"iduna/internal/http/middleware"
 )
 
@@ -213,6 +215,90 @@ func (h *MMOHandler) handleBuyHat(w http.ResponseWriter, r *http.Request, charac
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGenerateHat: WOTAN_HAT_STORE_NORTHSTAR.md Phase 4.5 ("surprise box" -- founder
+// clarification, kanban HS-GFD-2223: "a surprise box does not need to generate the image at the
+// time of purchase, it needs to get generated when the player uses the item in GFD -- it is
+// actually like a tradable token"). This is the real, previously-missing piece that design
+// needed: a box is bought as an ordinary hat (handleBuyHat, unchanged) via a real, pre-seeded
+// catalog row for the box item itself; USING it kicks off async promptoverse generation
+// (apps2/mud's own real job, not this endpoint's concern) which, on completion, calls here to
+// insert the brand-new generated hat into the catalog AND grant it to the same character, in one
+// real transaction -- so a crash between "hat created" and "hat granted" can't happen.
+//
+// Agent-only (same real "level updates are agent-only"/"job updates are agent-only" pattern
+// mmo.go already establishes) -- a hat's own existence and cost are otherwise fully
+// operator/catalog-controlled (Phase 1's hand-curated seed); this endpoint lets a trusted
+// backend (the MUD server's own completion callback) mint a genuinely new one, which a plain
+// player JWT must never be able to do (that would be an unlimited free-hat-creation exploit).
+func (h *MMOHandler) handleGenerateHat(w http.ResponseWriter, r *http.Request, characterID string) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		mmoWriteError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if _, isAgent := claims["agent_name"]; !isAgent {
+		mmoWriteError(w, http.StatusForbidden, "hat generation is agent-only")
+		return
+	}
+
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		ImageAsset  string `json:"image_asset"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.ImageAsset == "" {
+		mmoWriteError(w, http.StatusBadRequest, "name and image_asset required")
+		return
+	}
+
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	var exists int
+	if err := tx.QueryRowContext(r.Context(), `SELECT 1 FROM characters WHERE character_id=?`, characterID).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			mmoWriteError(w, http.StatusNotFound, "character not found")
+			return
+		}
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	hatID := uuid.New().String()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// flow_cost is 0 -- Flow was already spent buying the box itself (handleBuyHat); this hat
+	// is a free grant on top, never independently purchasable from the catalog again (real,
+	// deliberate: a generated hat is a one-off reward, not a restocked catalog item).
+	if _, err := tx.ExecContext(r.Context(),
+		`INSERT INTO hats (hat_id, name, description, flow_cost, image_asset, user_generated, generated_by_character_id, created_at)
+		 VALUES (?, ?, ?, 0, ?, 1, ?, ?)`,
+		hatID, req.Name, req.Description, req.ImageAsset, characterID, now,
+	); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(),
+		`INSERT INTO character_hats (character_id, hat_id, acquired_at, equipped) VALUES (?, ?, ?, 0)`,
+		characterID, hatID, now,
+	); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, hatResponse{
+		HatID: hatID, Name: req.Name, Description: req.Description, FlowCost: 0, ImageAsset: req.ImageAsset,
+	})
 }
 
 // handleEquipHat: sets exactly one hat equipped per character (real, deliberate v0 -- no

@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -76,11 +77,14 @@ func newInventoryDB(t *testing.T) *sql.DB {
 			PRIMARY KEY (character_id, bag)
 		);
 		CREATE TABLE hats (
-			hat_id      TEXT PRIMARY KEY,
-			name        TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			flow_cost   INTEGER NOT NULL,
-			image_asset TEXT NOT NULL DEFAULT ''
+			hat_id                    TEXT PRIMARY KEY,
+			name                      TEXT NOT NULL,
+			description               TEXT NOT NULL DEFAULT '',
+			flow_cost                 INTEGER NOT NULL,
+			image_asset               TEXT NOT NULL DEFAULT '',
+			user_generated            INTEGER NOT NULL DEFAULT 0,
+			generated_by_character_id TEXT,
+			created_at                TEXT NOT NULL DEFAULT ''
 		);
 		CREATE TABLE character_hats (
 			character_id TEXT NOT NULL,
@@ -88,6 +92,13 @@ func newInventoryDB(t *testing.T) *sql.DB {
 			acquired_at  TEXT NOT NULL,
 			equipped     INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (character_id, hat_id)
+		);
+		CREATE TABLE gfd_stackable_items (
+			character_id TEXT NOT NULL,
+			item_id      TEXT NOT NULL,
+			quantity     INTEGER NOT NULL DEFAULT 0,
+			updated_at   TEXT NOT NULL DEFAULT 'now',
+			PRIMARY KEY (character_id, item_id)
 		);
 	`)
 	if err != nil {
@@ -168,6 +179,92 @@ func TestGetInventoryWithItems(t *testing.T) {
 	json.Unmarshal(resp["capacity"], &cap)
 	if cap["inventory"] != 40 {
 		t.Errorf("expected capacity 40, got %d", cap["inventory"])
+	}
+}
+
+// TestGetMaterialsEmpty -- S252-00's real starting state: a fresh character
+// with no stackable items yet returns an empty map, not an error.
+func TestGetMaterialsEmpty(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-mat-1")
+
+	h := &handlers.MMOHandler{DB: db}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/characters/char-mat-1/materials", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Materials map[string]int `json:"materials"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Materials) != 0 {
+		t.Errorf("expected empty materials map, got %+v", resp.Materials)
+	}
+}
+
+// TestSetMaterialsThenGet_Roundtrips -- the real S252-00/01 guarantee: a
+// whole-map upsert followed by a GET returns exactly what was set.
+func TestSetMaterialsThenGet_Roundtrips(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-mat-2")
+
+	h := &handlers.MMOHandler{DB: db}
+	putBody, _ := json.Marshal(map[string]any{"materials": map[string]int{"earth-crystal": 3, "worm-sinew": 1}})
+	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/characters/char-mat-2/materials", bytes.NewReader(putBody))
+	putRec := httptest.NewRecorder()
+	h.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body = %s", putRec.Code, putRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/characters/char-mat-2/materials", nil)
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	var resp struct {
+		Materials map[string]int `json:"materials"`
+	}
+	if err := json.NewDecoder(getRec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Materials["earth-crystal"] != 3 || resp.Materials["worm-sinew"] != 1 || len(resp.Materials) != 2 {
+		t.Fatalf("unexpected materials after roundtrip: %+v", resp.Materials)
+	}
+}
+
+// TestSetMaterials_ReplacesWholeMapAndDropsZeroes -- a second PUT with a
+// different map must fully replace the first (not merge), and a
+// zero-quantity entry (a fully-consumed material) must not linger as a row.
+func TestSetMaterials_ReplacesWholeMapAndDropsZeroes(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-mat-3")
+
+	h := &handlers.MMOHandler{DB: db}
+	first, _ := json.Marshal(map[string]any{"materials": map[string]int{"earth-crystal": 5}})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/api/v1/characters/char-mat-3/materials", bytes.NewReader(first)))
+
+	second, _ := json.Marshal(map[string]any{"materials": map[string]int{"worm-sinew": 2, "earth-crystal": 0}})
+	secondRec := httptest.NewRecorder()
+	h.ServeHTTP(secondRec, httptest.NewRequest(http.MethodPut, "/api/v1/characters/char-mat-3/materials", bytes.NewReader(second)))
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("second PUT status = %d, body = %s", secondRec.Code, secondRec.Body.String())
+	}
+
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/api/v1/characters/char-mat-3/materials", nil))
+	var resp struct {
+		Materials map[string]int `json:"materials"`
+	}
+	json.NewDecoder(getRec.Body).Decode(&resp)
+	if len(resp.Materials) != 1 || resp.Materials["worm-sinew"] != 2 {
+		t.Fatalf("expected only worm-sinew=2 after replace, got %+v", resp.Materials)
 	}
 }
 

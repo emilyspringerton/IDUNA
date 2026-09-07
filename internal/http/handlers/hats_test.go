@@ -323,3 +323,73 @@ func TestEquipHat_NotOwned(t *testing.T) {
 		t.Fatalf("expected 404 for equipping an unowned hat, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestGenerateHat_AgentJWTCreatesAndGrants(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-gen-1")
+
+	keys, _ := jwt.GenerateKeys()
+	h := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
+	token := makeAgentTokenWithName(t, keys, "agent-uuid-1", "DRAGONSNSHIT-MUD")
+
+	body, _ := json.Marshal(map[string]string{"name": "Pirate's Bicorne", "description": "Generated via promptoverse.", "image_asset": "https://example.com/hat.png"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/char-gen-1/hats/generated", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	hatID, _ := out["hat_id"].(string)
+	if hatID == "" {
+		t.Fatal("expected a real minted hat_id in the response")
+	}
+
+	var userGenerated, generatedBy string
+	if err := db.QueryRow(`SELECT user_generated, generated_by_character_id FROM hats WHERE hat_id = ?`, hatID).Scan(&userGenerated, &generatedBy); err != nil {
+		t.Fatalf("query hats: %v", err)
+	}
+	if userGenerated != "1" {
+		t.Errorf("expected user_generated=1, got %v", userGenerated)
+	}
+	if generatedBy != "char-gen-1" {
+		t.Errorf("expected generated_by_character_id=char-gen-1, got %v", generatedBy)
+	}
+
+	var owned int
+	db.QueryRow(`SELECT COUNT(*) FROM character_hats WHERE character_id = 'char-gen-1' AND hat_id = ?`, hatID).Scan(&owned)
+	if owned != 1 {
+		t.Errorf("expected the generated hat to be granted to the character, got %d rows", owned)
+	}
+}
+
+func TestGenerateHat_PlainPlayerJWTRejected(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-gen-2") // player_id = "player-1"
+
+	keys, _ := jwt.GenerateKeys()
+	h := middleware.RequireAuth(keys)(&handlers.MMOHandler{DB: db})
+	token := makePlayerToken(t, keys, "player-1")
+
+	body, _ := json.Marshal(map[string]string{"name": "Free Hat Exploit", "image_asset": "x"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/char-gen-2/hats/generated", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected a plain player JWT to be rejected (agent-only), got %d: %s", rec.Code, rec.Body.String())
+	}
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM hats WHERE name = 'Free Hat Exploit'`).Scan(&count)
+	if count != 0 {
+		t.Error("expected the rejected request to create no hat row at all")
+	}
+}
