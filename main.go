@@ -24,6 +24,7 @@ import (
 	"iduna/internal/promptoverse"
 	"iduna/internal/statuspage"
 	"iduna/internal/store"
+	"iduna/internal/tenantprovision"
 	"iduna/internal/tyler"
 	"iduna/internal/userlog"
 	"iduna/internal/util"
@@ -560,6 +561,15 @@ func main() {
 	mux.Handle("/api/v1/kanban/cards/", kanbanAPIProtected)
 	kanbanInboxH := &handlers.KanbanInboxHandler{DB: db, BacklogPath: backlogPath}
 	mux.Handle("/admin/kanban/api/inbox", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanInboxH)))
+
+	// IDUNA_PRO tenant provisioning control plane (docs/EMILY_FOR_BUSINESS_NORTHSTAR.md's own
+	// "control-plane model", founder real-time 2026-09-03/2026-09-07): internal IDUNA stays the
+	// backbone and gains the real capability to spin up a live, separate IDUNA_PRO instance per
+	// tenant. admin-only -- no public self-serve signup exists yet (console.okemily.com is
+	// still unbuilt), see internal/tenantprovision's own header comment for the full mechanism.
+	tenantsH := &handlers.TenantsHandler{DB: db, Cfg: tenantprovision.NewDefaultConfig(db)}
+	tenantsProtected := middleware.RequireAuth(keys)(middleware.RequirePermission("iduna.admin")(tenantsH))
+	mux.Handle("/api/v1/tenants", tenantsProtected)
 
 	// IDUNA Notebook Phase 1 (IN-000/IN-001, docs/IDUNA_NOTEBOOK_NORTHSTAR.md): plain, owner-
 	// scoped notes CRUD -- gated by ordinary RequireAuth only, no admin/kanban-style shared
