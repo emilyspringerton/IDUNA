@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-07
+
+- Real IDUNA_PRO tenant provisioning control plane: new tenants table + internal/tenantprovision spins up a real, separate, live IDUNA_PRO systemd service per tenant (port alloc, JWT secret, env/unit generation, health check), admin-only GET/POST /api/v1/tenants. Verified live end to end. (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-05 (4)
 - Restored IDUNA after home-config loss: rebuilt binary, recreated ~/.config/iduna/env with fresh JWT_SECRET (ES256 signing keys were intact), reinstalled systemd unit (sess-20260905-0720-ec33e7c5)
 
