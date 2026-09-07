@@ -188,15 +188,44 @@ func (h *KanbanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// kanbanSearchPattern turns a real, human-typed `q` query param into a SQL LIKE pattern
+// (kanban card 3454325, "kanban search (filter)"). A plain substring search box, not a real
+// LIKE-syntax exposure -- a literal `%`/`_` typed by a human must search for that literal
+// character, not silently become a wildcard, so `%`/`_`/the escape character itself are all
+// backslash-escaped (real SQL escaping, not stripping -- stripping would make "search for a
+// literal %" equivalent to an empty search, which matches everything, a real, found-live bug in
+// this function's own first draft, caught by this file's own test before it shipped). Every real
+// caller passes this alongside `ESCAPE '\'` in the query -- see list()'s own SQL below. The admin
+// UI (`/admin/kanban`) already has its own real, instant, client-side quick-filter (IDUXN-003)
+// over already-loaded cards -- this is the separate, real gap that filter doesn't cover: the
+// bearer-token API/CLI surface (`emily kanban list`) an agent uses, which had no search of any
+// kind before this.
+func kanbanSearchPattern(q string) string {
+	escaped := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(q)
+	return "%" + escaped + "%"
+}
+
 func (h *KanbanHandler) list(w http.ResponseWriter, r *http.Request) {
 	queue := r.URL.Query().Get("queue")
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	boardID, err := kanbanBoardIDFromQuery(r)
 	if err != nil {
 		http.Error(w, "board_id must be a real integer", http.StatusBadRequest)
 		return
 	}
 	var rows *sql.Rows
-	if queue != "" {
+	switch {
+	case queue != "" && q != "":
+		if !validKanbanQueues[queue] {
+			http.Error(w, "queue must be one of: backlog, priority, cruise", http.StatusBadRequest)
+			return
+		}
+		pattern := kanbanSearchPattern(q)
+		rows, err = h.DB.QueryContext(r.Context(),
+			`SELECT id, backlog_item_id, title, queue, position, board_id, created_at, updated_at
+			 FROM kanban_cards WHERE queue = ? AND board_id = ? AND (title LIKE ? ESCAPE '\' OR backlog_item_id LIKE ? ESCAPE '\')
+			 ORDER BY position ASC, id ASC`, queue, boardID, pattern, pattern)
+	case queue != "":
 		if !validKanbanQueues[queue] {
 			http.Error(w, "queue must be one of: backlog, priority, cruise", http.StatusBadRequest)
 			return
@@ -204,7 +233,13 @@ func (h *KanbanHandler) list(w http.ResponseWriter, r *http.Request) {
 		rows, err = h.DB.QueryContext(r.Context(),
 			`SELECT id, backlog_item_id, title, queue, position, board_id, created_at, updated_at
 			 FROM kanban_cards WHERE queue = ? AND board_id = ? ORDER BY position ASC, id ASC`, queue, boardID)
-	} else {
+	case q != "":
+		pattern := kanbanSearchPattern(q)
+		rows, err = h.DB.QueryContext(r.Context(),
+			`SELECT id, backlog_item_id, title, queue, position, board_id, created_at, updated_at
+			 FROM kanban_cards WHERE board_id = ? AND (title LIKE ? ESCAPE '\' OR backlog_item_id LIKE ? ESCAPE '\')
+			 ORDER BY queue ASC, position ASC, id ASC`, boardID, pattern, pattern)
+	default:
 		rows, err = h.DB.QueryContext(r.Context(),
 			`SELECT id, backlog_item_id, title, queue, position, board_id, created_at, updated_at
 			 FROM kanban_cards WHERE board_id = ? ORDER BY queue ASC, position ASC, id ASC`, boardID)

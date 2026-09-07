@@ -277,6 +277,79 @@ func TestKanban_QueueFilterScopesList(t *testing.T) {
 	}
 }
 
+// listKanbanCardsRaw -- like listKanbanCards, but takes the raw query string so tests can
+// exercise `q=` (and `queue=`+`q=` combined) without a second, parallel helper signature.
+func listKanbanCardsRaw(t *testing.T, h http.Handler, token, rawQuery string) []kanbanCardOut {
+	t.Helper()
+	url := "/api/v1/kanban/cards"
+	if rawQuery != "" {
+		url += "?" + rawQuery
+	}
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out []kanbanCardOut
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	return out
+}
+
+// TestKanban_SearchFiltersByTitleAndBacklogID -- kanban card 3454325 ("kanban search
+// (filter)"): the bearer-token API/CLI surface (emily kanban list) had no search of any kind
+// before this -- distinct from the admin web UI's own already-existing client-side quick-filter
+// (IDUXN-003), which never touched this handler at all.
+func TestKanban_SearchFiltersByTitleAndBacklogID(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := kanbanHandlerWithAuth(keys, db)
+
+	postKanbanCard(t, h, token, "S202-27", "Body blocking physics fix", "priority")
+	postKanbanCard(t, h, token, "S202-28", "Ant hero rig", "cruise")
+	postKanbanCard(t, h, token, "GFD-SYNC", "sync Shadow Step rework", "backlog")
+
+	// Match by title substring, case-sensitive is fine here (SQLite's own LIKE is
+	// case-insensitive for ASCII by default, confirmed by this exact assertion).
+	byTitle := listKanbanCardsRaw(t, h, token, "q=blocking")
+	if len(byTitle) != 1 || byTitle[0].BacklogItemID != "S202-27" {
+		t.Fatalf("want 1 card matching 'blocking' (S202-27), got %+v", byTitle)
+	}
+
+	// Match by backlog_item_id substring.
+	byID := listKanbanCardsRaw(t, h, token, "q=GFD-SYNC")
+	if len(byID) != 1 || byID[0].BacklogItemID != "GFD-SYNC" {
+		t.Fatalf("want 1 card matching backlog id 'GFD-SYNC', got %+v", byID)
+	}
+
+	// q combined with queue narrows both ways at once.
+	combined := listKanbanCardsRaw(t, h, token, "queue=cruise&q=ant")
+	if len(combined) != 1 || combined[0].BacklogItemID != "S202-28" {
+		t.Fatalf("want 1 cruise card matching 'ant' (S202-28), got %+v", combined)
+	}
+	noMatchInWrongQueue := listKanbanCardsRaw(t, h, token, "queue=priority&q=ant")
+	if len(noMatchInWrongQueue) != 0 {
+		t.Fatalf("want 0 cards -- 'ant' matches S202-28, which is in cruise, not priority; got %+v", noMatchInWrongQueue)
+	}
+
+	// A literal '%' typed by a human must search for that literal character, not become a
+	// SQL LIKE wildcard -- kanbanSearchPattern's own real, deliberate escaping.
+	noWildcardAbuse := listKanbanCardsRaw(t, h, token, "q=%25")
+	if len(noWildcardAbuse) != 0 {
+		t.Fatalf("want 0 cards for a literal '%%' with no real match, got %+v", noWildcardAbuse)
+	}
+
+	// No q at all still returns everything, unchanged from before this feature existed.
+	all := listKanbanCardsRaw(t, h, token, "")
+	if len(all) != 3 {
+		t.Fatalf("want all 3 cards with no filter, got %d: %+v", len(all), all)
+	}
+}
+
 // TestKanban_BoardIDScopesListAndCreate -- MULTIKANBAN-000 Phase 1 (full scoping in
 // docs/MULTI_KANBAN_NORTHSTAR.md): a card created on a real, second board (board_id=2, no
 // backlog_path -- self-contained, no git-file to sync) is invisible to board 1's own default
