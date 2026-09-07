@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-07
+- Real substring search (?q=) on GET /api/v1/kanban/cards, combinable with ?queue= -- the bearer-token API/CLI surface's own gap the admin UI's client-side quick-filter never covered. (sess-20260905-0720-ec33e7c5)
 - SAGA audit: CLAUDE.md/openapi.yaml/openapi.go doc catch-up, 50 -> 112 real documented routes, live-verified. (sess-20260905-0720-ec33e7c5)
 - WOTAN hat store Phase 4.5: POST /api/v1/characters/:id/hats/generated (agent-only, creates+grants a generated hat in one transaction), user_generated/generated_by_character_id columns on hats. (sess-20260905-0720-ec33e7c5)
 
