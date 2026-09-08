@@ -44,8 +44,14 @@ StandardError=journal
 # files are created owner rw, group r, other nothing -- SQLite's own DB/-wal/-shm files included.
 UMask=0027
 
-# Resource limits
-MemoryMax=256M
+# Resource limits. MemoryMax bumped 256M -> 512M, 2026-09-08: found live, mid-PII-audit
+# (unrelated to that work) -- journalctl showed real, recurring OOM-kills against the 256M
+# ceiling starting well before this session's own restarts (first at 18:16 UTC), then
+# compounding when this session's own heavy Apple-filing activity triggered frequent
+# apples-git sync subprocesses. Host has 9GB+ available (checked via `free -h`), so this is a
+# safe, immediate stopgap -- the actual root cause of the memory growth (a specific handler? the
+# apples-git sync path itself?) is a real, separate, NOT diagnosed-here investigation.
+MemoryMax=512M
 TasksMax=64
 
 [Install]
