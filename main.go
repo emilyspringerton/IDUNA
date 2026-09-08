@@ -432,19 +432,14 @@ func main() {
 	mux.Handle("/api/v1/mailing-list/settings/mailchimp", mailingListSettingsProtected)
 	disH.Register(mux)
 
-	// CarePyre contact form — carepyre.org's "Contact Us", public + rate-limited
-	// same as mailing-list subscribe, no auth (visitor has no IDUNA identity).
-	// Founder real-time, 2026-08-10: dump the contact form into IDUNA instead
-	// of a mailto: link.
-	carepyreContactH := &handlers.CarePyreContactHandler{
-		DB: db,
-		AllowOrigin: []string{
-			"https://carepyre.org",
-			"https://www.carepyre.org",
-		},
-		Limiter: middleware.NewIPRateLimiter(5),
-	}
-	carepyreContactH.Register(mux)
+	// CarePyre contact form — MOVED to IDUNA_PRO, founder real-time 2026-09-08: "move the
+	// contact form to idunapro" (a PII-handling audit found this data belongs in the same
+	// service/DB as CarePyre's own tiered RBAC and GDPR pipeline, not gated by IDUNA's much
+	// broader, catch-all iduna.admin population). See IDUNA_PRO/internal/http/handlers/
+	// carepyre_contact.go. The old table (migrations/truestore/202608100001_
+	// carepyre_contact_submissions.sql) is left in place, frozen, as a read-only historical
+	// backup — its rows were copied forward via IDUNA_PRO/scripts/
+	// migrate-carepyre-contacts-from-iduna.sh, not deleted.
 
 	// Vault — every endpoint loopback-gated inside the handler itself, same
 	// convention as mailing-list unlock/init (see VaultHandler doc comment).
