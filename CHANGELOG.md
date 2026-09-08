@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-08
+
+- PII audit: CarePyre contact form decommissioned here — moved to IDUNA_PRO (own tiered RBAC, GDPR pipeline, real retention policy) instead of gated by the broad, catch-all iduna.admin population. Old table left in place, frozen, as a read-only historical backup; its rows were migrated forward, not deleted. var/*.db file permissions fixed from 674 (world-readable) to 640; iduna.service gets UMask=0027 so newly-created files don't regress. (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-07
 - Real substring search (?q=) on GET /api/v1/kanban/cards, combinable with ?queue= -- the bearer-token API/CLI surface's own gap the admin UI's client-side quick-filter never covered. (sess-20260905-0720-ec33e7c5)
 - SAGA audit: CLAUDE.md/openapi.yaml/openapi.go doc catch-up, 50 -> 112 real documented routes, live-verified. (sess-20260905-0720-ec33e7c5)
