@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-09-11
+- docs: Emily For Business pitch sharpens -- "the rails for 2026 agents is an api that allows you to create apis." Real, spec-only update to `docs/EMILY_FOR_BUSINESS_NORTHSTAR.md`: names IDUNA_PRO's own multi-tenancy gap as the literal Phase 0 this pitch depends on (see IDUNA_PRO's own new NORTHSTAR), names 3 real, existing options for "an API that creates APIs" without choosing between them (hand-written Go, the already-shipped LO/PARENA Rails-like framework, a Terraform-like declarative config), and states an explicit, load-bearing scope boundary: not an LLM/agent-hosting product, purely the IAM+API substrate an agent targets. Cross-links a new sibling doc for the frontend half (EMILY_FOR_BUSINESS/docs/UNIVERSAL_UI_NORTHSTAR.md). No code. (sess-20260905-0720-ec33e7c5)
+
 ## 2026-09-08
 - Stabilize iduna.service: bumped MemoryMax 256M->512M as a stopgap after journalctl showed real, recurring OOM-kills (started before this session's own changes, compounded by heavy Apple-filing traffic triggering frequent apples-git sync subprocesses); root cause of the memory growth not diagnosed here, this only stops the crash loop (sess-20260905-0720-ec33e7c5)
 

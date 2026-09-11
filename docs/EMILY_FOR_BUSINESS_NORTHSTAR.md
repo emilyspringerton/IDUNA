@@ -382,3 +382,132 @@ permission) created/listed/moved a card to Done through `/api/v1/kanban/cards`; 
 real cookie session (`/admin/login`) loaded the real `/admin/kanban` board page and created a
 card through `/admin/kanban/api/cards` — the exact same `KanbanHandler` instance serving both a
 human and an agent caller. `IDUNA_PRO` commit `31cfb54`.
+
+## The pitch sharpens: "the Rails for 2026 agents is an API that lets you create APIs"
+(2026-09-11, founder real-time, blue-sky thread — spec-only, no code in this section)
+
+Founder, real-time, preserved close to verbatim across several messages: "the way claude builds
+apps when I have the IDUNA pro system already is it just builds APIs onto IDUNA PRO and then it
+builds a front end to consume those services... so I think the rails for 2026 agents is an api
+that allows you to create apis... think about it iduna pro already has IAM so once you have IAM
+what do you need? APIs... emily for business is the multiplatform idunapro that lets you just
+vibe code your own login and apis like wtf thats easy... but we dont do the llm side we are just
+the api for claude to use."
+
+**The real reframe, stated precisely**: this section does not introduce a new product idea — it
+sharpens the SAME "Emily for Business" pitch this document has scoped since 2026-09-03 into a
+much more concrete, checked-against-how-work-actually-happens-in-this-monorepo shape. Every real
+app built in this whole session (`KARAMBIT`, `SPIDERBEETLE`, `CarePyre`'s own Community Tools,
+`WOTAN`) follows the identical real pattern: an agent (this session, concretely) builds a thin
+layer of new API surface, then a frontend that consumes it. The IAM/auth/RBAC/audit-trail part —
+the part that's genuinely hard to get right and genuinely dangerous to get wrong — is either
+built from scratch each time (real, repeated, avoidable work) or, when the app already sits on
+IDUNA/IDUNA_PRO, is simply inherited for free. **Emily for Business's real value proposition,
+stated as sharply as the founder just stated it: once IAM is solved, what's left to build a real
+product is APIs — so the product IS the thing that makes an agent (human-directed or
+autonomous) able to stand up new, safely-tenant-isolated APIs against already-solved IAM as fast
+as it can currently write a Go handler function.** "Vibe code your own login and APIs" names the
+real experience this is chasing: a customer (or their own coding agent) should never write
+another `POST /auth/login` handler again, and adding a new API endpoint should feel as
+lightweight as it currently does inside this very monorepo when a new IDUNA_PRO handler gets
+added to an already-running service — because that IS the mechanism, offered outward instead of
+kept internal.
+
+**Real, explicit, load-bearing scope boundary, stated directly because it's easy to smuggle scope
+creep past**: "but we dont do the llm side we are just the api for claude to use." Emily for
+Business is not an agent runtime, not an LLM hosting product, not a Claude-Code-as-a-service
+offering, and does not compete with Anthropic/OpenAI/etc. on model access. It is the
+**substrate** an agent (Claude, specifically, but the interface doesn't care which agent) targets
+when the agent itself — running wherever it already runs, under whatever arrangement its own
+user already has — needs to add real backend capability to something it's building. This
+resolves a real, latent scope-ambiguity risk before it could quietly expand this document's own
+mission into "build a second Bedrock/Vertex" — named here explicitly so it doesn't recur.
+
+**Why this REQUIRES `IDUNA_PRO/docs/MULTI_TENANCY_NORTHSTAR.md`'s own Phase 1-4 first, not
+eventually.** Checked directly, same real audit that produced that document: `IDUNA_PRO` today is
+"just a fork of IDUNA for CarePyre" (founder's own words) — one process, one SQLite file, ten
+files with `carepyre`/`CarePyre` hardcoded by name. "An agent vibe-codes a new API in ten
+seconds" is structurally incompatible with "provision a whole new OS process/port/systemd unit
+per customer" (this document's own 2026-09-03 "IDUNA_PRO v0" extraction section scoped exactly
+that DB-per-install model, which remains real and correct for a small number of dedicated/
+high-isolation customers — CarePyre itself is a plausible permanent resident there). Real,
+row-level, single-process, multi-tenant isolation is the actual Phase 0 this whole pitch depends
+on; see that document for the concrete plan.
+
+**What "an API that lets you create APIs" concretely could look like — real, existing options
+named, not invented from nothing, none chosen between here.** This monorepo already has more than
+one real precedent for "define an API declaratively/generatively, get a working backend," each
+with a real, different tradeoff:
+
+1. **An agent (Claude) just writes ordinary Go handlers directly against `IDUNA_PRO`'s own
+   multi-tenant primitives** (once they exist) — the simplest, most flexible, least "platform-y"
+   option: no new DSL, no new compiler, the agent's own existing code-writing capability IS the
+   interface. Real cost: every new API is bespoke Go source in (or alongside) `IDUNA_PRO` itself,
+   with all the usual risks of an agent editing a shared, multi-tenant codebase directly (a bad
+   edit for tenant A's feature could, in principle, affect tenant B — this is EXACTLY why the
+   `MULTI_TENANCY_NORTHSTAR.md` enforcement mechanism has to be structural, not a matter of an
+   agent "remembering" to scope every query correctly).
+2. **The already-real LO/PARENA "Rails-like framework"** (`LO/FRAMEWORK_NORTHSTAR.md`,
+   `PARENA/stdlib/http/{router,routes,controller}.prn`, `PARENA/stdlib/log/{event,jsonl,
+   projector}.prn` — routing, event-sourced models with SQL projectors, and controller dispatch
+   are all real, shipped, and tested today, dogfooded via `SHITHUB`) is a real, working, MUCH
+   more constrained way to define a new API: declare routes/resources, write PARENA
+   `defn`/`defstruct` models and controllers, get a real HTTP-serving backend out. Real,
+   honest, current limits (see that document): dispatch can't be generic yet (PARENA's own `fn`
+   values are non-capturing/file-scope-only), so every app still hand-writes its own dispatch
+   chain; SQL projection uses shell-escaped string concatenation, not real parameterized queries
+   (a named, unresolved security follow-up in that document already). Real, open question for
+   whoever picks this up: does an `IDUNA_PRO`-hosted API generated this way run AS a PARENA
+   program calling out to `IDUNA_PRO` for IAM (matching `SPIDERBEETLE`/`KARAMBIT`'s own
+   established "PARENA owns decision logic, native host owns I/O" split), or does it need
+   `BURROW`'s own Go-native emission target instead (the same real reason this document's own
+   "Extensibility" section above already concluded PARENA mods for `IDUNA_PRO` need `BURROW`, not
+   `parena`'s C target, since `IDUNA_PRO`'s own host is Go)? Not resolved here — named as the
+   single most important open technical question connecting this section to the LO/PARENA work.
+3. **A real, declarative config format** (the founder's own "it may be weird to define APIs via a
+   platform... we could support terraform yaknow like we dont care what this ends up looking
+   like") — a YAML/HCL-shaped description of routes, models, and permission rules, interpreted by
+   `IDUNA_PRO` itself at runtime (no compile step at all) rather than generating source code in
+   any language. Real, honest tradeoff versus options 1-2: maximally safe (no arbitrary code
+   execution, trivially reviewable, trivially tenant-scoped by construction since the interpreter
+   itself enforces isolation) but real, correspondingly LESS expressive — genuinely custom
+   business logic beyond CRUD-plus-simple-rules would hit a real ceiling this format can't
+   express, the same real ceiling every declarative low-code platform eventually hits.
+
+**The founder's own framing is explicit that this is deliberately unresolved**: "this is an
+exercise in paving the cow paths" and "we dont care what this ends up looking like" — per
+`EMILY/docs/THE_EMILY_WAY.md` Principle 18, the real answer gets found by continuing to build
+real apps on `IDUNA_PRO` (Community Tools, KARAMBIT-style thin API layers, `SHITHUB` itself) and
+noticing which of options 1-3 above (or some future fourth option) the work keeps naturally
+reaching for — not by picking one in the abstract now, before `MULTI_TENANCY_NORTHSTAR.md`'s own
+Phase 1 even exists to build any of them against.
+
+**The frontend half of the same pitch — real, separate, own document.** The founder's own next
+move in the same thread: "what does the frontend look like? we need a super abstract language for
+affordances like a BA would write a user can do this... we can have an android interface or we
+can have a ratatui terminal interface for the same apis... like react native but even more
+abstract." This is real, substantial, and genuinely novel enough (not a refinement of an existing
+scoped idea the way the backend side above is) to warrant its own document rather than a
+subsection here: see `EMILY_FOR_BUSINESS/docs/UNIVERSAL_UI_NORTHSTAR.md`.
+
+## Updated real, honest bottom line (2026-09-11)
+
+The "what's real today" and "what a real pitch needs" sections above (2026-09-03) still stand
+without correction. What's new: the multi-tenancy gap named there as item 1 is no longer just
+"the architecture needs to support this eventually" — it is now understood as the single, literal
+Phase 0 blocking everything else this document has since scoped (the `IDUNA_PRO` extraction, the
+extensibility hooks, and now the "vibe code your own APIs" pitch above), with its own concrete,
+sequenced engineering plan in `IDUNA_PRO/docs/MULTI_TENANCY_NORTHSTAR.md`. Nothing in this
+document is built differently than before this session — this is still a spec-only pass; the real
+next engineering step for the whole platform is that document's own Phase 1.
+
+## Related (updated)
+
+- `IDUNA_PRO/docs/MULTI_TENANCY_NORTHSTAR.md` — the concrete, sequenced plan to close the
+  multi-tenancy gap this document's own 2026-09-03 section first named and this section now
+  treats as Phase 0.
+- `EMILY_FOR_BUSINESS/docs/UNIVERSAL_UI_NORTHSTAR.md` — the frontend half of the platform pitch:
+  an abstract, UI-technology-agnostic affordance language with per-platform adapters.
+- `LO/FRAMEWORK_NORTHSTAR.md` — the real, already-shipped Rails-like PARENA/LO framework, one
+  concrete (not the only) candidate for "an API that lets you create APIs," dogfooded via
+  `SHITHUB`.
