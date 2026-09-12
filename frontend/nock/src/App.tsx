@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type Project } from './api'
+import { api, generateProcedural, type Project } from './api'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -90,6 +90,115 @@ function GradientForm({ project, onChanged }: { project: string; onChanged: () =
       </select>
       <button type="submit">Add gradient layer</button>
     </form>
+  )
+}
+
+function ProceduralTextureForm({ project, onChanged }: { project: string; onChanged: (newLayerName?: string) => void }) {
+  const [name, setName] = useState('procedural')
+  const [prompt, setPrompt] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [failedSource, setFailedSource] = useState<string | null>(null)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    setFailedSource(null)
+    try {
+      const result = await generateProcedural(project, name, prompt)
+      if (result.ok) {
+        onChanged(name)
+        setPrompt('')
+      } else {
+        setError(result.error)
+        setFailedSource(result.source)
+      }
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="procedural-form" onSubmit={submit}>
+      <h3>Generate procedural texture (PARENA + Vertex AI)</h3>
+      <input placeholder="layer name" value={name} onChange={(e) => setName(e.target.value)} />
+      <textarea
+        placeholder="describe the texture, e.g. 'a weathered brick wall' or 'cracked desert mud'"
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows={2}
+      />
+      <button type="submit" disabled={!prompt || busy}>
+        {busy ? 'Generating…' : 'Generate'}
+      </button>
+      {error && (
+        <div className="error">
+          <p>{error}</p>
+          {failedSource && (
+            <p className="hint">
+              The model's own generated source didn't validate or compile -- open it from the layer panel
+              after adding it by hand via the CLI (`nock proc-add`) if you want to fix it up, or just try
+              generating again.
+            </p>
+          )}
+        </div>
+      )}
+      <p className="hint">
+        Compiles to PARENA's Java target (never C) specifically so generated code can't inject raw system
+        calls -- see docs/NOCK_NORTHSTAR.md. A model sometimes writes source that doesn't compile in this
+        restricted language subset; that's a real, expected outcome, not a bug.
+      </p>
+    </form>
+  )
+}
+
+function ProceduralSourceEditor({
+  project,
+  layerName,
+  onChanged,
+}: {
+  project: string
+  layerName: string
+  onChanged: () => void
+}) {
+  const [source, setSource] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setSource(null)
+    setError(null)
+    api.getProceduralSource(project, layerName).then((r) => setSource(r.source))
+  }, [project, layerName])
+
+  if (source === null) return <p className="hint">Loading source…</p>
+
+  const rerun = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.regenerateProcedural(project, layerName, source)
+      onChanged()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="procedural-editor">
+      <h3>Generating source: {layerName}.prn</h3>
+      <textarea className="source-textarea" value={source} onChange={(e) => setSource(e.target.value)} rows={12} spellCheck={false} />
+      <button onClick={rerun} disabled={busy}>
+        {busy ? 'Re-running…' : 'Re-run'}
+      </button>
+      {error && <p className="error">{error}</p>}
+      <p className="hint">Editing here doesn't save until you hit Re-run -- a failed re-run leaves the layer's current render untouched.</p>
+    </div>
   )
 }
 
@@ -273,6 +382,8 @@ function ProjectEditor({ name, onDeleted }: { name: string; onDeleted: () => voi
 
   if (!project) return <p>Loading…</p>
 
+  const selectedLayerObj = project.layers.find((l) => l.name === selectedLayer)
+
   return (
     <div className="project-editor">
       <div className="project-header">
@@ -330,7 +441,17 @@ function ProjectEditor({ name, onDeleted }: { name: string; onDeleted: () => voi
 
           <AddLayerForm project={project.name} onChanged={refresh} />
           <GradientForm project={project.name} onChanged={refresh} />
+          <ProceduralTextureForm
+            project={project.name}
+            onChanged={(newLayerName) => {
+              refresh()
+              if (newLayerName) setSelectedLayer(newLayerName)
+            }}
+          />
 
+          {selectedLayer && selectedLayerObj?.source && (
+            <ProceduralSourceEditor project={project.name} layerName={selectedLayer} onChanged={refresh} />
+          )}
           {selectedLayer && (
             <LayerEffectsPanel project={project.name} layerName={selectedLayer} onChanged={refresh} />
           )}

@@ -94,6 +94,85 @@ real, named future follow-up, not built in this pass.
 - Drag-and-drop layer reordering (up/down buttons only).
 - Undo/redo of any kind.
 
+## Procedural texture generation via PARENA + Vertex AI (same day, second real slice)
+
+Founder real-time, direct continuation: "can we build that into nock tools... like an api for
+generating procedurally generated textures? like written in parena maybe so if you had an llm
+and you gave it the api and told it you need a texture for X it could just one shot something...
+you can save the texture as a file and also as the source code (think GENERA OS)." Then, mid-
+build, a real security concern raised and worth its own callout: "we can farm the parena to
+texture generation off to the backend? that sounds unsafe i dunno lol maybe it needs to be done
+on the frontend i dunno" -- then, after a real investigation surfaced the actual mechanism (below),
+the founder's own follow-up landed on the real fix: "we could write it in BURROW the go emitter -
+or we can run it on our JAVA server" / "yea run it in JAVA?"
+
+**The real safety problem, checked directly, not assumed:** PARENA's C emitter's `#target`/
+`inline-c` escape hatch is completely unrestricted -- any `.prn` file, LLM-authored or not, can
+embed raw C, and `src/emit.c`'s own comment says that string "is trusted verbatim as real C." An
+LLM-generated texture program compiled to C would have been a genuine, unsandboxed arbitrary-
+code-execution vector. "Do it on the frontend" doesn't actually fix this either -- a browser
+can't execute compiled native code at all; the real safe version of that idea is a WASM target,
+which PARENA doesn't have yet (on the roadmap per `PARENA/CLAUDE.md`, not built).
+
+**The real fix, following the founder's own suggestion:** compile to PARENA's Java target
+instead. Checked directly: `src/emit_java.c` has zero handling for `#target`/inline-anything at
+all -- the escape hatch simply isn't wired up for this target. Combined with this target's own
+real, current construct support being narrow (scalar `F64` math, `if`/`not`, and the `math/*`
+primitives genuinely lowered straight to `java.lang.Math.*` -- confirmed via `MATH_PRIM_TABLE` in
+`emit_java.c`, real for `cos`/`sqrt`/`floor`/`log`/`random-f64`/`pi`, unlike the C target where
+those same functions are still honest `0.0` placeholders in `stdlib/math/math.prn`), a compiled
+texture program is provably a pure function: no `defstruct`/`loop`/`match`/`import`-of-io-or-net
+support on this target means it cannot open a file, make a network call, or spawn a process,
+because the language surface available here has no way to express any of those. Running that
+inside a real JVM (memory-safe, bytecode-verified) with a capped heap (`-Xmx128m`) and a hard
+wall-clock timeout on every subprocess is the same real mitigation class actual run-untrusted-
+code services (competitive-programming judges, CI runners for fork PRs) already use for this
+exact shape of problem. `internal/nock/procgen.go`'s own header comment has the full real
+argument; `validateProcTextureSource` is a second, independent static layer on top (rejects
+`#target` and any non-`math` import outright, regardless of what the emitter does or doesn't
+support) rather than relying on the emitter alone.
+
+**Real contract a program (LLM- or human-written) must satisfy:**
+```clojure
+(module gentexture)
+(import math)
+(defn pixel-r [(x : F64) (y : F64) (w : F64) (h : F64)] : F64 ...)
+(defn pixel-g [(x : F64) (y : F64) (w : F64) (h : F64)] : F64 ...)
+(defn pixel-b [(x : F64) (y : F64) (w : F64) (h : F64)] : F64 ...)
+```
+No `let`/`loop`/`match`/`defstruct` (this target's own real construct support doesn't have them),
+no import besides `math`, no `#target`. A checked-in, trusted, never-generated `Main.java`
+harness (the *only* code in this pipeline with real file I/O) calls the three functions once per
+pixel and writes a PPM, which `internal/nock`'s existing `convert` wrapper turns into a real PNG
+NOCK already knows how to treat as a layer.
+
+**Real, working, tested (11 new tests in `internal/nock/procgen_test.go` +
+`gen_vertex_test.go`, 2 more in `internal/http/handlers/nock_test.go`):** `Service.
+AddProceduralLayer`/`RegenerateProceduralLayer`/`GetProceduralSource` (the "tweak the code and
+re-run" loop -- a failed re-run leaves the layer's existing render and source completely
+untouched); `cmd/nock proc-add`/`proc-edit`/`proc-show`; HTTP `POST .../procedural` (manual
+source), `GET`/`PATCH .../layers/{name}/procedural` (fetch/regenerate), and `POST .../generate`
+(the real Vertex AI one-shot path -- `internal/nock/gen_vertex.go`, same real ADC-credential/
+project/region pattern `gfd_item_proposals.go` already uses); a real GUI panel (prompt + generate
+button, an editable source textarea + Re-run for an existing procedural layer). A real, live,
+manually-verified end-to-end run (PARENA source -> `parena build -o X.java` -> `javac` -> `java`
+-> real PPM -> real PNG) produced a correct checkerboard-style pattern from real `Math.cos`/
+`Math.sqrt` calls. The Vertex AI call itself is NOT live-tested in this session (no active
+`gcloud` account in this sandbox) -- `TestGenerateProceduralTextureSource_RealVertexCall` skips
+honestly rather than faking a pass, same real precedent `gfd_item_proposals_test.go` already set.
+
+**Real, honest, not done:** non-destructive/layered procedural generation (a regenerate replaces
+the layer's own render outright); no seed/variation parameter in the contract (a program that
+wants variety calls `(math/random-f64)` itself, so re-renders of the same source aren't
+guaranteed pixel-identical -- a real, accepted tradeoff, not a bug); BURROW (Go emitter) as a
+possible third target was floated by the founder and not pursued this pass, since the Java path
+already closed the real safety gap and BURROW's own current capability is narrower still (per
+`LO/NORTHSTAR.md`'s own capability audit: scalar+flat-struct only) -- a real, live comparison is
+separate future work if the Java path's own real limits (no local bindings at all makes complex
+patterns visually deep) turn out to matter in practice; no resource quota/rate-limiting on the
+Vertex endpoint (a real, separate hardening item for whenever this is opened up beyond the
+current `iduna.admin`-gated audience).
+
 ## Explicitly out of scope for this pass (real future phases, not forgotten)
 
 1. **PARENA as the backend.** Founder: "we build it into the PARENA EDITOR PE new command line

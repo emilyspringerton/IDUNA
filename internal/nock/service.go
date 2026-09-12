@@ -73,7 +73,126 @@ func (s *Service) AddGradientLayer(projectName, layerName, fromHex, toHex, direc
 	return p, nil
 }
 
-// RemoveLayer deletes a layer (and its mask file, if any) from a project.
+// AddProceduralLayer compiles and runs prnSource (see procgen.go's own header comment for the
+// real contract and the real, checked reasoning it's compiled to Java, never C) and adds the
+// result as a new top layer, keeping the generating source alongside the rendered PNG ("think
+// GENERA OS" -- the founder's own framing) so it can be re-opened and tweaked later via
+// RegenerateProceduralLayer.
+func (s *Service) AddProceduralLayer(projectName, layerName, prnSource string) (*Project, error) {
+	if err := ValidateName(layerName); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	p, err := s.loadManifest(projectName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.findLayer(p, layerName); err == nil {
+		return nil, fmt.Errorf("nock: layer %q already exists in project %q", layerName, projectName)
+	}
+
+	relFile := filepath.Join("layers", layerName+".png")
+	absFile, err := s.layerAbsPath(projectName, relFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := renderProcTexture(prnSource, p.Width, p.Height, absFile); err != nil {
+		return nil, err
+	}
+
+	relSource := filepath.Join("layers", layerName+".prn")
+	absSource, err := s.layerAbsPath(projectName, relSource)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(absSource, []byte(prnSource), 0o644); err != nil {
+		return nil, fmt.Errorf("nock: save generating source: %w", err)
+	}
+
+	p.Layers = append(p.Layers, Layer{Name: layerName, File: relFile, Opacity: 100, Visible: true, Source: relSource})
+	if err := s.saveManifest(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// RegenerateProceduralLayer re-runs a procedural layer with edited source, replacing both its
+// rendered PNG and its saved source in place (same layer, same position in the stack, opacity/
+// visibility/mask untouched) -- the founder's own "tweak the generated PARENA code and re-run"
+// loop. Errors (a compile failure, a validation rejection) leave the layer's existing render and
+// source completely untouched, so a bad edit never destroys a previously-working texture.
+func (s *Service) RegenerateProceduralLayer(projectName, layerName, prnSource string) (*Project, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	p, err := s.loadManifest(projectName)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := s.findLayer(p, layerName)
+	if err != nil {
+		return nil, err
+	}
+	if p.Layers[idx].Source == "" {
+		return nil, fmt.Errorf("nock: layer %q has no generating source to regenerate from (it wasn't created procedurally)", layerName)
+	}
+
+	absFile, err := s.layerAbsPath(projectName, p.Layers[idx].File)
+	if err != nil {
+		return nil, err
+	}
+	// Render to a scratch path first -- only overwrite the real layer file once rendering has
+	// actually succeeded, so a bad edit can't leave a partially-written or missing layer image.
+	scratchFile := absFile + ".regen-tmp"
+	if err := renderProcTexture(prnSource, p.Width, p.Height, scratchFile); err != nil {
+		os.Remove(scratchFile)
+		return nil, err
+	}
+	if err := os.Rename(scratchFile, absFile); err != nil {
+		os.Remove(scratchFile)
+		return nil, fmt.Errorf("nock: finalize regenerated layer: %w", err)
+	}
+
+	absSource, err := s.layerAbsPath(projectName, p.Layers[idx].Source)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(absSource, []byte(prnSource), 0o644); err != nil {
+		return nil, fmt.Errorf("nock: save regenerated source: %w", err)
+	}
+	return p, nil
+}
+
+// GetProceduralSource returns the saved PARENA source for a procedural layer, for a GUI/CLI to
+// load into an editable text field.
+func (s *Service) GetProceduralSource(projectName, layerName string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.loadManifest(projectName)
+	if err != nil {
+		return "", err
+	}
+	idx, err := s.findLayer(p, layerName)
+	if err != nil {
+		return "", err
+	}
+	if p.Layers[idx].Source == "" {
+		return "", fmt.Errorf("nock: layer %q has no generating source", layerName)
+	}
+	absSource, err := s.layerAbsPath(projectName, p.Layers[idx].Source)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(absSource)
+	if err != nil {
+		return "", fmt.Errorf("nock: read generating source: %w", err)
+	}
+	return string(data), nil
+}
+
+// RemoveLayer deletes a layer (and its mask/generating-source files, if any) from a project.
 func (s *Service) RemoveLayer(projectName, layerName string) (*Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,6 +211,11 @@ func (s *Service) RemoveLayer(projectName, layerName string) (*Project, error) {
 	}
 	if layer.Mask != "" {
 		if abs, err := s.layerAbsPath(projectName, layer.Mask); err == nil {
+			_ = os.Remove(abs)
+		}
+	}
+	if layer.Source != "" {
+		if abs, err := s.layerAbsPath(projectName, layer.Source); err == nil {
 			_ = os.Remove(abs)
 		}
 	}

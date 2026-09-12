@@ -182,9 +182,27 @@ main {
   font-size: 0.85rem;
 }
 
+textarea {
+  font-family: inherit;
+  background: #0f0d09;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+  resize: vertical;
+}
+
+.source-textarea {
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
 .gradient-form,
 .add-layer-form,
-.effects-panel {
+.effects-panel,
+.procedural-form,
+.procedural-editor {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -196,7 +214,9 @@ main {
 
 .gradient-form h3,
 .add-layer-form h3,
-.effects-panel h3 {
+.effects-panel h3,
+.procedural-form h3,
+.procedural-editor h3 {
   margin: 0 0 0.25rem;
   font-size: 0.85rem;
   color: var(--muted);

@@ -70,6 +70,14 @@ func (h *NockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.sharpen(w, r, parts[1], parts[3])
 	case len(parts) == 3 && parts[0] == "projects" && parts[2] == "gradient" && r.Method == http.MethodPost:
 		h.addGradient(w, r, parts[1])
+	case len(parts) == 3 && parts[0] == "projects" && parts[2] == "procedural" && r.Method == http.MethodPost:
+		h.addProcedural(w, r, parts[1])
+	case len(parts) == 5 && parts[0] == "projects" && parts[2] == "layers" && parts[4] == "procedural" && r.Method == http.MethodGet:
+		h.getProceduralSource(w, r, parts[1], parts[3])
+	case len(parts) == 5 && parts[0] == "projects" && parts[2] == "layers" && parts[4] == "procedural" && r.Method == http.MethodPatch:
+		h.regenerateProcedural(w, r, parts[1], parts[3])
+	case len(parts) == 3 && parts[0] == "projects" && parts[2] == "generate" && r.Method == http.MethodPost:
+		h.generateProcedural(w, r, parts[1])
 	case len(parts) == 3 && parts[0] == "projects" && parts[2] == "resize" && r.Method == http.MethodPatch:
 		h.resize(w, r, parts[1])
 	case len(parts) == 3 && parts[0] == "projects" && parts[2] == "export" && r.Method == http.MethodGet:
@@ -315,6 +323,99 @@ func (h *NockHandler) addGradient(w http.ResponseWriter, r *http.Request, projec
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
+}
+
+type proceduralReq struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+func (h *NockHandler) addProcedural(w http.ResponseWriter, r *http.Request, project string) {
+	var req proceduralReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	p, err := h.Svc.AddProceduralLayer(project, req.Name, req.Source)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (h *NockHandler) getProceduralSource(w http.ResponseWriter, r *http.Request, project, layer string) {
+	src, err := h.Svc.GetProceduralSource(project, layer)
+	if err != nil {
+		mmoWriteError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"source": src})
+}
+
+type regenerateReq struct {
+	Source string `json:"source"`
+}
+
+func (h *NockHandler) regenerateProcedural(w http.ResponseWriter, r *http.Request, project, layer string) {
+	var req regenerateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	p, err := h.Svc.RegenerateProceduralLayer(project, layer, req.Source)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+type generateReq struct {
+	Name   string `json:"name"`
+	Prompt string `json:"prompt"`
+}
+
+// generateProcedural is the real "one-shot a texture from a text prompt" endpoint: calls Vertex
+// AI (gen_vertex.go) for real PARENA source, then runs it through the exact same
+// AddProceduralLayer path a human-written or CLI-supplied source goes through -- a model's own
+// output is never treated as more trusted than anything else this pipeline compiles and runs.
+func (h *NockHandler) generateProcedural(w http.ResponseWriter, r *http.Request, project string) {
+	var req generateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	p, err := h.Svc.GetProject(project)
+	if err != nil {
+		mmoWriteError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	token, err := nock.GcloudAccessToken()
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "no Vertex AI credential available: "+err.Error())
+		return
+	}
+	src, err := nock.GenerateProceduralTextureSource(r.Context(), token, req.Prompt, p.Width, p.Height)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadGateway, "vertex generation failed: "+err.Error())
+		return
+	}
+
+	updated, err := h.Svc.AddProceduralLayer(project, req.Name, src)
+	if err != nil {
+		// Real, honest failure mode, not papered over: the model's own output didn't validate
+		// or didn't compile. Return the generated source too, so the caller (the GUI's own
+		// "generate" panel) can show the user what was attempted and let them fix it by hand
+		// rather than just a bare error.
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
+			"error":  err.Error(),
+			"source": src,
+		})
+		return
+	}
+	writeJSON(w, http.StatusCreated, updated)
 }
 
 type resizeReq struct {

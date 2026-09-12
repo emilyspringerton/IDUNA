@@ -134,3 +134,74 @@ func TestNockHandler_AddLayerViaMultipartUpload(t *testing.T) {
 		t.Fatalf("unexpected layers: %+v", p.Layers)
 	}
 }
+
+const nockTestCheckerSource = `(module gentexture)
+(import math)
+
+(defn pixel-r [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (if (> (math/cos (* (/ x w) 40.0)) 0.0) 0.85 0.15))
+
+(defn pixel-g [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (if (> (math/cos (* (/ y h) 40.0)) 0.0) 0.85 0.15))
+
+(defn pixel-b [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (math/sqrt (/ x w)))
+`
+
+func requireProcGenForHandlerTest(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("parena"); err != nil {
+		if _, statErr := exec.LookPath("/home/fatbaby/PARENA/parena"); statErr != nil {
+			t.Skip("parena compiler not available, skipping real procedural-texture handler test")
+		}
+	}
+}
+
+func TestNockHandler_AddProceduralLayer(t *testing.T) {
+	requireProcGenForHandlerTest(t)
+	h := newNockTestHandler(t)
+
+	createBody, _ := json.Marshal(map[string]any{"name": "tex1", "width": 32, "height": 32})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/admin/nock/api/projects", bytes.NewReader(createBody)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create project: %d %s", rec.Code, rec.Body.String())
+	}
+
+	procBody, _ := json.Marshal(map[string]any{"name": "checker", "source": nockTestCheckerSource})
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/admin/nock/api/projects/tex1/procedural", bytes.NewReader(procBody)))
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("add procedural layer: %d %s", rec2.Code, rec2.Body.String())
+	}
+
+	rec3 := httptest.NewRecorder()
+	h.ServeHTTP(rec3, httptest.NewRequest(http.MethodGet, "/admin/nock/api/projects/tex1/layers/checker/procedural", nil))
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("get procedural source: %d %s", rec3.Code, rec3.Body.String())
+	}
+	var got map[string]string
+	json.Unmarshal(rec3.Body.Bytes(), &got)
+	if !bytes.Contains([]byte(got["source"]), []byte("pixel-r")) {
+		t.Errorf("expected source to round-trip, got: %s", got["source"])
+	}
+}
+
+func TestNockHandler_AddProceduralLayer_RejectsTargetEscape(t *testing.T) {
+	h := newNockTestHandler(t)
+
+	createBody, _ := json.Marshal(map[string]any{"name": "tex1", "width": 16, "height": 16})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/admin/nock/api/projects", bytes.NewReader(createBody)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create project: %d %s", rec.Code, rec.Body.String())
+	}
+
+	evilSrc := `(module gentexture) #target {:c (inline-c "system(\"echo pwned\")")}`
+	procBody, _ := json.Marshal(map[string]any{"name": "evil", "source": evilSrc})
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/admin/nock/api/projects/tex1/procedural", bytes.NewReader(procBody)))
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 rejecting #target, got %d %s", rec2.Code, rec2.Body.String())
+	}
+}

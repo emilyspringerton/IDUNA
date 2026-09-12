@@ -65,6 +65,12 @@ func main() {
 		runErr = cmdResize(svc, args)
 	case "export":
 		runErr = cmdExport(svc, args)
+	case "proc-add":
+		runErr = cmdProcAdd(svc, args)
+	case "proc-edit":
+		runErr = cmdProcEdit(svc, args)
+	case "proc-show":
+		runErr = cmdProcShow(svc, args)
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -111,6 +117,13 @@ Effects:
 
 Export:
   export -project NAME -out PATH.png|PATH.jpg [-background '#RRGGBB']
+
+Procedural (PARENA, compiled to the Java target -- see internal/nock/procgen.go's own
+header comment for why, and the real (pixel-r/pixel-g/pixel-b) contract a source file must
+define):
+  proc-add  -project NAME -layer NAME -source FILE.prn
+  proc-edit -project NAME -layer NAME -source FILE.prn   (re-renders an existing procedural layer)
+  proc-show -project NAME -layer NAME                    (prints the saved generating source)
 
 Env:
   NOCK_DATA_DIR  root directory holding every project (default ./nock-projects)
@@ -324,6 +337,55 @@ func cmdResize(svc *nock.Service, args []string) error {
 		return err
 	}
 	printProject(p)
+	return nil
+}
+
+func cmdProcAdd(svc *nock.Service, args []string) error {
+	fs := flag.NewFlagSet("proc-add", flag.ExitOnError)
+	project := fs.String("project", "", "project name")
+	layer := fs.String("layer", "", "new layer name")
+	source := fs.String("source", "", "path to a .prn file defining pixel-r/pixel-g/pixel-b")
+	fs.Parse(args)
+	src, err := os.ReadFile(*source)
+	if err != nil {
+		return fmt.Errorf("read source: %w", err)
+	}
+	p, err := svc.AddProceduralLayer(*project, *layer, string(src))
+	if err != nil {
+		return err
+	}
+	printProject(p)
+	return nil
+}
+
+func cmdProcEdit(svc *nock.Service, args []string) error {
+	fs := flag.NewFlagSet("proc-edit", flag.ExitOnError)
+	project := fs.String("project", "", "project name")
+	layer := fs.String("layer", "", "layer name")
+	source := fs.String("source", "", "path to the edited .prn file")
+	fs.Parse(args)
+	src, err := os.ReadFile(*source)
+	if err != nil {
+		return fmt.Errorf("read source: %w", err)
+	}
+	p, err := svc.RegenerateProceduralLayer(*project, *layer, string(src))
+	if err != nil {
+		return err
+	}
+	printProject(p)
+	return nil
+}
+
+func cmdProcShow(svc *nock.Service, args []string) error {
+	fs := flag.NewFlagSet("proc-show", flag.ExitOnError)
+	project := fs.String("project", "", "project name")
+	layer := fs.String("layer", "", "layer name")
+	fs.Parse(args)
+	src, err := svc.GetProceduralSource(*project, *layer)
+	if err != nil {
+		return err
+	}
+	fmt.Println(src)
 	return nil
 }
 

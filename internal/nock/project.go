@@ -34,6 +34,12 @@ type Layer struct {
 	Opacity int    `json:"opacity"`        // 0-100
 	Visible bool   `json:"visible"`
 	Mask    string `json:"mask,omitempty"` // path relative to the project dir, grayscale PNG; "" = no mask
+	// Source is the real PARENA program that generated this layer's own File, when the layer
+	// was created by AddProceduralLayer rather than imported from an image -- "think GENERA OS,"
+	// the founder's own framing for keeping a generated asset's real source alongside its
+	// rendered output rather than only the rendered pixels. "" for an ordinary imported/gradient
+	// layer (no generating program to keep).
+	Source string `json:"source,omitempty"` // path relative to the project dir, a .prn file
 }
 
 // Project is one NOCK document: a fixed canvas size and an ordered layer stack.

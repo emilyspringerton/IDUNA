@@ -9,6 +9,9 @@ export interface Layer {
   opacity: number
   visible: boolean
   mask?: string
+  /** Present only for a layer created by generateProcedural/AddProceduralLayer -- the saved
+   * PARENA source that rendered it ("think GENERA OS": the source ships with the asset). */
+  source?: string
 }
 
 export interface Project {
@@ -97,6 +100,21 @@ export const api = {
       body: JSON.stringify({ radius, sigma, amount }),
     }),
 
+  addProcedural: (project: string, name: string, source: string) =>
+    req<Project>(`/projects/${enc(project)}/procedural`, {
+      method: 'POST',
+      body: JSON.stringify({ name, source }),
+    }),
+
+  getProceduralSource: (project: string, layer: string) =>
+    req<{ source: string }>(`/projects/${enc(project)}/layers/${enc(layer)}/procedural`),
+
+  regenerateProcedural: (project: string, layer: string, source: string) =>
+    req<Project>(`/projects/${enc(project)}/layers/${enc(layer)}/procedural`, {
+      method: 'PATCH',
+      body: JSON.stringify({ source }),
+    }),
+
   addGradient: (project: string, name: string, from: string, to: string, direction: string) =>
     req<Project>(`/projects/${enc(project)}/gradient`, {
       method: 'POST',
@@ -111,4 +129,25 @@ export const api = {
 
   exportUrl: (project: string, format: 'png' | 'jpg' = 'png') =>
     `${API_BASE}/projects/${enc(project)}/export?format=${format}&_=${Date.now()}`,
+}
+
+// GenerateResult is a discriminated result for POST .../generate: the backend returns 201 with
+// the updated Project on success, or 422 with {error, source} when the model's own generated
+// source failed validation or didn't compile -- a real, expected outcome (asking an LLM to
+// one-shot correct code in an unusual, restricted language subset), not something to hide behind
+// a generic thrown error. Handled outside the generic `req` helper above so both shapes are
+// real, typed results instead of one being buried in an Error's message string.
+export type GenerateResult = { ok: true; project: Project } | { ok: false; error: string; source: string }
+
+export async function generateProcedural(project: string, name: string, prompt: string): Promise<GenerateResult> {
+  const res = await fetch(`${API_BASE}/projects/${enc(project)}/generate`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, prompt }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (res.status === 201) return { ok: true, project: body as Project }
+  if (res.status === 422) return { ok: false, error: body.error ?? 'generation failed', source: body.source ?? '' }
+  throw new Error(`${res.status}: ${JSON.stringify(body)}`)
 }
