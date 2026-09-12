@@ -71,6 +71,12 @@ func (h *MMOHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// /api/v1/characters/:id/hats..., handled by routeCharacters below.
 	case strings.HasPrefix(path, "/api/v1/hats"):
 		h.routeHats(w, r, path)
+	// SSH key -> character fingerprint lookup (SSH_TRANSPORT_IDENTITY_SPEC.md §3, Stage 5) --
+	// the ONE thing a connecting SSH session needs to check before it even knows a character_id
+	// (list/bind/revoke, which all take a character_id, live under
+	// /api/v1/characters/:id/ssh-keys, handled by routeCharacters below via ssh_keys.go).
+	case strings.HasPrefix(path, "/api/v1/ssh-keys"):
+		h.routeSSHKeysLookup(w, r, path)
 	default:
 		http.NotFound(w, r)
 	}
@@ -145,6 +151,30 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 			h.handleUpdateJobLevel(w, r, parts[0], parts[1])
 			return
+		}
+	}
+	// SSH_TRANSPORT_IDENTITY_SPEC.md §3 / Stage 5: GET (list)/POST (bind)/DELETE (revoke)
+	// /api/v1/characters/:id/ssh-keys. The fingerprint itself (DELETE only -- POST/GET carry it
+	// in the body/not at all) is a query parameter (?fingerprint=...), not a path segment: a real
+	// SHA256 SSH fingerprint is base64.RawStdEncoding (ssh.FingerprintSHA256's own real format),
+	// which can legitimately contain a literal "/" -- a path segment would either break on that
+	// or need percent-decoding on both sides for no real benefit over a query param. Checked
+	// before the generic GET /:id fallback below, same "longer, more specific suffix first"
+	// convention every route in this function already follows (see job-levels just above).
+	if strings.HasSuffix(path, "/ssh-keys") {
+		id := extractSegment(path, "/api/v1/characters/", "/ssh-keys")
+		if id != "" {
+			switch r.Method {
+			case http.MethodGet:
+				h.handleListSSHKeys(w, r, id)
+				return
+			case http.MethodPost:
+				h.handleBindSSHKey(w, r, id)
+				return
+			case http.MethodDelete:
+				h.handleRevokeSSHKey(w, r, id)
+				return
+			}
 		}
 	}
 	// PATCH /api/v1/characters/:id/job
