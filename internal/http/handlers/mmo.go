@@ -129,6 +129,24 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleUpdateLevel(w, r, id)
 		return
 	}
+	// GET /api/v1/characters/:id/job-levels (GFD-124433: per-job leveling -- see
+	// 202609120002_character_job_levels.sql's own header comment). Checked BEFORE the generic
+	// GET /:id fallback below, same "longer, more specific suffix first" convention every other
+	// route in this function already follows.
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/job-levels") {
+		id := extractSegment(path, "/api/v1/characters/", "/job-levels")
+		h.handleGetJobLevels(w, r, id)
+		return
+	}
+	// PATCH /api/v1/characters/:id/job-levels/:job
+	if r.Method == http.MethodPatch && strings.Contains(path, "/job-levels/") {
+		rest := strings.TrimPrefix(path, "/api/v1/characters/")
+		parts := strings.SplitN(rest, "/job-levels/", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			h.handleUpdateJobLevel(w, r, parts[0], parts[1])
+			return
+		}
+	}
 	// PATCH /api/v1/characters/:id/job
 	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/job") {
 		id := extractSegment(path, "/api/v1/characters/", "/job")
@@ -468,6 +486,83 @@ func (h *MMOHandler) handleUpdateLevel(w http.ResponseWriter, r *http.Request, i
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		mmoWriteError(w, http.StatusNotFound, "character not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// JobLevelEntry is one row of a character's per-job level/XP (GFD-124433).
+type JobLevelEntry struct {
+	Job       string `json:"job"`
+	Level     int    `json:"level"`
+	CurrentXP int    `json:"current_xp"`
+}
+
+// handleGetJobLevels returns every job this character has ever played, with that job's own real,
+// independently-earned level/XP. A job never played simply has no row -- the caller (apps2/mud's
+// own loadJobXP) treats an absent job as a fresh level-1 start, matching real FFXI-style
+// per-job leveling. No auth restriction beyond the standard characters-route gate: reading your
+// own job levels isn't a cheat vector the way self-reporting a level update would be.
+func (h *MMOHandler) handleGetJobLevels(w http.ResponseWriter, r *http.Request, id string) {
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT job, level, current_xp FROM character_job_levels WHERE character_id = ? ORDER BY job`, id)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []JobLevelEntry{}
+	for rows.Next() {
+		var e JobLevelEntry
+		if err := rows.Scan(&e.Job, &e.Level, &e.CurrentXP); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		out = append(out, e)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleUpdateJobLevel upserts one job's own level/current_xp for a character (GFD-124433).
+// Agent-only, same real reasoning handleUpdateLevel already documents: a client self-reporting
+// its own level/XP (for any job) is a cheat vector no client should be trusted with.
+func (h *MMOHandler) handleUpdateJobLevel(w http.ResponseWriter, r *http.Request, id, job string) {
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if _, isAgent := claims["agent_name"]; !isAgent {
+			mmoWriteError(w, http.StatusForbidden, "job-level updates are agent-only")
+			return
+		}
+	}
+
+	var req updateLevelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Level < 1 {
+		mmoWriteError(w, http.StatusBadRequest, "level must be >= 1")
+		return
+	}
+
+	// An INSERT ... ON CONFLICT UPSERT has no natural "0 rows affected" signal for a phantom
+	// character_id the way handleUpdateLevel's own UPDATE does -- checked explicitly instead
+	// (this test DB, matching production's real posture per store.OpenSQLite, may or may not
+	// enforce the FK, so this can't be left to a constraint violation either).
+	var exists int
+	if err := h.DB.QueryRowContext(r.Context(), `SELECT 1 FROM characters WHERE character_id = ?`, id).Scan(&exists); err != nil {
+		mmoWriteError(w, http.StatusNotFound, "character not found")
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := h.DB.ExecContext(r.Context(), `
+		INSERT INTO character_job_levels (character_id, job, level, current_xp, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(character_id, job) DO UPDATE SET level = excluded.level, current_xp = excluded.current_xp, updated_at = excluded.updated_at
+	`, id, job, req.Level, req.CurrentXP, now, now)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
