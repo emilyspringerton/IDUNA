@@ -241,6 +241,24 @@ func renderProcTexture(prnSource string, width, height int, pngOut string) error
 	return runConvert(ppmPath, pngOut)
 }
 
+// renderProcTextureToBytes is renderProcTexture, but returns the rendered PNG's own real bytes
+// instead of writing to a caller-given path -- what TextureStore.RegenerateTexture and
+// GenerateProceduralTextureSource's own callers need, since a Texture row keeps its PNG as a
+// real BLOB in SQLite, not a file on disk.
+func renderProcTextureToBytes(prnSource string, width, height int) ([]byte, error) {
+	tmp, err := os.CreateTemp("", "nock-procgen-out-*.png")
+	if err != nil {
+		return nil, fmt.Errorf("nock: create temp output file: %w", err)
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+
+	if err := renderProcTexture(prnSource, width, height, tmp.Name()); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(tmp.Name())
+}
+
 // runWithTimeout runs bin with args, cwd set to dir, a hard context timeout, and a minimal
 // environment (PATH only -- no inherited credentials, tokens, or other env vars a compiled
 // texture program has no legitimate reason to see even though the Java target itself already

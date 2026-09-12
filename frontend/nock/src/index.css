@@ -1,62 +1,48 @@
-:root {
-  color-scheme: dark;
-  --bg: #17140f;
-  --panel: #221e17;
-  --line: #3a3325;
-  --ink: #f2ead9;
-  --muted: #a89a7a;
-  --gold: #c9a24a;
-  --danger: #c1543a;
-  font-family: 'Segoe UI', system-ui, sans-serif;
-}
+@import "tailwindcss";
 
-* {
-  box-sizing: border-box;
+/* Tailwind v4 CSS-first theme tokens -- turns each --color-* below into real utilities
+   (bg-panel, text-gold, border-line, etc.) used throughout App.css's own @apply rules and
+   directly in JSX where convenient. Dark, "texture editor" palette -- a deliberate choice,
+   distinct from the cream/gold "ceremony" theme the rest of IDUNA's admin pages use (NOCK reads
+   more like a creative tool than a back-office form). */
+@theme {
+  --color-bg: #17140f;
+  --color-panel: #221e17;
+  --color-line: #3a3325;
+  --color-ink: #f2ead9;
+  --color-muted: #a89a7a;
+  --color-gold: #c9a24a;
+  --color-danger: #c1543a;
 }
 
 body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--ink);
+  @apply bg-bg text-ink;
+  font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
 button {
-  font-family: inherit;
-  cursor: pointer;
-  background: var(--gold);
-  color: #1a1509;
-  border: none;
-  border-radius: 4px;
-  padding: 0.35rem 0.7rem;
-  font-size: 0.85rem;
+  @apply cursor-pointer rounded bg-gold px-3 py-1.5 text-sm text-[#1a1509];
 }
 
 button.danger {
-  background: var(--danger);
-  color: #fff;
+  @apply bg-danger text-white;
 }
 
 button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  @apply cursor-not-allowed opacity-50;
 }
 
 input,
-select {
+select,
+textarea {
+  @apply rounded border border-line bg-[#0f0d09] px-2 py-1 text-ink;
   font-family: inherit;
-  background: #0f0d09;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.3rem 0.5rem;
 }
 
 .hint {
-  color: var(--muted);
-  font-size: 0.85rem;
+  @apply text-sm text-muted;
 }
 
 .error {
-  color: var(--danger);
-  font-size: 0.85rem;
+  @apply text-sm text-danger;
 }

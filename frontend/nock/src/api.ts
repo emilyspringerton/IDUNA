@@ -139,6 +139,72 @@ export const api = {
 // real, typed results instead of one being buried in an Error's message string.
 export type GenerateResult = { ok: true; project: Project } | { ok: false; error: string; source: string }
 
+// ---- Texture library (real, SQLite-backed CRUD -- see internal/nock/texture_store.go) ----
+// A "texture" here is a standalone, independent row: many master textures, not layers inside a
+// Project, and not views-with-overrides of a shared master (the founder's own explicit
+// difference from CarePyre's resume-clone model). See TEXTURES_BASE calls below.
+
+export interface Texture {
+  id: number
+  name: string
+  width: number
+  height: number
+  parena_source?: string
+  prompt?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TextureSummary {
+  id: number
+  name: string
+  width: number
+  height: number
+  has_source: boolean
+  prompt?: string
+  created_at: string
+  updated_at: string
+}
+
+const TEXTURES_BASE = '/admin/nock/api/textures'
+
+async function treq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${TEXTURES_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export type TextureGenerateResult = { ok: true; texture: Texture } | { ok: false; error: string; source: string }
+
+export const textures = {
+  list: () => treq<TextureSummary[]>(''),
+  get: (id: number) => treq<Texture>(`/${id}`),
+  imageUrl: (id: number) => `${TEXTURES_BASE}/${id}/image?_=${Date.now()}`,
+  rename: (id: number, name: string) => treq<Texture>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  delete: (id: number) => treq<void>(`/${id}`, { method: 'DELETE' }),
+  clone: (id: number, name: string) => treq<Texture>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
+  regenerate: (id: number, source: string) =>
+    treq<Texture>(`/${id}/regenerate`, { method: 'PATCH', body: JSON.stringify({ source }) }),
+
+  async generate(name: string, prompt: string, width: number, height: number): Promise<TextureGenerateResult> {
+    const res = await fetch(`${TEXTURES_BASE}/generate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, prompt, width, height }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (res.status === 201) return { ok: true, texture: body as Texture }
+    if (res.status === 422) return { ok: false, error: body.error ?? 'generation failed', source: body.source ?? '' }
+    throw new Error(`${res.status}: ${JSON.stringify(body)}`)
+  },
+}
+
 export async function generateProcedural(project: string, name: string, prompt: string): Promise<GenerateResult> {
   const res = await fetch(`${API_BASE}/projects/${enc(project)}/generate`, {
     method: 'POST',

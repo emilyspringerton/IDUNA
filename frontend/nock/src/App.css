@@ -1,201 +1,146 @@
+/* @reference (not another @import) -- Tailwind v4 processes each CSS file independently, so
+   this file's own @apply calls need a pointer back to index.css's @theme block to resolve
+   theme-derived utility names like border-line/bg-panel/text-gold. */
+@reference "./index.css";
+
+/* Every rule here is Tailwind utilities via @apply, kept under the same semantic class names
+   App.tsx already uses -- real Tailwind backs every declaration, organized as named component
+   classes rather than inlined utility strings on ~40 JSX call sites, so a future pass toward
+   inlined utilities is a mechanical find-and-replace against this file, not a rewrite. A few
+   rules (checkerboard background, image-rendering) use plain CSS because Tailwind has no
+   utility for them. */
+
 .app {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+  @apply flex min-h-screen flex-col;
 }
 
 header {
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--line);
+  @apply border-b border-line px-6 py-4;
 }
 
 header h1 {
-  margin: 0;
-  color: var(--gold);
-  letter-spacing: 0.08em;
+  @apply m-0 tracking-wider text-gold;
 }
 
 .tagline {
-  margin: 0.2rem 0 0;
-  color: var(--muted);
-  font-size: 0.85rem;
+  @apply m-0 mt-1 text-sm text-muted;
+}
+
+.tabs {
+  @apply mt-3 flex gap-2;
+}
+
+.tabs button {
+  @apply border border-line bg-transparent text-muted;
+}
+
+.tabs button.active {
+  @apply border-gold bg-gold text-[#1a1509];
 }
 
 .layout {
-  flex: 1;
-  display: grid;
+  @apply grid min-h-0 flex-1;
   grid-template-columns: 220px 1fr;
-  min-height: 0;
+}
+
+.layout-single {
+  @apply flex-1 overflow-y-auto p-6;
 }
 
 .project-list {
-  border-right: 1px solid var(--line);
-  padding: 1rem;
-  background: var(--panel);
-  overflow-y: auto;
+  @apply overflow-y-auto border-r border-line bg-panel p-4;
 }
 
 .project-list h2 {
-  font-size: 0.95rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  @apply text-sm uppercase tracking-wide text-muted;
 }
 
 .project-list ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  @apply m-0 flex list-none flex-col gap-1 p-0;
 }
 
 .project-list li button {
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  color: var(--ink);
-  border: 1px solid transparent;
+  @apply w-full border border-transparent bg-transparent text-left text-ink;
 }
 
 .project-list li.active button {
-  background: var(--gold);
-  color: #1a1509;
+  @apply bg-gold text-[#1a1509];
 }
 
 .new-project-form {
-  margin-top: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  @apply mt-4 flex flex-col gap-2;
 }
 
 .new-project-form > div,
 .new-project-form input {
-  width: 100%;
+  @apply w-full;
 }
 
 main {
-  padding: 1.5rem;
-  overflow-y: auto;
+  @apply overflow-y-auto p-6;
 }
 
 .project-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 1rem;
+  @apply mb-4 flex items-baseline justify-between;
 }
 
 .dims {
-  color: var(--muted);
-  font-weight: normal;
-  font-size: 0.85rem;
+  @apply text-sm font-normal text-muted;
 }
 
 .editor-body {
-  display: grid;
+  @apply grid items-start gap-6;
   grid-template-columns: 1fr 380px;
-  gap: 1.5rem;
-  align-items: start;
 }
 
 .canvas-pane {
+  @apply flex flex-col items-center gap-3 rounded-md border border-line p-4;
   background: repeating-conic-gradient(#2a2a2a 0% 25%, #1e1e1e 0% 50%) 50% / 20px 20px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
 }
 
 .preview {
-  max-width: 100%;
+  @apply max-w-full border border-line bg-black;
   image-rendering: pixelated;
-  border: 1px solid var(--line);
-  background: #000;
 }
 
 .export-links {
-  display: flex;
-  gap: 1rem;
+  @apply flex gap-4;
 }
 
 .export-links a {
-  color: var(--gold);
-  font-size: 0.85rem;
+  @apply text-sm text-gold;
 }
 
 .side-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+  @apply flex flex-col gap-4;
 }
 
 .layer-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  max-height: 240px;
-  overflow-y: auto;
+  @apply flex max-h-60 flex-col gap-1 overflow-y-auto;
 }
 
 .layer-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.35rem 0.5rem;
-  cursor: pointer;
+  @apply flex cursor-pointer items-center gap-2 rounded border border-line bg-panel px-2 py-1;
 }
 
 .layer-row.selected {
-  border-color: var(--gold);
+  @apply border-gold;
 }
 
 .layer-row .layer-name {
-  flex: 1;
-  font-size: 0.85rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  @apply flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm;
 }
 
 .layer-row .opacity-value {
-  font-size: 0.75rem;
-  color: var(--muted);
-  width: 2.5rem;
+  @apply w-10 text-xs text-muted;
 }
 
 .layer-row button {
-  padding: 0.15rem 0.4rem;
-  font-size: 0.75rem;
+  @apply px-1.5 py-0.5 text-xs;
 }
 
 .mask-btn {
-  cursor: pointer;
-  font-size: 0.85rem;
-}
-
-textarea {
-  font-family: inherit;
-  background: #0f0d09;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.4rem 0.5rem;
-  resize: vertical;
-}
-
-.source-textarea {
-  font-family: 'Courier New', monospace;
-  font-size: 0.8rem;
-  width: 100%;
+  @apply cursor-pointer text-sm;
 }
 
 .gradient-form,
@@ -203,13 +148,7 @@ textarea {
 .effects-panel,
 .procedural-form,
 .procedural-editor {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  @apply flex flex-col gap-2 rounded-md border border-line bg-panel p-3;
 }
 
 .gradient-form h3,
@@ -217,31 +156,53 @@ textarea {
 .effects-panel h3,
 .procedural-form h3,
 .procedural-editor h3 {
-  margin: 0 0 0.25rem;
-  font-size: 0.85rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  @apply m-0 mb-1 text-sm uppercase tracking-wide text-muted;
 }
 
 .gradient-form label,
 .effect-row label {
-  font-size: 0.8rem;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
+  @apply flex items-center gap-2 text-sm text-muted;
 }
 
 .effect-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  border-top: 1px solid var(--line);
-  padding-top: 0.5rem;
+  @apply flex flex-col gap-1 border-t border-line pt-2 first:border-t-0 first:pt-0;
 }
 
-.effect-row:first-child {
-  border-top: none;
-  padding-top: 0;
+textarea {
+  @apply resize-y;
+}
+
+.source-textarea {
+  @apply w-full font-mono text-sm;
+}
+
+.texture-library {
+  @apply flex max-w-5xl flex-col gap-6;
+}
+
+.texture-grid {
+  @apply grid gap-4;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.texture-card {
+  @apply flex flex-col overflow-hidden rounded-lg border border-line bg-panel;
+}
+
+.texture-thumb {
+  @apply aspect-square w-full object-cover;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #1e1e1e 0% 50%) 50% / 16px 16px;
+  image-rendering: pixelated;
+}
+
+.texture-meta {
+  @apply flex flex-col gap-1 px-3 py-2;
+}
+
+.texture-actions {
+  @apply mt-1 flex flex-wrap gap-1;
+}
+
+.texture-actions button {
+  @apply px-2 py-1 text-xs;
 }

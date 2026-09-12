@@ -15,11 +15,35 @@ import (
 	"iduna/internal/nock"
 )
 
+// textureCommands lists every subcommand that operates on the SQLite-backed texture library
+// (texture_cmds.go) rather than the file-backed Project/Layer engine above -- checked here so
+// main() only opens/migrates a real SQLite connection when one is actually needed, not for
+// every plain Project command.
+var textureCommands = map[string]bool{
+	"texture-list": true, "texture-create": true, "texture-generate": true,
+	"texture-get": true, "texture-image": true, "texture-rename": true,
+	"texture-delete": true, "texture-clone": true, "texture-regenerate": true,
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	if textureCommands[cmd] {
+		store, err := openTextureStore()
+		if err != nil {
+			fatal(err)
+		}
+		if err := dispatchTextureCmd(cmd, store, args); err != nil {
+			fatal(err)
+		}
+		return
+	}
+
 	dataDir := os.Getenv("NOCK_DATA_DIR")
 	if dataDir == "" {
 		dataDir = "./nock-projects"
@@ -29,8 +53,6 @@ func main() {
 		fatal(err)
 	}
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
 	var runErr error
 	switch cmd {
 	case "init":
@@ -118,6 +140,18 @@ Effects:
 Export:
   export -project NAME -out PATH.png|PATH.jpg [-background '#RRGGBB']
 
+Texture library (SQLite-backed CRUD -- a real, independent "master texture" per row, not a
+layer inside a Project; see internal/nock/texture_store.go's own header comment):
+  texture-list
+  texture-create     -name NAME -width W -height H -file PATH.png
+  texture-generate   -name NAME -prompt 'a weathered brick wall' -width W -height H
+  texture-get        -id N
+  texture-image      -id N -out PATH.png
+  texture-rename     -id N -name NEWNAME
+  texture-delete     -id N
+  texture-clone      -id N -name NEWNAME
+  texture-regenerate -id N -source FILE.prn
+
 Procedural (PARENA, compiled to the Java target -- see internal/nock/procgen.go's own
 header comment for why, and the real (pixel-r/pixel-g/pixel-b) contract a source file must
 define):
@@ -127,6 +161,9 @@ define):
 
 Env:
   NOCK_DATA_DIR  root directory holding every project (default ./nock-projects)
+  NOCK_DB_PATH   SQLite DB for the texture library -- same real DB the IDUNA server itself uses
+                 by default (a texture created here shows up in the web GUI and vice versa),
+                 override to point at a different/test DB (default /home/fatbaby/IDUNA/var/iduna.db)
 `)
 }
 

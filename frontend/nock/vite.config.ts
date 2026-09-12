@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
@@ -7,7 +8,7 @@ import { defineConfig } from 'vite'
 // without a CORS dance during development.
 export default defineConfig({
   base: '/admin/nock/',
-  plugins: [react()],
+  plugins: [tailwindcss(), react()],
   server: {
     proxy: {
       '/admin/nock/api': 'http://localhost:8080',

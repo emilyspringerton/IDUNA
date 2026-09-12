@@ -173,6 +173,74 @@ patterns visually deep) turn out to matter in practice; no resource quota/rate-l
 Vertex endpoint (a real, separate hardening item for whenever this is opened up beyond the
 current `iduna.admin`-gated audience).
 
+## Real re-scope: texture library (SQLite CRUD) before manual editing polish
+
+Founder real-time, direct continuation: "alright work on the IDUNA side affordances we are
+making a texture generator and manager so it needs to have CRUD and all that and also we are
+gonna want to save them in sqlite or whatever with their parena src we can build the human
+manual photoshop affordances after we get some basic texture management primitives built into
+the iduna nock console." Then, modeled on CarePyre's own real master-resume/clone feature
+(`CarePyre/docs/COMMUNITY_TOOLS_RESUME_NORTHSTAR.md`): "same model as the carepyre resumes with
+like the ability to clone the main texture except the resumes there is a master resume there
+wont be just one master texture there will be many master textures."
+
+**Real, deliberate re-scope, not an addition alongside the old design unchanged:** the
+Project/Layer flat-file compositing engine documented above stays exactly as it is (the future
+"manual Photoshop affordances" layer), but the *primary* managed entity going forward is a
+standalone **Texture** row in a new `nock_textures` SQLite table
+(`migrations/truestore/202609120001_nock_textures.sql`), not a Project. `internal/nock/
+texture_store.go` is the real CRUD layer: Create (from an uploaded image or from PARENA source,
+rendered server-side), Get/GetByName, List (a real lightweight summary shape -- no PNG bytes/full
+source in a listing response), Rename, Regenerate (edit the saved source, re-render, replace in
+place -- a failed edit leaves the existing row untouched, same guarantee the file-backed
+`RegenerateProceduralLayer` already gives), Delete, and **Clone**.
+
+**The real, named difference from CarePyre's resume-clone model, per the founder's own
+distinction:** a resume has exactly one master per user with many derived *target views*
+(`IncludedWorkIDs`/`SummaryOverride`-style subset-and-override rows referencing that one shared
+master). A texture has no single master at all -- `CloneTexture` is therefore a full,
+independent row copy (its own new id, its own future edits never touching the source it was
+cloned from), not a view-with-overrides. There is deliberately no `parent_id`/clone-provenance
+column in the schema -- if that's ever needed it's real, separate, future work, not assumed away.
+
+Exposed via `internal/http/handlers/nock_textures.go` (`GET/POST /admin/nock/api/textures`,
+`GET/PATCH/DELETE .../textures/{id}`, `GET .../textures/{id}/image`, `POST .../textures/{id}/
+clone`, `PATCH .../textures/{id}/regenerate`, `POST .../textures/generate` -- the real Vertex
+one-shot path, mirroring the Project-scoped `.../generate` endpoint but landing in the texture
+library instead of a Project's layer stack) and `cmd/nock`'s new `texture-*` subcommands
+(`texture-list`/`create`/`generate`/`get`/`image`/`rename`/`delete`/`clone`/`regenerate`),
+which connect to the SAME real SQLite DB the running IDUNA server itself uses by default
+(`NOCK_DB_PATH`, defaulting to `var/iduna.db`) -- a texture created via the CLI shows up in the
+web GUI and vice versa. A real, lightweight "Texture Library" tab was added to the React app
+(generate-from-prompt form, a grid of real thumbnails via `.../image`, per-card
+clone/rename/delete, and an inline source editor + re-run for a generated texture) -- kept
+deliberately minimal, since the founder's own framing is "primitives first," not full GUI polish
+yet. 20 new tests (10 in `internal/nock/texture_store_test.go`, plus handler tests), all real
+(in-memory SQLite, real ImageMagick/PARENA/JVM for the generation-path tests). `go build/vet/
+test ./...` clean.
+
+## Real aside: PARENA has no web-UI/JSX generation capability today (checked, corrected)
+
+Mid-build, the founder asked about generating the NOCK React frontend itself from PARENA source
+("drop a parena file next to the file its supposed to generate... the parena can call into the
+standard library to abstract widget patterns"), and separately floated Tailwind-as-a-cross-
+target styling language ("build tailwind into parena if needed... totally makes sense as a ui
+language beyond the web like for c games too"). Checked directly rather than assumed: `src/
+emit_ts.c` (PARENA's real TypeScript emitter) has zero JSX/React/props/component handling
+anywhere -- it emits plain scalar TypeScript functions, the same narrow shape as the Java
+emitter (`MATH_PRIM_TABLE`-style primitive lowering), not component trees. `stdlib/editor/
+ui.prn`/`widget.prn` (a real, if narrow, "UI widget" system) are for PARENA's *own* native SDL2
+editor shell (the PITVIPER/DUNG lineage) -- unrelated to web/DOM UI, and not something `emit_ts.c`
+even touches.
+
+Resolved via `AskUserQuestion`: keep hand-writing the NOCK frontend directly in React/TypeScript
+(+ real Tailwind, added this same pass -- `@tailwindcss/vite`, CSS-first `@theme` tokens in
+`index.css`, existing component classes in `App.css` re-expressed as real `@apply` compositions
+rather than hand-rolled property lists) for now. Both the PARENA-generates-web-components idea
+and the Tailwind-as-a-cross-target-UI-language idea are real, named, deliberately deferred future
+directions -- explicitly NOT scoped or designed in this pass (the founder's own "not sure what
+that looks like if its dumb... just note it for later"), not silently dropped.
+
 ## Explicitly out of scope for this pass (real future phases, not forgotten)
 
 1. **PARENA as the backend.** Founder: "we build it into the PARENA EDITOR PE new command line

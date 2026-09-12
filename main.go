@@ -611,6 +611,17 @@ func main() {
 	}
 	mux.Handle("/admin/nock/", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockAssetsH)))
 
+	// NOCK texture library (founder real-time, 2026-09-12: "we are making a texture generator
+	// and manager so it needs to have CRUD and all that and also we are gonna want to save them
+	// in sqlite"). A real re-scope from the file-backed Project/Layer engine above: the primary
+	// managed entity going forward is a standalone Texture row, backed by the shared IDUNA
+	// SQLite `db` handle every other real CRUD surface in this file already uses -- see
+	// internal/nock/texture_store.go's own header comment.
+	nockTexturesH := &handlers.NockTexturesHandler{Store: &nock.TextureStore{DB: db}}
+	nockTexturesProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockTexturesH))
+	mux.Handle("/admin/nock/api/textures", nockTexturesProtected)
+	mux.Handle("/admin/nock/api/textures/", nockTexturesProtected)
+
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.
 	gfdMobDropsJSONPath := getenv("GFD_MOB_DROPS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/mob_drops.json")

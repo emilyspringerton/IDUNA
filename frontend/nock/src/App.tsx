@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, generateProcedural, type Project } from './api'
+import { api, generateProcedural, textures, type Project, type TextureSummary } from './api'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -487,50 +487,221 @@ function AddLayerForm({ project, onChanged }: { project: string; onChanged: () =
   )
 }
 
+// TextureLibraryGenerateForm is the texture-library equivalent of ProceduralTextureForm above,
+// hitting textures.generate (a standalone Texture row) instead of a Project's own .../generate
+// (which adds a Project layer). Two separate real call sites into the same underlying Vertex
+// pipeline, on purpose -- Project/Layer and the Texture library are two real, currently
+// independent concepts (see internal/nock/texture_store.go's own header comment).
+function TextureLibraryGenerateForm({ onChanged }: { onChanged: (newId?: number) => void }) {
+  const [name, setName] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [width, setWidth] = useState(256)
+  const [height, setHeight] = useState(256)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await textures.generate(name, prompt, width, height)
+      if (result.ok) {
+        setName('')
+        setPrompt('')
+        onChanged(result.texture.id)
+      } else {
+        setError(result.error)
+      }
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="procedural-form" onSubmit={submit}>
+      <h3>Generate a new master texture</h3>
+      <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+      <textarea placeholder="describe the texture" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2} />
+      <div className="new-project-form">
+        <input type="number" value={width} min={1} onChange={(e) => setWidth(Number(e.target.value))} aria-label="width" />
+        <span>×</span>
+        <input type="number" value={height} min={1} onChange={(e) => setHeight(Number(e.target.value))} aria-label="height" />
+      </div>
+      <button type="submit" disabled={!name || !prompt || busy}>
+        {busy ? 'Generating…' : 'Generate'}
+      </button>
+      {error && <p className="error">{error}</p>}
+    </form>
+  )
+}
+
+function TextureLibraryRow({ t, onChanged }: { t: TextureSummary; onChanged: () => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const [source, setSource] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadSource = async () => {
+    if (!t.has_source) return
+    const full = await textures.get(t.id)
+    setSource(full.parena_source ?? '')
+    setExpanded(true)
+  }
+
+  const rerun = async () => {
+    if (source === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await textures.regenerate(t.id, source)
+      onChanged()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="texture-card">
+      <img className="texture-thumb" src={textures.imageUrl(t.id)} alt={t.name} />
+      <div className="texture-meta">
+        <strong>{t.name}</strong>
+        <span className="hint">
+          {t.width}×{t.height} {t.has_source && '· generated'}
+        </span>
+        {t.prompt && <span className="hint">“{t.prompt}”</span>}
+        <div className="texture-actions">
+          <button
+            onClick={async () => {
+              const name = prompt('New, independent texture name for the clone:', `${t.name}-copy`)
+              if (!name) return
+              await textures.clone(t.id, name)
+              onChanged()
+            }}
+          >
+            Clone
+          </button>
+          <button
+            onClick={async () => {
+              const name = window.prompt('Rename to:', t.name)
+              if (!name) return
+              await textures.rename(t.id, name)
+              onChanged()
+            }}
+          >
+            Rename
+          </button>
+          {t.has_source && <button onClick={loadSource}>{expanded ? 'Hide source' : 'Edit source'}</button>}
+          <button
+            className="danger"
+            onClick={async () => {
+              if (!confirm(`Delete texture "${t.name}"? This can't be undone.`)) return
+              await textures.delete(t.id)
+              onChanged()
+            }}
+          >
+            Delete
+          </button>
+        </div>
+        {expanded && source !== null && (
+          <div className="procedural-editor">
+            <textarea className="source-textarea" value={source} onChange={(e) => setSource(e.target.value)} rows={8} spellCheck={false} />
+            <button onClick={rerun} disabled={busy}>
+              {busy ? 'Re-running…' : 'Re-run'}
+            </button>
+            {error && <p className="error">{error}</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TextureLibrary() {
+  const [list, setList] = useState<TextureSummary[]>([])
+  const refresh = useCallback(() => {
+    textures.list().then(setList)
+  }, [])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return (
+    <div className="texture-library">
+      <TextureLibraryGenerateForm onChanged={refresh} />
+      <div className="texture-grid">
+        {list.map((t) => (
+          <TextureLibraryRow key={t.id} t={t} onChanged={refresh} />
+        ))}
+        {list.length === 0 && <p className="hint">No textures yet — generate one above.</p>}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const { projects, refresh } = useProjects()
   const [active, setActive] = useState<string | null>(null)
+  const [tab, setTab] = useState<'projects' | 'textures'>('textures')
 
   return (
     <div className="app">
       <header>
         <h1>NOCK</h1>
-        <p className="tagline">layered image editor — SHANKPIT texture tools, built on ImageMagick</p>
+        <p className="tagline">texture generator &amp; manager — SHANKPIT texture tools, built on ImageMagick + PARENA</p>
+        <nav className="tabs">
+          <button className={tab === 'textures' ? 'active' : ''} onClick={() => setTab('textures')}>
+            Texture Library
+          </button>
+          <button className={tab === 'projects' ? 'active' : ''} onClick={() => setTab('projects')}>
+            Projects (layer editor)
+          </button>
+        </nav>
       </header>
 
-      <div className="layout">
-        <aside className="project-list">
-          <h2>Projects</h2>
-          <ul>
-            {projects.map((p) => (
-              <li key={p} className={p === active ? 'active' : ''}>
-                <button onClick={() => setActive(p)}>{p}</button>
-              </li>
-            ))}
-          </ul>
-          <NewProjectForm
-            onCreated={(name) => {
-              refresh()
-              setActive(name)
-            }}
-          />
-        </aside>
-
-        <main>
-          {active ? (
-            <ProjectEditor
-              key={active}
-              name={active}
-              onDeleted={() => {
-                setActive(null)
+      {tab === 'textures' ? (
+        <div className="layout-single">
+          <TextureLibrary />
+        </div>
+      ) : (
+        <div className="layout">
+          <aside className="project-list">
+            <h2>Projects</h2>
+            <ul>
+              {projects.map((p) => (
+                <li key={p} className={p === active ? 'active' : ''}>
+                  <button onClick={() => setActive(p)}>{p}</button>
+                </li>
+              ))}
+            </ul>
+            <NewProjectForm
+              onCreated={(name) => {
                 refresh()
+                setActive(name)
               }}
             />
-          ) : (
-            <p className="hint">Select or create a project to start editing.</p>
-          )}
-        </main>
-      </div>
+          </aside>
+
+          <main>
+            {active ? (
+              <ProjectEditor
+                key={active}
+                name={active}
+                onDeleted={() => {
+                  setActive(null)
+                  refresh()
+                }}
+              />
+            ) : (
+              <p className="hint">Select or create a project to start editing.</p>
+            )}
+          </main>
+        </div>
+      )}
     </div>
   )
 }
