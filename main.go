@@ -21,6 +21,7 @@ import (
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
+	"iduna/internal/nock"
 	"iduna/internal/promptoverse"
 	"iduna/internal/statuspage"
 	"iduna/internal/store"
@@ -590,6 +591,25 @@ func main() {
 	gfdItemProposalsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(gfdItemProposalsH))
 	mux.Handle("/admin/gfd-items/api/proposals", gfdItemProposalsProtected)
 	mux.Handle("/admin/gfd-items/api/proposals/", gfdItemProposalsProtected)
+
+	// NOCK (founder real-time, 2026-09-12: "we are gonna need to build our own tools to create
+	// the textures... lets yolo it into iduna"). Deliberately NOT under GFD's own naming/scope --
+	// built for SHANKPIT's real texture needs first so it stays a genuinely reusable engine tool,
+	// not a GFD-only feature (see internal/nock's own package doc for the full rationale). Every
+	// real operation lives in internal/nock.Service, shared by this HTTP API and cmd/nock's CLI.
+	nockDataDir := getenv("NOCK_DATA_DIR", "/home/fatbaby/IDUNA/var/nock-projects")
+	nockSvc, err := nock.NewService(nockDataDir)
+	if err != nil {
+		log.Fatalf("nock: %v", err)
+	}
+	nockH := &handlers.NockHandler{Svc: nockSvc}
+	nockAdminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockH))
+	mux.Handle("/admin/nock/api/", nockAdminProtected)
+	nockAssetsH, err := handlers.NewNockAssetsHandler()
+	if err != nil {
+		log.Fatalf("nock assets: %v", err)
+	}
+	mux.Handle("/admin/nock/", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockAssetsH)))
 
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.

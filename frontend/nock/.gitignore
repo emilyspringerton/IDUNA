@@ -1,0 +1,29 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist-ssr
+*.local
+
+# dist/ is deliberately NOT ignored here -- internal/http/handlers/nock_page.go's own go:embed
+# bakes this directory straight into the IDUNA binary, so the built output has to be a real,
+# committed file, not a build artifact recreated by a Go-only `go build`/CI pipeline that never
+# runs npm. Re-run `npm run build` and commit the result after any frontend source change (see
+# that file's own doc comment for the real, honest limitation this implies).
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

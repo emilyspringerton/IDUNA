@@ -1,0 +1,227 @@
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+header h1 {
+  margin: 0;
+  color: var(--gold);
+  letter-spacing: 0.08em;
+}
+
+.tagline {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 0;
+}
+
+.project-list {
+  border-right: 1px solid var(--line);
+  padding: 1rem;
+  background: var(--panel);
+  overflow-y: auto;
+}
+
+.project-list h2 {
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.project-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.project-list li button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid transparent;
+}
+
+.project-list li.active button {
+  background: var(--gold);
+  color: #1a1509;
+}
+
+.new-project-form {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.new-project-form > div,
+.new-project-form input {
+  width: 100%;
+}
+
+main {
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1rem;
+}
+
+.dims {
+  color: var(--muted);
+  font-weight: normal;
+  font-size: 0.85rem;
+}
+
+.editor-body {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.canvas-pane {
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #1e1e1e 0% 50%) 50% / 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.preview {
+  max-width: 100%;
+  image-rendering: pixelated;
+  border: 1px solid var(--line);
+  background: #000;
+}
+
+.export-links {
+  display: flex;
+  gap: 1rem;
+}
+
+.export-links a {
+  color: var(--gold);
+  font-size: 0.85rem;
+}
+
+.side-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+}
+
+.layer-row.selected {
+  border-color: var(--gold);
+}
+
+.layer-row .layer-name {
+  flex: 1;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layer-row .opacity-value {
+  font-size: 0.75rem;
+  color: var(--muted);
+  width: 2.5rem;
+}
+
+.layer-row button {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+}
+
+.mask-btn {
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.gradient-form,
+.add-layer-form,
+.effects-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.gradient-form h3,
+.add-layer-form h3,
+.effects-panel h3 {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gradient-form label,
+.effect-row label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.effect-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.effect-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
