@@ -972,6 +972,15 @@ func main() {
 	mux.Handle("/api/v1/fieldoffices/", mmoH)
 	mux.Handle("/api/v1/hats", mmoH)
 	mux.Handle("/api/v1/hats/", mmoH)
+	// SSH key -> character fingerprint lookup (SSH_TRANSPORT_IDENTITY_SPEC.md §3, Stage 5) --
+	// list/bind/revoke live under /api/v1/characters/:id/ssh-keys, already covered by the
+	// /api/v1/characters/ registration above; this is only the top-level lookup-by-fingerprint
+	// route. Found live: this registration was missing entirely on first pass, caught by testing
+	// the real endpoint against a throwaway instance rather than trusting the handler's own
+	// ServeHTTP switch statement alone -- a real 404 (net/http's own default, not
+	// ssh_keys.go's) is what a missing mux.Handle looks like, and is easy to mistake for the
+	// handler's own real "fingerprint not found" 404 if only the handler code is read.
+	mux.Handle("/api/v1/ssh-keys", mmoH)
 
 	// Supply chain API (S136-02/03) — auth required.
 	supplyH := middleware.RequireAuth(keys)(&handlers.SupplyHandler{DB: db})
