@@ -18,8 +18,19 @@ package handlers
 // zone-scoped drop table is a separate, larger follow-up (would need mob spawn code itself to
 // carry a zone tag, not just this page).
 //
-// Same real "apps2/mud only loads its JSON at startup" limitation as gfd_items.go: an edit here
-// takes effect on that process's next restart, not live.
+// Real, honest correction (S412-05/S412-10, 2026-09-12): the sibling comment above (and
+// gfd_items.go's own matching one) claimed apps2/mud only loaded this JSON once at startup --
+// true when written, no longer true. apps2/mud now runs a real SIGHUP handler
+// (apps2/mud/hot_reload.go) that re-loads both data/items.json and this file's own
+// data/mob_drops.json without a restart -- `kill -HUP <mud-pid>` (or, once wired,
+// `systemctl --user reload gfd-mud.service`) picks up an edit made here live.
+//
+// DropChance (S412-09, founder real-time: "the gfd-mob-drops admin interface needs to be able to
+// tune drop rates for each item") mirrors server/mobdrop.Item's own real pointer-typed field --
+// nil (the key absent from the JSON, every pre-existing row's real current state) means "always
+// drops," an explicit 0 means a real, deliberate "never drops right now," anything in between is
+// a real per-item probability. See that package's own EffectiveDropChance/RollDropsFor for the
+// actual roll this admin-edited data now drives.
 
 import (
 	"encoding/json"
@@ -33,8 +44,9 @@ import (
 
 // GfdMobDropItem mirrors server/mobdrop.Item's own real JSON shape exactly.
 type GfdMobDropItem struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	DropChance *float64 `json:"drop_chance,omitempty"` // nil = always (pre-existing default); 0.0-1.0 otherwise
 }
 
 // GfdMobDropTable mirrors server/mobdrop.DropTable's own real JSON shape exactly -- duplicated

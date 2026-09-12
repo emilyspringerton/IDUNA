@@ -112,13 +112,18 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
-function addItemRow(id, name) {
+function addItemRow(id, name, dropChance) {
   const wrap = document.getElementById('f-items');
   const row = document.createElement('div');
   row.className = 'drop-item-row';
+  // Real per-item roll rate (S412-09). Blank = unset = always drops (every pre-existing row's
+  // real, current behavior, unchanged). 0-100 typed here maps to a real 0.0-1.0 drop_chance --
+  // an explicit 0 is a real, deliberate "never drops right now," not "unset."
   row.innerHTML =
     '<input type="text" class="fi-id" placeholder="item id (e.g. worm-sinew)" value="' + escapeHtml(id || '') + '">' +
     '<input type="text" class="fi-name" placeholder="display name (e.g. Worm Sinew)" value="' + escapeHtml(name || '') + '">' +
+    '<input type="number" class="fi-chance" placeholder="% (blank = always)" min="0" max="100" step="0.1" style="flex: 0 0 8.5rem" value="' +
+      (dropChance == null ? '' : escapeHtml(String(Math.round(dropChance * 1000) / 10))) + '">' +
     '<button type="button" class="danger fi-remove">×</button>';
   row.querySelector('.fi-remove').addEventListener('click', () => row.remove());
   wrap.appendChild(row);
@@ -130,7 +135,15 @@ function formToTable() {
   document.querySelectorAll('#f-items .drop-item-row').forEach(row => {
     const id = row.querySelector('.fi-id').value.trim();
     const name = row.querySelector('.fi-name').value.trim();
-    if (id) items.push({ id: id, name: name || id });
+    const chanceStr = row.querySelector('.fi-chance').value.trim();
+    if (id) {
+      const it = { id: id, name: name || id };
+      if (chanceStr !== '') {
+        const pct = Math.max(0, Math.min(100, parseFloat(chanceStr)));
+        if (!isNaN(pct)) it.drop_chance = pct / 100;
+      }
+      items.push(it);
+    }
   });
   return { kind: kind, items: items };
 }
@@ -138,7 +151,7 @@ function formToTable() {
 function tableToForm(t) {
   document.getElementById('f-kind').value = t.kind;
   document.getElementById('f-items').innerHTML = '';
-  (t.items || []).forEach(it => addItemRow(it.id, it.name));
+  (t.items || []).forEach(it => addItemRow(it.id, it.name, it.drop_chance == null ? null : it.drop_chance));
   if ((t.items || []).length === 0) addItemRow();
 }
 
@@ -163,7 +176,10 @@ async function loadTables() {
   tbody.innerHTML = '';
   tables.forEach(t => {
     const tr = document.createElement('tr');
-    const dropsStr = (t.items || []).map(it => it.name + ' (' + it.id + ')').join(', ');
+    const dropsStr = (t.items || []).map(it => {
+      const pct = it.drop_chance == null ? 'always' : (Math.round(it.drop_chance * 1000) / 10) + '%';
+      return it.name + ' (' + it.id + ', ' + pct + ')';
+    }).join(', ');
     tr.innerHTML =
       '<td>' + escapeHtml(t.kind) + '</td>' +
       '<td>' + escapeHtml(dropsStr) + '</td>';
