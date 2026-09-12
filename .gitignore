@@ -13,3 +13,6 @@ go.work.sum
 sdk/python/**/__pycache__/
 sdk/python/**/*.pyc
 sdk/python/.pytest_cache/
+
+# Local pre-rollout DB backups (SSH Transport & Identity spec Stage 5) -- never committed.
+var-backups/
