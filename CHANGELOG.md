@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-12
+- feat(mmo): per-job character leveling API (GFD-124433) -- new character_job_levels table + GET/PATCH /api/v1/characters/:id/job-levels[/:job], agent-only writes. characters.level/current_xp kept as a mirror of the currently-active job. 5 new tests. (sess-20260905-0720-ec33e7c5)
 - feat(nock): SQLite-backed texture library CRUD + clone, modeled on CarePyre's resume clone (many independent master textures, not one master with derived views) -- new nock_textures table, internal/nock/texture_store.go, full REST + CLI, minimal GUI tab. Also wired real Tailwind CSS v4 into the frontend. Confirmed PARENA has no JSX/React generation capability (investigated, resolved via AskUserQuestion to keep hand-writing TSX). See docs/NOCK_NORTHSTAR.md. (sess-20260905-0720-ec33e7c5)
 - feat(nock): procedural texture generation via PARENA compiled to the Java target (not C) + Vertex AI. Real security fix: PARENA's C emitter's #target/inline-c is unrestricted (confirmed unsandboxed RCE vector for LLM-generated code); Java target has no such escape hatch and its narrow construct support makes a compiled program a provably pure function. internal/nock/procgen.go + gen_vertex.go, new Layer.Source field ('think GENERA OS'), cmd/nock proc-add/proc-edit/proc-show, HTTP endpoints, GUI panel. 13 new tests. See docs/NOCK_NORTHSTAR.md. (sess-20260905-0720-ec33e7c5)
 
