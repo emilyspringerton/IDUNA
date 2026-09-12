@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-12
+
+- feat(nock): v0 layered image editor -- internal/nock (ImageMagick-backed engine: layers/masks/opacity/gradients/hue-sat/sharpen/resize/export), cmd/nock CLI, internal/http/handlers/nock.go JSON API, and a React 19+TypeScript SPA at /admin/nock (go:embed'd, iduna.admin-gated). Deliberately not GFD-coupled. 13 tests, all against real ImageMagick. Founder: 'we are gonna need to build our own tools to create the textures... lets yolo it into iduna... this project is called NOCK.' See docs/NOCK_NORTHSTAR.md for the phased plan. (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-11 (continued)
 - feat(agents): new `ECOWAR-BOTS` M2M agent (`config/agents.json` + migration `202609110001_ecowar_bots_agent.sql`, id `00000003-0000-4000-8000-000000000015`), granted the existing `redgarden.ticket.mint`/`redgarden.match.write` permissions -- real root-cause fix for ECOWAR's `ecowar-matchmaker.service` being dead for 5 days ("stuck on queueing" for real players): its `EnvironmentFile` referenced a nonexistent env file, and the ONLY reason that file could never be created was this agent identity not existing yet. A genuinely distinct identity from `REDGARDEN-BOTS`, not a reused credential, so ECOWAR's own WOTAN match stats never mix into REDGARDEN's leaderboard -- resolves ECOWAR's own previously-flagged-but-undecided identity question. Provisioned live via `cmd/bootstrap` against the real production DB (backed up first); secret written to `var/agent-secrets.env`. See ECOWAR's own CHANGELOG for the full incident writeup. (sess-20260905-0720-ec33e7c5)
 
