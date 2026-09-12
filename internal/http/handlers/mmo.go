@@ -6,6 +6,7 @@ package handlers
 //   POST   /api/v1/characters                         — create character
 //   GET    /api/v1/characters/:id                     — fetch character
 //   GET    /api/v1/characters/by-player/:player_id     — resolve a WOTAN player_id to its character (2026-07-31)
+//   GET    /api/v1/characters/by-name/:name            — case-insensitive name lookup, 404 if unclaimed (2026-09-12)
 //   PATCH  /api/v1/characters/:id/position            — update scene+pos (game server M2M)
 //   PATCH  /api/v1/characters/:id/gold                — deduct gold (409 if insufficient)
 //   PATCH  /api/v1/characters/:id/gold/credit          — credit gold, bounded per call (2026-07-31)
@@ -32,6 +33,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -280,6 +282,21 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleGetCharacterByPlayer(w, r, playerID)
 		return
 	}
+	// GET /api/v1/characters/by-name/:name (2026-09-12, SSH_TRANSPORT_IDENTITY_SPEC.md's own real
+	// name-collision gap, founder real-time: "it should not allow the guest to login as EMILY
+	// thats my character on the ssh also Emily should be taken too") -- a real, case-INSENSITIVE
+	// lookup so a caller can ask "does ANY character already have this name" without needing the
+	// exact case, matching this section's own real fix to handleCreateCharacter below (SQLite's
+	// default BINARY collation makes its own UNIQUE(name) constraint case-SENSITIVE, so "Emily"
+	// and "EMILY" were never actually the same name at the DB level despite looking identical to
+	// a human). Must be checked before the generic GET /:id fallback just below, same
+	// "longer/more-specific-prefix-first" convention every other route here already follows (see
+	// by-player just above).
+	if r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/characters/by-name/") {
+		name := strings.TrimPrefix(path, "/api/v1/characters/by-name/")
+		h.handleGetCharacterByName(w, r, name)
+		return
+	}
 	// GET /api/v1/characters/:id
 	if r.Method == http.MethodGet && len(path) > len("/api/v1/characters/") {
 		id := strings.TrimPrefix(path, "/api/v1/characters/")
@@ -307,6 +324,25 @@ func (h *MMOHandler) handleCreateCharacter(w http.ResponseWriter, r *http.Reques
 	if req.JobMain == "" {
 		req.JobMain = "WAR"
 	}
+	// Real, found-live gap (2026-09-12, founder: "also Emily should be taken too"): the
+	// characters.name column's own UNIQUE constraint uses SQLite's default BINARY collation, so
+	// it is case-SENSITIVE -- "Emily" and "EMILY" have never actually collided at the DB level
+	// despite looking identical to a human, and a raw `strings.Contains(err.Error(), "UNIQUE")`
+	// check below only ever catches an EXACT-case repeat. A real, explicit case-insensitive
+	// existence check here closes that gap for every caller of this endpoint, not just GFD's own
+	// guest-name path (handleGetCharacterByName, this file, is the same real check factored out
+	// for a caller that only wants to ASK, not create).
+	var existingID string
+	checkErr := h.DB.QueryRowContext(r.Context(),
+		`SELECT character_id FROM characters WHERE LOWER(name) = LOWER(?)`, req.Name).Scan(&existingID)
+	if checkErr == nil {
+		mmoWriteError(w, http.StatusConflict, "character name already taken")
+		return
+	}
+	if checkErr != sql.ErrNoRows {
+		mmoWriteError(w, http.StatusInternalServerError, checkErr.Error())
+		return
+	}
 	charID := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := h.DB.ExecContext(r.Context(),
@@ -316,6 +352,10 @@ func (h *MMOHandler) handleCreateCharacter(w http.ResponseWriter, r *http.Reques
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
+			// Real, narrow race window between the check above and this INSERT (two concurrent
+			// creates for the exact same name) -- the DB's own real UNIQUE constraint is still
+			// the final, authoritative backstop; this branch is now a rare race, not the only
+			// defense.
 			mmoWriteError(w, http.StatusConflict, "character name already taken")
 			return
 		}
@@ -354,6 +394,37 @@ func (h *MMOHandler) handleGetCharacter(w http.ResponseWriter, r *http.Request, 
 // on player_id in the schema, but every real caller -- apps2/mud's fetch-or-create -- only ever
 // creates one per player_id in practice); LIMIT 1 makes that assumption explicit rather than
 // silently depending on row order if it's ever violated.
+// handleGetCharacterByName resolves a name to its character record via a real, case-INSENSITIVE
+// lookup (LOWER(name) = LOWER(?) -- SQLite's default BINARY collation means the plain UNIQUE(name)
+// constraint on this table, and any naive `WHERE name = ?` query, are both case-sensitive; this is
+// the one, real place that isn't). Used by GFD's own guest-name-entry path to refuse a guest
+// claiming any existing character's name regardless of case, and reusable by handleCreateCharacter
+// below for the identical real reason. 404 (not found) is the real, expected, common response --
+// "is this name taken" is the actual real-world question every caller asks this for.
+func (h *MMOHandler) handleGetCharacterByName(w http.ResponseWriter, r *http.Request, name string) {
+	if decoded, err := url.PathUnescape(name); err == nil {
+		name = decoded
+	}
+	row := h.DB.QueryRowContext(r.Context(),
+		`SELECT character_id, player_id, name, scene_id, pos_x, pos_y, pos_z,
+		        gold_balance, level, current_xp, job_main, job_sub,
+		        home_scene_id, home_pos_x, home_pos_y, home_pos_z, created_at, updated_at
+		 FROM characters WHERE LOWER(name) = LOWER(?) LIMIT 1`, name)
+	var c characterResponse
+	if err := row.Scan(&c.CharacterID, &c.PlayerID, &c.Name, &c.SceneID,
+		&c.PosX, &c.PosY, &c.PosZ, &c.GoldBalance, &c.Level, &c.CurrentXP,
+		&c.JobMain, &c.JobSub, &c.HomeSceneID, &c.HomePosX, &c.HomePosY, &c.HomePosZ,
+		&c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			mmoWriteError(w, http.StatusNotFound, "no character with that name")
+			return
+		}
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
 func (h *MMOHandler) handleGetCharacterByPlayer(w http.ResponseWriter, r *http.Request, playerID string) {
 	row := h.DB.QueryRowContext(r.Context(),
 		`SELECT character_id, player_id, name, scene_id, pos_x, pos_y, pos_z,
