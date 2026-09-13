@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-13
+
+- CRITICAL fix: added PATCH /api/v1/characters/:id/equipment, the missing write path -- GET was the only real equipment endpoint that ever existed. (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-12
 - S412-09: gfd-mob-drops admin UI adds a real per-item drop-chance percent field (blank=always, 0-100%), mirrored in GfdMobDropItem's DropChance field. (sess-20260905-0720-ec33e7c5)
 - feat(mmo): per-job character leveling API (GFD-124433) -- new character_job_levels table + GET/PATCH /api/v1/characters/:id/job-levels[/:job], agent-only writes. characters.level/current_xp kept as a mirror of the currently-active job. 5 new tests. (sess-20260905-0720-ec33e7c5)
