@@ -17,6 +17,7 @@ import (
 	"iduna/internal/auth/device"
 	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/blog"
+	"iduna/internal/brawlpit"
 	"iduna/internal/drive"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
@@ -621,6 +622,18 @@ func main() {
 	nockTexturesProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockTexturesH))
 	mux.Handle("/admin/nock/api/textures", nockTexturesProtected)
 	mux.Handle("/admin/nock/api/textures/", nockTexturesProtected)
+
+	// BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
+	// editor online - web technologies - we already started building nock - can we finish
+	// building out some of that interface so we can kind of parlay it into an online brawlpit
+	// level editor?"). Served under NOCK's own /admin/nock/ surface -- same real React app shell,
+	// a new tab -- per the founder's explicit "parlay [NOCK's] interface" framing, but backed by
+	// its own real package/table (internal/brawlpit), not folded into internal/nock itself, same
+	// design principle that already keeps NOCK un-coupled from any one specific game.
+	brawlpitLevelsH := &handlers.BrawlpitLevelsHandler{Store: &brawlpit.LevelStore{DB: db}}
+	brawlpitLevelsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(brawlpitLevelsH))
+	mux.Handle("/admin/nock/api/brawlpit-levels", brawlpitLevelsProtected)
+	mux.Handle("/admin/nock/api/brawlpit-levels/", brawlpitLevelsProtected)
 
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.
