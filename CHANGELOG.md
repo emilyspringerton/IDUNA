@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-13
+- S417-02: real, public, read-only HTTPS API for BRAWLPIT level browsing (/api/v1/brawlpit-levels) -- list+export, no auth, no write methods. Live-verified over okemily.com. (sess-20260905-0720-ec33e7c5)
 - S415-02/03/04: real BRAWLPIT online level editor -- new internal/brawlpit.LevelStore + REST API + a canvas-based LevelEditor.tsx tab in the NOCK React app. Live-verified end to end: a level authored via the store, exported, loaded through BRAWLPIT's real native C loader. (sess-20260905-0720-ec33e7c5)
 
 - CRITICAL fix: added PATCH /api/v1/characters/:id/equipment, the missing write path -- GET was the only real equipment endpoint that ever existed. (sess-20260905-0720-ec33e7c5)
