@@ -645,10 +645,36 @@ function TextureLibrary() {
   )
 }
 
+type Tab = 'projects' | 'textures' | 'brawlpit' | 'ai-opponents'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'brawlpit', 'ai-opponents']
+
+// Founder real-time: "deep links into that interface url wise? i have to click on it every time
+// i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
+// needed for 4 flat tabs: the URL hash IS the state (`#ai-opponents`), read once on mount and
+// kept in sync both ways (tab click -> hash, and browser back/forward -> tab) via `hashchange`.
+// An unrecognized/missing hash falls back to the same 'textures' default this always had.
+function tabFromHash(): Tab {
+  const h = window.location.hash.slice(1)
+  return (VALID_TABS as string[]).includes(h) ? (h as Tab) : 'textures'
+}
+
 export default function App() {
   const { projects, refresh } = useProjects()
   const [active, setActive] = useState<string | null>(null)
-  const [tab, setTab] = useState<'projects' | 'textures' | 'brawlpit' | 'ai-opponents'>('textures')
+  const [tab, setTabState] = useState<Tab>(tabFromHash)
+
+  const setTab = useCallback((t: Tab) => {
+    setTabState(t)
+    if (window.location.hash.slice(1) !== t) {
+      window.location.hash = t
+    }
+  }, [])
+
+  useEffect(() => {
+    const onHashChange = () => setTabState(tabFromHash())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
 
   return (
     <div className="app">

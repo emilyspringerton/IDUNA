@@ -71,6 +71,8 @@ function CheckpointRow({
   )
 }
 
+const HIDE_DISABLED_STORAGE_KEY = 'nock.aiOpponents.hideDisabled'
+
 export default function AiOpponents() {
   const [list, setList] = useState<Checkpoint[]>([])
   const [active, setActive] = useState<Checkpoint | null>(null)
@@ -79,6 +81,34 @@ export default function AiOpponents() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // Founder real-time: "can we get an option in the AI opponent NOCK ui for HIDE DISABLED so its
+  // like disable can function as soft delete for me so i dont have to look at a bazillion old
+  // models that just stand there" -- a real, honest client-side filter (Disabled already exists
+  // as real, reversible server-side state via checkpoints.setDisabled; this doesn't touch that,
+  // it just stops rendering rows already in that state). Persisted in localStorage, not the
+  // backend -- a pure per-viewer display preference, same shape roleFilter would need if it ever
+  // needed to survive a reload (it currently doesn't ask to). Defaults to true (hidden) since the
+  // whole point is "so I don't have to look at" them by default. Real, checked edge case: nothing
+  // server-side stops the active opponent from also being disabled (SetDisabled is a fully
+  // independent flag from SetActiveOpponent), so its ROW can disappear from the table while
+  // hiding is on -- not a bug, since the "Current opponent:" hint line above the table renders
+  // from the separate `active` state regardless of this filter, so the real status stays visible.
+  const [hideDisabled, setHideDisabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(HIDE_DISABLED_STORAGE_KEY) !== 'false'
+    } catch {
+      return true
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HIDE_DISABLED_STORAGE_KEY, String(hideDisabled))
+    } catch {
+      // per-viewer convenience only -- a blocked/full localStorage just means this doesn't
+      // persist across reloads, never a reason to break the page.
+    }
+  }, [hideDisabled])
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -151,6 +181,9 @@ export default function AiOpponents() {
     }
   }
 
+  const hiddenCount = list.filter((c) => c.is_disabled).length
+  const visibleList = hideDisabled ? list.filter((c) => !c.is_disabled) : list
+
   return (
     <div className="ai-opponents">
       <div className="ai-opponents-header">
@@ -167,6 +200,11 @@ export default function AiOpponents() {
             <option value="main_exploiter">Main Exploiter</option>
             <option value="league_exploiter">League Exploiter</option>
           </select>
+        </label>
+        {' '}
+        <label title="Disabling a checkpoint is real, reversible state (checkpoints.setDisabled) -- this just stops rendering rows already in that state, so it can double as a soft-delete for old, inert models without actually deleting anything.">
+          <input type="checkbox" checked={hideDisabled} onChange={(e) => setHideDisabled(e.target.checked)} />
+          {' '}Hide Disabled{hiddenCount > 0 ? ` (${hiddenCount})` : ''}
         </label>
         {' '}
         <button type="button" disabled={bulkBusy || list.every((c) => c.is_disabled)} onClick={disableAll}
@@ -187,6 +225,11 @@ export default function AiOpponents() {
         <p className="hint">Loading…</p>
       ) : list.length === 0 ? (
         <p className="hint">No checkpoints in the registry yet -- start a training run (scripts/rl_train_packet.py --registry-url ...) to populate it.</p>
+      ) : visibleList.length === 0 ? (
+        <p className="hint">
+          All {list.length} currently-listed checkpoint(s) are disabled and hidden.{' '}
+          <button type="button" onClick={() => setHideDisabled(false)}>Show Disabled</button>
+        </p>
       ) : (
         <table className="checkpoint-table">
           <thead>
@@ -204,7 +247,7 @@ export default function AiOpponents() {
             </tr>
           </thead>
           <tbody>
-            {list.map((c) => (
+            {visibleList.map((c) => (
               <CheckpointRow
                 key={c.id}
                 c={c}
