@@ -646,6 +646,33 @@ func main() {
 	mux.Handle("/api/v1/brawlpit-levels", brawlpitLevelsPublicH)
 	mux.Handle("/api/v1/brawlpit-levels/", brawlpitLevelsPublicH)
 
+	// S420, founder real-time: "lets make a checkpoint registry so we can train from multiple
+	// locations and then we can add checkpoints from colab?" -- a real, remote, shared RL
+	// checkpoint registry (see internal/brawlpit/checkpoint_store.go's own doc comment for why a
+	// local scripts/rl_league.py directory alone can't serve multiple training machines/Colab
+	// runtimes). List/download are public (same trust level GET /api/v1/brawlpit-levels already
+	// established); upload is gated behind the real M2M brawlpit.checkpoints.write permission
+	// (migrations/truestore/202609131400_brawlpit_rl_checkpoints.sql's own new BRAWLPIT-RL agent).
+	brawlpitCheckpointsH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("brawlpit.checkpoints.write")(
+			&handlers.BrawlpitCheckpointsHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}},
+		),
+	)
+	// The auth+permission wrapper above would incorrectly gate the public list/download GETs too
+	// (RequireAuth/RequirePermission apply to the WHOLE handler, not per-method) -- so list/
+	// download get their own, separate, unauthenticated handler instance pointed at the same
+	// real store, and only the POST upload route uses the gated one. Same real store, same
+	// underlying data either way -- this is a routing split, not two different registries.
+	brawlpitCheckpointsPublicH := &handlers.BrawlpitCheckpointsHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}}
+	mux.Handle("/api/v1/brawlpit-checkpoints", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			brawlpitCheckpointsH.ServeHTTP(w, r)
+			return
+		}
+		brawlpitCheckpointsPublicH.ServeHTTP(w, r)
+	}))
+	mux.Handle("/api/v1/brawlpit-checkpoints/", brawlpitCheckpointsPublicH)
+
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.
 	gfdMobDropsJSONPath := getenv("GFD_MOB_DROPS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/mob_drops.json")

@@ -181,6 +181,15 @@
         "redgarden.ticket.mint",
         "redgarden.match.write"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000016",
+      "name": "BRAWLPIT-RL",
+      "type": "game_bot_agent",
+      "description": "BRAWLPIT RL training pipeline (scripts/rl_train_packet.py, any training location -- this box, Colab, a future machine) — authenticates via POST /api/v1/auth/agent to upload checkpoints (.zip + role/generation/elo/source_location metadata) to the shared, cross-machine registry (POST /api/v1/brawlpit-checkpoints), so training from multiple locations can contribute to one real league. Same M2M pattern as ECOWAR-BOTS/REDGARDEN-BOTS. List/download stay public, same trust level GET /api/v1/brawlpit-levels already established. S420, 2026-09-13.",
+      "permissions": [
+        "brawlpit.checkpoints.write"
+      ]
     }
   ]
 }
