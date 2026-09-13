@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-13
+- S453: BRAWLPIT checkpoint upload/activate/disable/enable now emit into the unified event log (iduna:brawlpit.checkpoint.upload/.activate/.disable/.enable), queryable via /services/search/jobs or /portal/logs -- direct follow-up to diagnosing a real lost Elo lineage (S452) that had no audit trail (sess-20260905-0720-ec33e7c5)
 - NOCK AI Opponents: added a 'Hide Disabled' checkbox (soft-delete filtering, persisted per-viewer in localStorage) and made the top-level tab switcher deep-linkable via URL hash (#ai-opponents etc.), synced with browser back/forward (sess-20260905-0720-ec33e7c5)
 - S431: 'Disable All' button on the NOCK AI Opponents checkpoint table (sess-20260905-0720-ec33e7c5)
 - S428: real, reversible per-checkpoint 'disable from league' flag on the RL checkpoint registry (migration + SetDisabled + admin PATCH endpoint + NOCK checkbox) (sess-20260905-0720-ec33e7c5)
