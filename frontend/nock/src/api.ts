@@ -221,12 +221,25 @@ export interface Platform {
   type: 0 | 1
 }
 
+// Guide mirrors IDUNA/internal/brawlpit/level_store.go's own real Guide struct exactly (S418-01,
+// "NOCK — Guide-Based Snapping"). Guides are real level data (they save/load/clone with the
+// level, see LevelStore.SaveGuides), but they are AUTHORING METADATA ONLY -- notice ExportDoc
+// below has no guides field at all, matching the requirements doc's own explicit 1.4 contract
+// ("the game client must never load or care about them"). Never add guides to ExportDoc.
+export interface Guide {
+  axis: 'horizontal' | 'vertical'
+  coord: number
+  locked: boolean
+  is_mirror_axis: boolean
+}
+
 export interface Level {
   id: number
   name: string
   width: number
   height: number
   platforms: Platform[]
+  guides: Guide[]
   created_at: string
   updated_at: string
 }
@@ -265,6 +278,10 @@ export const levels = {
   delete: (id: number) => lreq<void>(`/${id}`, { method: 'DELETE' }),
   clone: (id: number, name: string) => lreq<Level>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
   exportUrl: (id: number) => `${LEVELS_BASE}/${id}/export?_=${Date.now()}`,
+  // saveGuides is a real, separate call from `save` above -- ruler/guide edits are a genuinely
+  // independent action from moving/resizing platforms (matches LevelStore.SaveGuides' own
+  // separate-endpoint design on the Go side).
+  saveGuides: (id: number, guides: Guide[]) => lreq<Level>(`/${id}/guides`, { method: 'PUT', body: JSON.stringify({ guides }) }),
 }
 
 export async function generateProcedural(project: string, name: string, prompt: string): Promise<GenerateResult> {

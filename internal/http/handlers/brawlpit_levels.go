@@ -53,6 +53,8 @@ func (h *BrawlpitLevelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.clone(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "export" && r.Method == http.MethodGet:
 		h.export(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "guides" && r.Method == http.MethodPut:
+		h.saveGuides(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -192,6 +194,34 @@ func (h *BrawlpitLevelsHandler) clone(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	writeJSON(w, http.StatusCreated, lvl)
+}
+
+type saveGuidesReq struct {
+	Guides []brawlpit.Guide `json:"guides"`
+}
+
+// saveGuides replaces a level's own real guide set (S418-01/02, "NOCK — Guide-Based Snapping") --
+// a separate action from update()'s own platform-layout save, since ruler/guide edits are a real,
+// independent interaction in the editor UI. Guides never appear in export() below -- that's the
+// requirements doc's own explicit contract (1.4: "the game client must never load or care about
+// them"), enforced by internal/brawlpit.ExportDoc simply having no Guides field at all.
+func (h *BrawlpitLevelsHandler) saveGuides(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseLevelID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req saveGuidesReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	lvl, err := h.Store.SaveGuides(r.Context(), id, req.Guides)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, lvl)
 }
 
 // export returns the real, native-loader-facing document (S415-04: the exact JSON shape

@@ -27,6 +27,7 @@ func newBrawlpitLevelsTestHandler(t *testing.T) *handlers.BrawlpitLevelsHandler 
 			width          REAL NOT NULL DEFAULT 80,
 			height         REAL NOT NULL DEFAULT 40,
 			platforms_json TEXT NOT NULL DEFAULT '[]',
+			guides_json    TEXT NOT NULL DEFAULT '[]',
 			created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
@@ -168,5 +169,73 @@ func TestBrawlpitLevelsHandler_ExportMatchesNativeLoaderShape(t *testing.T) {
 	json.Unmarshal(exportRec.Body.Bytes(), &doc)
 	if doc.Version != 1 || doc.Name != "Export Me" || len(doc.Platforms) != 1 || doc.Platforms[0].W != 60 {
 		t.Errorf("export doc doesn't match the real native contract: %+v", doc)
+	}
+}
+
+// TestBrawlpitLevelsHandler_SaveAndFetchGuides is the real, direct HTTP-layer guard on S418-01/02
+// (NOCK — Guide-Based Snapping): guides save via their own PUT route, persist, and round-trip
+// through a normal GET.
+func TestBrawlpitLevelsHandler_SaveAndFetchGuides(t *testing.T) {
+	h := newBrawlpitLevelsTestHandler(t)
+
+	createBody, _ := json.Marshal(map[string]any{
+		"name": "Guided Stage", "width": 80, "height": 40,
+		"platforms": []map[string]any{{"x": 0, "y": 0, "w": 10, "h": 10, "type": 0}},
+	})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/admin/nock/api/brawlpit-levels", bytes.NewReader(createBody)))
+
+	guidesBody, _ := json.Marshal(map[string]any{
+		"guides": []map[string]any{
+			{"axis": "vertical", "coord": 0, "locked": false, "is_mirror_axis": true},
+			{"axis": "horizontal", "coord": 5, "locked": true, "is_mirror_axis": false},
+		},
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/admin/nock/api/brawlpit-levels/1/guides", bytes.NewReader(guidesBody)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save guides: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var saved brawlpit.Level
+	json.Unmarshal(rec.Body.Bytes(), &saved)
+	if len(saved.Guides) != 2 {
+		t.Fatalf("expected 2 guides in the save response, got %+v", saved.Guides)
+	}
+
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/admin/nock/api/brawlpit-levels/1", nil))
+	var fetched brawlpit.Level
+	json.Unmarshal(getRec.Body.Bytes(), &fetched)
+	if len(fetched.Guides) != 2 || !fetched.Guides[0].IsMirrorAxis {
+		t.Errorf("guides didn't persist through a plain GET: %+v", fetched.Guides)
+	}
+
+	// The requirements doc's own explicit contract (1.4): guides must never reach the
+	// client-facing export.
+	exportRec := httptest.NewRecorder()
+	h.ServeHTTP(exportRec, httptest.NewRequest(http.MethodGet, "/admin/nock/api/brawlpit-levels/1/export", nil))
+	if !bytes.Contains(exportRec.Body.Bytes(), []byte(`"platforms"`)) {
+		t.Fatalf("export response looks wrong: %s", exportRec.Body.String())
+	}
+	if bytes.Contains(exportRec.Body.Bytes(), []byte(`guide`)) {
+		t.Errorf("export response must never mention guides at all: %s", exportRec.Body.String())
+	}
+}
+
+func TestBrawlpitLevelsHandler_SaveGuidesRejectsInvalidAxis(t *testing.T) {
+	h := newBrawlpitLevelsTestHandler(t)
+
+	createBody, _ := json.Marshal(map[string]any{
+		"name": "Bad Guide Stage", "width": 80, "height": 40,
+		"platforms": []map[string]any{{"x": 0, "y": 0, "w": 10, "h": 10, "type": 0}},
+	})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/admin/nock/api/brawlpit-levels", bytes.NewReader(createBody)))
+
+	guidesBody, _ := json.Marshal(map[string]any{
+		"guides": []map[string]any{{"axis": "sideways", "coord": 0}},
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/admin/nock/api/brawlpit-levels/1/guides", bytes.NewReader(guidesBody)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for an invalid axis, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

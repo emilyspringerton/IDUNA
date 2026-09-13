@@ -240,3 +240,84 @@ textarea {
 .export-link {
   @apply rounded border border-line px-2 py-1 text-sm text-gold no-underline hover:bg-panel;
 }
+
+/* S418-01..04: NOCK guide-based snapping. .canvas-grid lays the ruler-corner/ruler-top/
+   ruler-left/canvas-wrap cells out exactly like Photoshop's own ruler chrome; canvas-wrap's own
+   rect is what CanvasArea measures ruler-drag pointer positions against, so it must contain
+   nothing but the canvas itself (no padding/border) or guide creation would land at the wrong
+   world coordinate. */
+
+.canvas-grid {
+  /* grid-template-columns/rows set inline in LevelEditor.tsx from its own RULER_PX constant --
+     one real source of truth instead of a value duplicated here and drifting out of sync. */
+  display: grid;
+}
+
+.ruler-corner {
+  @apply bg-panel;
+}
+
+.ruler {
+  @apply cursor-row-resize bg-panel;
+  touch-action: none;
+}
+
+.ruler-left {
+  @apply cursor-col-resize;
+}
+
+.canvas-wrap {
+  @apply relative inline-block leading-none;
+}
+
+.guide-preview {
+  @apply pointer-events-none absolute border-0;
+}
+
+.guide-preview-horizontal {
+  @apply h-px bg-[#ffe27a];
+}
+
+.guide-preview-vertical {
+  @apply w-px bg-[#ffe27a];
+}
+
+.guide-inspector {
+  @apply flex flex-col gap-2 rounded-md border border-line bg-panel p-3;
+}
+
+.guide-inspector h3 {
+  @apply m-0 text-sm text-gold;
+}
+
+.guide-inspector label {
+  @apply flex items-center gap-2 text-sm text-muted;
+}
+
+.guide-list {
+  @apply m-0 flex max-h-48 list-none flex-col gap-1 overflow-y-auto p-0;
+}
+
+.guide-list li {
+  @apply flex cursor-pointer items-center gap-2 rounded border border-line px-2 py-1 text-xs text-muted;
+}
+
+.guide-list li.active {
+  @apply border-gold text-ink;
+}
+
+.guide-list input[type='number'] {
+  @apply w-16;
+}
+
+.guide-axis {
+  @apply w-4 text-center font-mono text-gold;
+}
+
+.guide-from-edge-row {
+  @apply flex flex-wrap items-center gap-1 border-t border-line pt-2 text-xs;
+}
+
+.guide-from-edge-row button {
+  @apply px-2 py-0.5 text-xs;
+}

@@ -41,8 +41,40 @@ type Level struct {
 	Width     float64    `json:"width"`
 	Height    float64    `json:"height"`
 	Platforms []Platform `json:"platforms"`
-	CreatedAt string     `json:"created_at"`
-	UpdatedAt string     `json:"updated_at"`
+	// Guides is real level data (S418-01, "NOCK — Guide-Based Snapping": "Guides are level data
+	// and save with the level.") but it is AUTHORING METADATA ONLY -- deliberately absent from
+	// ExportDoc below, per the requirements doc's own 1.4: "the game client must never load or
+	// care about them." Never add this field to ExportDoc.
+	Guides    []Guide `json:"guides"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
+// Guide is a single, author-placed, infinite horizontal or vertical alignment line (S418-01).
+// Axis is "horizontal" or "vertical"; Coord is the world-unit Y (horizontal) or X (vertical)
+// coordinate the line sits at. At most one guide per level may have IsMirrorAxis set (the
+// requirements doc's own §3: "One guide per level may be flagged as the mirror axis").
+type Guide struct {
+	Axis         string  `json:"axis"`
+	Coord        float64 `json:"coord"`
+	Locked       bool    `json:"locked"`
+	IsMirrorAxis bool    `json:"is_mirror_axis"`
+}
+
+func validateGuides(guides []Guide) error {
+	mirrorCount := 0
+	for i, g := range guides {
+		if g.Axis != "horizontal" && g.Axis != "vertical" {
+			return fmt.Errorf("brawlpit: guide %d has invalid axis %q (must be horizontal or vertical)", i, g.Axis)
+		}
+		if g.IsMirrorAxis {
+			mirrorCount++
+		}
+	}
+	if mirrorCount > 1 {
+		return fmt.Errorf("brawlpit: at most one guide may be flagged as the mirror axis (found %d)", mirrorCount)
+	}
+	return nil
 }
 
 // ExportDoc is the real, native-loader-facing shape (BRAWLPIT/packages/common/level_format.h's
@@ -124,18 +156,18 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	return s.GetLevel(ctx, id)
 }
 
-// GetLevel returns the full row, including its real platform list.
+// GetLevel returns the full row, including its real platform list and guides.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, platforms_json, created_at, updated_at
+		`SELECT id, name, width, height, platforms_json, guides_json, created_at, updated_at
 		 FROM brawlpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
 
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
-	var platformsJSON string
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &platformsJSON, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	var platformsJSON, guidesJSON string
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &platformsJSON, &guidesJSON, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("brawlpit: level not found")
 		}
@@ -144,7 +176,34 @@ func scanLevel(row *sql.Row) (*Level, error) {
 	if err := json.Unmarshal([]byte(platformsJSON), &l.Platforms); err != nil {
 		return nil, fmt.Errorf("brawlpit: decode stored platforms: %w", err)
 	}
+	if err := json.Unmarshal([]byte(guidesJSON), &l.Guides); err != nil {
+		return nil, fmt.Errorf("brawlpit: decode stored guides: %w", err)
+	}
 	return &l, nil
+}
+
+// SaveGuides replaces a level's own real guide set in place (S418-01/02) -- a separate call from
+// UpdateLevel's own platform-layout save, since the editor's ruler/guide interactions (drag a new
+// guide in, move one, toggle lock) are a genuinely independent action from moving/resizing
+// platforms, matching the requirements doc's own framing of guides as distinct level data.
+func (s *LevelStore) SaveGuides(ctx context.Context, id int64, guides []Guide) (*Level, error) {
+	if err := validateGuides(guides); err != nil {
+		return nil, err
+	}
+	guidesJSON, err := json.Marshal(guides)
+	if err != nil {
+		return nil, fmt.Errorf("brawlpit: marshal guides: %w", err)
+	}
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE brawlpit_levels SET guides_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		string(guidesJSON), id)
+	if err != nil {
+		return nil, fmt.Errorf("brawlpit: save guides: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("brawlpit: level %d not found", id)
+	}
+	return s.GetLevel(ctx, id)
 }
 
 // LevelSummary is the real, lightweight shape a level LIST returns -- everything about a Level
@@ -234,7 +293,16 @@ func (s *LevelStore) CloneLevel(ctx context.Context, id int64, newName string) (
 	if err != nil {
 		return nil, err
 	}
-	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Platforms)
+	clone, err := s.CreateLevel(ctx, newName, src.Width, src.Height, src.Platforms)
+	if err != nil {
+		return nil, err
+	}
+	if len(src.Guides) == 0 {
+		return clone, nil
+	}
+	// Real spacings the author already proved out (the requirements doc's own §0 rationale for
+	// guides existing at all) should survive a clone, same as platforms do.
+	return s.SaveGuides(ctx, clone.ID, src.Guides)
 }
 
 // DeleteLevel permanently removes a level row.
