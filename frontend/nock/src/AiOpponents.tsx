@@ -76,6 +76,7 @@ export default function AiOpponents() {
   const [active, setActive] = useState<Checkpoint | null>(null)
   const [roleFilter, setRoleFilter] = useState<string>('')
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -123,6 +124,33 @@ export default function AiOpponents() {
     }
   }
 
+  // "Disable All" (S431, founder real-time: "i need a button in the model management screen for
+  // disable all") -- targets exactly the currently-filtered list (all roles, or just one role if
+  // the Role filter above is narrowed), matching the same real scoping the filter already applies
+  // to everything else on this page. Only touches checkpoints that aren't already disabled --
+  // re-disabling an already-disabled row is a real, silent no-op on the backend, but skipping it
+  // here keeps the confirm count and the actual PATCH count honest and matching.
+  const disableAll = async () => {
+    const targets = list.filter((c) => !c.is_disabled)
+    if (targets.length === 0) return
+    const scope = roleFilter ? (ROLE_LABELS[roleFilter] ?? roleFilter) : 'ALL roles'
+    if (!window.confirm(`Disable all ${targets.length} currently-listed checkpoint(s) (${scope})? This excludes them from --resume-from-registry, the bot pool, and (S431) pauses any of them still actively training.`)) {
+      return
+    }
+    setBulkBusy(true)
+    setError(null)
+    try {
+      const results = await Promise.allSettled(targets.map((c) => checkpoints.setDisabled(c.id, true)))
+      const failed = results.filter((r) => r.status === 'rejected')
+      if (failed.length > 0) {
+        setError(`${failed.length} of ${targets.length} failed to disable -- see the individual rows and retry those.`)
+      }
+      refresh()
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   return (
     <div className="ai-opponents">
       <div className="ai-opponents-header">
@@ -140,6 +168,11 @@ export default function AiOpponents() {
             <option value="league_exploiter">League Exploiter</option>
           </select>
         </label>
+        {' '}
+        <button type="button" disabled={bulkBusy || list.every((c) => c.is_disabled)} onClick={disableAll}
+                title="Disables every currently-listed checkpoint (respects the Role filter above).">
+          {bulkBusy ? 'Disabling…' : 'Disable All'}
+        </button>
         {error && <span className="error">{error}</span>}
       </div>
 
@@ -176,7 +209,7 @@ export default function AiOpponents() {
                 key={c.id}
                 c={c}
                 isActive={active?.id === c.id}
-                busy={busyId === c.id}
+                busy={busyId === c.id || bulkBusy}
                 onActivate={() => activate(c.id)}
                 onToggleDisabled={() => toggleDisabled(c)}
               />
