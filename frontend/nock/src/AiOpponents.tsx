@@ -30,15 +30,17 @@ function CheckpointRow({
   c,
   isActive,
   onActivate,
+  onToggleDisabled,
   busy,
 }: {
   c: Checkpoint
   isActive: boolean
   onActivate: () => void
+  onToggleDisabled: () => void
   busy: boolean
 }) {
   return (
-    <tr className={isActive ? 'active-opponent-row' : ''}>
+    <tr className={[isActive ? 'active-opponent-row' : '', c.is_disabled ? 'disabled-checkpoint-row' : ''].join(' ').trim()}>
       <td className="checkpoint-name">{c.name || `#${c.id}`}</td>
       <td>{ROLE_LABELS[c.role] ?? c.role}</td>
       <td>{c.generation}</td>
@@ -49,6 +51,12 @@ function CheckpointRow({
       </td>
       <td>{formatBytes(c.size_bytes)}</td>
       <td>{new Date(c.created_at).toLocaleString()}</td>
+      <td>
+        <label title="Excludes this checkpoint from --resume-from-registry warm-starts and the bot pool -- reversible, the row and its blob stay intact.">
+          <input type="checkbox" checked={c.is_disabled} disabled={busy} onChange={onToggleDisabled} />
+          {' '}Disabled
+        </label>
+      </td>
       <td>
         {isActive ? (
           <span className="active-badge">★ current opponent</span>
@@ -102,6 +110,19 @@ export default function AiOpponents() {
     }
   }
 
+  const toggleDisabled = async (c: Checkpoint) => {
+    setBusyId(c.id)
+    setError(null)
+    try {
+      await checkpoints.setDisabled(c.id, !c.is_disabled)
+      refresh()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <div className="ai-opponents">
       <div className="ai-opponents-header">
@@ -145,6 +166,7 @@ export default function AiOpponents() {
               <th>Native</th>
               <th>Size</th>
               <th>Created</th>
+              <th>League</th>
               <th></th>
             </tr>
           </thead>
@@ -156,6 +178,7 @@ export default function AiOpponents() {
                 isActive={active?.id === c.id}
                 busy={busyId === c.id}
                 onActivate={() => activate(c.id)}
+                onToggleDisabled={() => toggleDisabled(c)}
               />
             ))}
           </tbody>

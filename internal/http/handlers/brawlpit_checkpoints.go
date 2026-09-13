@@ -261,3 +261,46 @@ func (h *BrawlpitCheckpointActivateHandler) ServeHTTP(w http.ResponseWriter, r *
 	}
 	writeJSON(w, http.StatusOK, c)
 }
+
+// BrawlpitCheckpointDisableHandler serves PATCH /admin/nock/api/brawlpit-checkpoints/:id/disable
+// -- the real checkbox backend (S428, founder real-time: "i want to reset training but not
+// include certain models from the registry - can you add a checkbox to the registry backend to
+// disable those models from the league?"). Same admin-gated trust level as the activate handler
+// above -- a human excluding a model through the UI, not a training pipeline.
+// Body: {"disabled": bool}.
+type BrawlpitCheckpointDisableHandler struct {
+	Store *brawlpit.CheckpointStore
+}
+
+func (h *BrawlpitCheckpointDisableHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.NotFound(w, r)
+		return
+	}
+	const prefix = "/admin/nock/api/brawlpit-checkpoints/"
+	const suffix = "/disable"
+	path := r.URL.Path
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		http.NotFound(w, r)
+		return
+	}
+	idStr := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	c, err := h.Store.SetDisabled(r.Context(), id, req.Disabled)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}

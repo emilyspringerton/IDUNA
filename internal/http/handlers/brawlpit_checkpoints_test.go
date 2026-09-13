@@ -37,6 +37,7 @@ func newBrawlpitCheckpointsTestHandler(t *testing.T) (*handlers.BrawlpitCheckpoi
 			weights_blob_path TEXT NOT NULL DEFAULT '',
 			weights_size_bytes INTEGER NOT NULL DEFAULT 0,
 			weights_sha256 TEXT NOT NULL DEFAULT '',
+			is_disabled     INTEGER NOT NULL DEFAULT 0,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
@@ -179,6 +180,65 @@ func TestBrawlpitCheckpointActivateHandler_SetsAndGetsActive(t *testing.T) {
 	json.Unmarshal(getRec.Body.Bytes(), &active)
 	if active.ID != 1 || !active.IsActiveOpponent {
 		t.Fatalf("expected checkpoint 1 to be the real active opponent, got %+v", active)
+	}
+}
+
+func TestBrawlpitCheckpointDisableHandler_TogglesAndPersists(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+
+	body, contentType := multipartUploadBody(t, "main", "5", "1700", "this-box", "main5.zip", []byte("data"))
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	uploadReq.Header.Set("Content-Type", contentType)
+	h.ServeHTTP(httptest.NewRecorder(), uploadReq)
+
+	disableH := &handlers.BrawlpitCheckpointDisableHandler{Store: h.Store}
+	rec := httptest.NewRecorder()
+	disableReq := httptest.NewRequest(http.MethodPatch, "/admin/nock/api/brawlpit-checkpoints/1/disable",
+		bytes.NewBufferString(`{"disabled": true}`))
+	disableH.ServeHTTP(rec, disableReq)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var disabled brawlpit.Checkpoint
+	json.Unmarshal(rec.Body.Bytes(), &disabled)
+	if !disabled.IsDisabled {
+		t.Fatalf("expected is_disabled=true in the response, got %+v", disabled)
+	}
+
+	// The public list must reflect it too, so the admin UI's checkbox stays in sync.
+	listRec := httptest.NewRecorder()
+	h.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints", nil))
+	var listed []brawlpit.Checkpoint
+	json.Unmarshal(listRec.Body.Bytes(), &listed)
+	if len(listed) != 1 || !listed[0].IsDisabled {
+		t.Fatalf("expected the listed checkpoint to show is_disabled=true, got %+v", listed)
+	}
+
+	// Real, reversible -- flip it back off.
+	rec2 := httptest.NewRecorder()
+	reenableReq := httptest.NewRequest(http.MethodPatch, "/admin/nock/api/brawlpit-checkpoints/1/disable",
+		bytes.NewBufferString(`{"disabled": false}`))
+	disableH.ServeHTTP(rec2, reenableReq)
+	var reenabled brawlpit.Checkpoint
+	json.Unmarshal(rec2.Body.Bytes(), &reenabled)
+	if reenabled.IsDisabled {
+		t.Fatalf("expected is_disabled=false after re-enabling, got %+v", reenabled)
+	}
+}
+
+func TestBrawlpitCheckpointDisableHandler_RejectsBadJSON(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+	body, contentType := multipartUploadBody(t, "main", "5", "1700", "this-box", "main5.zip", []byte("data"))
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	uploadReq.Header.Set("Content-Type", contentType)
+	h.ServeHTTP(httptest.NewRecorder(), uploadReq)
+
+	disableH := &handlers.BrawlpitCheckpointDisableHandler{Store: h.Store}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/admin/nock/api/brawlpit-checkpoints/1/disable", bytes.NewBufferString("not json"))
+	disableH.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed JSON, got %d", rec.Code)
 	}
 }
 

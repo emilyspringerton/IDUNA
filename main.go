@@ -689,9 +689,23 @@ func main() {
 	// makes through the real selection UI, admin-gated the same way brawlpit-levels' own editing
 	// surface already is (a human picking an opponent through NOCK's UI, not the training
 	// pipeline's own M2M upload above).
+	brawlpitCheckpointActivateHInner := &handlers.BrawlpitCheckpointActivateHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}}
+	// S428, founder real-time: "i want to reset training but not include certain models from the
+	// registry - can you add a checkbox to the registry backend to disable those models from the
+	// league?" -- the real checkbox backend, same admin-cookie gate as activate above. Both
+	// actions share one route pattern (/admin/nock/api/brawlpit-checkpoints/:id/<verb>), so they
+	// dispatch on path suffix inside one gated handler, same real split-by-suffix convention the
+	// public API route above already established.
+	brawlpitCheckpointDisableHInner := &handlers.BrawlpitCheckpointDisableHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}}
 	brawlpitCheckpointActivateH := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(
 		middleware.RequirePermission("iduna.admin")(
-			&handlers.BrawlpitCheckpointActivateHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}},
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/disable") {
+					brawlpitCheckpointDisableHInner.ServeHTTP(w, r)
+					return
+				}
+				brawlpitCheckpointActivateHInner.ServeHTTP(w, r)
+			}),
 		),
 	)
 	mux.Handle("/admin/nock/api/brawlpit-checkpoints/", brawlpitCheckpointActivateH)

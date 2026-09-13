@@ -59,11 +59,18 @@ type Checkpoint struct {
 	HasWeights       bool   `json:"has_weights"`
 	WeightsSizeBytes int64  `json:"weights_size_bytes"`
 	WeightsSHA256    string `json:"weights_sha256"`
-	CreatedAt        string `json:"created_at"`
+	// IsDisabled marks this checkpoint as excluded from the league (S428, founder real-time:
+	// "i want to reset training but not include certain models from the registry - can you add
+	// a checkbox to the registry backend to disable those models from the league?"). A real,
+	// per-checkpoint, reversible flag -- distinct from IsActiveOpponent (one global in-game
+	// selection). Training/resume/bot-pool logic skips a disabled checkpoint entirely; the row
+	// and its blob stay intact so it can be re-enabled or inspected later.
+	IsDisabled bool   `json:"is_disabled"`
+	CreatedAt  string `json:"created_at"`
 }
 
 const checkpointColumns = `id, name, role, generation, elo, source_location, filename, sha256, size_bytes,
-	is_active_opponent, weights_blob_path, weights_size_bytes, weights_sha256, created_at`
+	is_active_opponent, weights_blob_path, weights_size_bytes, weights_sha256, is_disabled, created_at`
 
 // scanCheckpointRow reads one real row matching checkpointColumns' own exact column order --
 // shared by every query below so the column list and the Scan() call can never silently drift
@@ -72,7 +79,7 @@ func scanCheckpointRow(scan func(...any) error) (*Checkpoint, error) {
 	var c Checkpoint
 	var weightsBlobPath string
 	if err := scan(&c.ID, &c.Name, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes,
-		&c.IsActiveOpponent, &weightsBlobPath, &c.WeightsSizeBytes, &c.WeightsSHA256, &c.CreatedAt); err != nil {
+		&c.IsActiveOpponent, &weightsBlobPath, &c.WeightsSizeBytes, &c.WeightsSHA256, &c.IsDisabled, &c.CreatedAt); err != nil {
 		return nil, err
 	}
 	c.HasWeights = weightsBlobPath != ""
@@ -235,6 +242,21 @@ func (s *CheckpointStore) GetActiveOpponent(ctx context.Context) (*Checkpoint, e
 		return nil, fmt.Errorf("brawlpit: get active opponent: %w", err)
 	}
 	return c, nil
+}
+
+// SetDisabled marks checkpoint `id` as excluded from the league (or re-enables it) -- see
+// Checkpoint.IsDisabled's own doc comment. Unlike SetActiveOpponent, this is a real, independent,
+// per-row flag -- no global single-selection invariant to enforce, so a plain single UPDATE is
+// enough (no transaction needed).
+func (s *CheckpointStore) SetDisabled(ctx context.Context, id int64, disabled bool) (*Checkpoint, error) {
+	res, err := s.DB.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_disabled = ? WHERE id = ?`, disabled, id)
+	if err != nil {
+		return nil, fmt.Errorf("brawlpit: set checkpoint disabled: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("brawlpit: checkpoint %d not found", id)
+	}
+	return s.Get(ctx, id)
 }
 
 // ReadBlob returns the real, raw checkpoint bytes for downloading -- a real, direct file read,

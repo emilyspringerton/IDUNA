@@ -319,6 +319,11 @@ export interface Checkpoint {
   has_weights: boolean
   weights_size_bytes: number
   weights_sha256: string
+  // S428, founder real-time: "i want to reset training but not include certain models from the
+  // registry - can you add a checkbox to the registry backend to disable those models from the
+  // league?" -- a real, reversible, per-checkpoint exclusion flag, distinct from
+  // is_active_opponent (one global in-game selection).
+  is_disabled: boolean
   created_at: string
 }
 
@@ -342,6 +347,19 @@ export const checkpoints = {
   // real routing split).
   activate: (id: number) =>
     fetch(`${CHECKPOINTS_ADMIN_BASE}/${id}/activate`, { method: 'PATCH', credentials: 'include' }).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+      return (await res.json()) as Checkpoint
+    }),
+  // setDisabled is the real checkbox backend (S428) -- same admin-gated trust level as activate.
+  // A disabled checkpoint stays fully visible/re-enable-able here; training/resume/bot-pool logic
+  // is what actually skips it (scripts/rl_train_packet.py, scripts/rl_bot_pool.py).
+  setDisabled: (id: number, disabled: boolean) =>
+    fetch(`${CHECKPOINTS_ADMIN_BASE}/${id}/disable`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled }),
+    }).then(async (res) => {
       if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
       return (await res.json()) as Checkpoint
     }),

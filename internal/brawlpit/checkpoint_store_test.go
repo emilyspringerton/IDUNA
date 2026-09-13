@@ -35,6 +35,7 @@ func newCheckpointTestDB(t *testing.T) *sql.DB {
 			weights_blob_path TEXT NOT NULL DEFAULT '',
 			weights_size_bytes INTEGER NOT NULL DEFAULT 0,
 			weights_sha256 TEXT NOT NULL DEFAULT '',
+			is_disabled     INTEGER NOT NULL DEFAULT 0,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
@@ -237,6 +238,62 @@ func TestCheckpointStore_SetActiveOpponentUnknownIDFails(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	if _, err := store.SetActiveOpponent(context.Background(), 999); err == nil {
 		t.Error("expected activating a nonexistent checkpoint id to fail")
+	}
+}
+
+func TestCheckpointStore_SetDisabled(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+
+	c, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	if c.IsDisabled {
+		t.Fatal("a freshly created checkpoint should not start disabled")
+	}
+
+	disabled, err := store.SetDisabled(ctx, c.ID, true)
+	if err != nil {
+		t.Fatalf("SetDisabled(true): %v", err)
+	}
+	if !disabled.IsDisabled {
+		t.Error("the just-disabled checkpoint's own returned struct should report is_disabled=true")
+	}
+	refetched, _ := store.Get(ctx, c.ID)
+	if !refetched.IsDisabled {
+		t.Error("is_disabled should persist across a fresh Get")
+	}
+
+	// Real, reversible -- re-enabling clears the flag, the row/blob stay intact throughout.
+	enabled, err := store.SetDisabled(ctx, c.ID, false)
+	if err != nil {
+		t.Fatalf("SetDisabled(false): %v", err)
+	}
+	if enabled.IsDisabled {
+		t.Error("re-enabling should clear is_disabled")
+	}
+}
+
+func TestCheckpointStore_SetDisabledIsIndependentPerRow(t *testing.T) {
+	// Unlike SetActiveOpponent, disabling one checkpoint must NOT affect any other -- no global
+	// single-selection invariant here.
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	b, _ := store.Create(ctx, "main", 1, 1500, "this-box", "b.zip", []byte("b"))
+
+	if _, err := store.SetDisabled(ctx, a.ID, true); err != nil {
+		t.Fatalf("SetDisabled: %v", err)
+	}
+	refetchedB, _ := store.Get(ctx, b.ID)
+	if refetchedB.IsDisabled {
+		t.Error("disabling a must not disable b")
+	}
+}
+
+func TestCheckpointStore_SetDisabledUnknownIDFails(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	if _, err := store.SetDisabled(context.Background(), 999, true); err == nil {
+		t.Error("expected disabling a nonexistent checkpoint id to fail")
 	}
 }
 
