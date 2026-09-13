@@ -250,6 +250,12 @@ func TestLevelStore_ExportMatchesNativeLoaderContract(t *testing.T) {
 	if doc.Version != 1 || doc.Name != "Export Me" || len(doc.Platforms) != 2 {
 		t.Errorf("Export doc doesn't match the real native contract: %+v", doc)
 	}
+	// S417-01: width/height must round-trip too -- the native loader now uses them to derive a
+	// real, level-scaled blast zone (BRAWLPIT/packages/common/physics.h's own
+	// stage_load_level_file), not just cosmetic web-editor canvas metadata.
+	if doc.Width != 80 || doc.Height != 40 {
+		t.Errorf("Export doc lost width/height: got %v x %v, want 80 x 40", doc.Width, doc.Height)
+	}
 	if doc.Platforms[0].W != 60 || doc.Platforms[0].Type != 0 {
 		t.Errorf("Export platform data wrong: %+v", doc.Platforms[0])
 	}

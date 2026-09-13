@@ -46,11 +46,15 @@ type Level struct {
 }
 
 // ExportDoc is the real, native-loader-facing shape (BRAWLPIT/packages/common/level_format.h's
-// own JSON contract) -- deliberately narrower than Level: no id/width/height/timestamps, since
-// the native client's level_parse_json only ever reads "name" and "platforms".
+// own JSON contract) -- narrower than Level (no id/timestamps), but DOES include width/height
+// (S417-01, founder real-time: "the levels need to be actually playable in brawlpit") since the
+// native loader now uses them to derive a real, level-scaled blast zone instead of a fixed one
+// tuned only for the 2 original stages.
 type ExportDoc struct {
 	Version   int        `json:"version"`
 	Name      string     `json:"name"`
+	Width     float64    `json:"width"`
+	Height    float64    `json:"height"`
 	Platforms []Platform `json:"platforms"`
 }
 
@@ -253,5 +257,5 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExportDoc{Version: 1, Name: lvl.Name, Platforms: lvl.Platforms}, nil
+	return &ExportDoc{Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Platforms: lvl.Platforms}, nil
 }
