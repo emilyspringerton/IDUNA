@@ -2,17 +2,20 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"iduna/internal/brawlpit"
 	"iduna/internal/http/handlers"
+	"iduna/internal/userlog"
 )
 
 func newBrawlpitCheckpointsTestHandler(t *testing.T) (*handlers.BrawlpitCheckpointsHandler, string) {
@@ -385,5 +388,81 @@ func TestBrawlpitCheckpointsHandler_RecordMatchResultRejectsBadJSON(t *testing.T
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints/match-result", bytes.NewReader([]byte("not json"))))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for invalid JSON, got %d", rec.Code)
+	}
+}
+
+// TestBrawlpitCheckpointsHandler_UploadEmitsEvent -- S453, founder real-time: "lets start a log
+// streaming trail and iduna unified logging for when the brawlpit AI is changed on the server."
+func TestBrawlpitCheckpointsHandler_UploadEmitsEvent(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	h.EventLog = eventLog
+
+	body, contentType := multipartUploadBody(t, "main", "7", "1600", "colab", "c.zip", []byte("c"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	req.Header.Set("Content-Type", contentType)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	recs, err := eventLog.ReadFrom(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(recs))
+	}
+	if recs[0].Event.Type != "iduna:brawlpit.checkpoint.upload" {
+		t.Errorf("event Type = %q, want iduna:brawlpit.checkpoint.upload", recs[0].Event.Type)
+	}
+	if !strings.Contains(string(recs[0].Event.Data), `"role":"main"`) {
+		t.Errorf("event should record the role, got: %s", recs[0].Event.Data)
+	}
+}
+
+// TestBrawlpitCheckpointActivateAndDisableHandlers_EmitEvents -- S453: the exact two live-AI-
+// change actions this session's own real, observed lost-Elo-lineage incident traced back to
+// (S452: a mass "Disable All," and the founder's own follow-up: "i must have enabled an old one
+// where we had some movement before it all went to hell").
+func TestBrawlpitCheckpointActivateAndDisableHandlers_EmitEvents(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+	body, contentType := multipartUploadBody(t, "main", "3", "1700", "colab", "d.zip", []byte("d"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	req.Header.Set("Content-Type", contentType)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	activateH := &handlers.BrawlpitCheckpointActivateHandler{Store: h.Store, EventLog: eventLog}
+	disableH := &handlers.BrawlpitCheckpointDisableHandler{Store: h.Store, EventLog: eventLog}
+
+	activateH.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPatch, "/admin/nock/api/brawlpit-checkpoints/1/activate", nil))
+	disableH.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPatch, "/admin/nock/api/brawlpit-checkpoints/1/disable", bytes.NewReader([]byte(`{"disabled":true}`))))
+	disableH.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPatch, "/admin/nock/api/brawlpit-checkpoints/1/disable", bytes.NewReader([]byte(`{"disabled":false}`))))
+
+	recs, err := eventLog.ReadFrom(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if len(recs) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(recs))
+	}
+	wantTypes := []string{
+		"iduna:brawlpit.checkpoint.activate",
+		"iduna:brawlpit.checkpoint.disable",
+		"iduna:brawlpit.checkpoint.enable",
+	}
+	for i, want := range wantTypes {
+		if recs[i].Event.Type != want {
+			t.Errorf("event %d Type = %q, want %q", i, recs[i].Event.Type, want)
+		}
+		if !strings.Contains(string(recs[i].Event.Data), `"id":1`) {
+			t.Errorf("event %d should record the checkpoint id, got: %s", i, recs[i].Event.Data)
+		}
 	}
 }

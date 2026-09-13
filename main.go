@@ -653,9 +653,10 @@ func main() {
 	// runtimes). List/download are public (same trust level GET /api/v1/brawlpit-levels already
 	// established); upload is gated behind the real M2M brawlpit.checkpoints.write permission
 	// (migrations/truestore/202609131400_brawlpit_rl_checkpoints.sql's own new BRAWLPIT-RL agent).
+	brawlpitCheckpointsHInner := &handlers.BrawlpitCheckpointsHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}}
 	brawlpitCheckpointsH := middleware.RequireAuth(keys)(
 		middleware.RequirePermission("brawlpit.checkpoints.write")(
-			&handlers.BrawlpitCheckpointsHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}},
+			brawlpitCheckpointsHInner,
 		),
 	)
 	// The auth+permission wrapper above would incorrectly gate the public list/download GETs too
@@ -841,6 +842,15 @@ func main() {
 	// list -- card create/move/complete now emit into the same unified log every other real
 	// IDUNA code path already does.
 	kanbanH.EventLog = unifiedLog
+
+	// S453, founder real-time: "lets start a log streaming trail and iduna unified logging for
+	// when the brawlpit AI is changed on the server" -- every real "the live AI population
+	// changed" point (a new checkpoint pushed, which one is the live opponent, which are
+	// eligible at all) now emits here too. brawlpitCheckpointsH specifically (not
+	// brawlpitCheckpointsPublicH) -- only that instance's own upload route is a real write.
+	brawlpitCheckpointsHInner.EventLog = unifiedLog
+	brawlpitCheckpointActivateHInner.EventLog = unifiedLog
+	brawlpitCheckpointDisableHInner.EventLog = unifiedLog
 
 	// Wire the developer portal's real IDUNA login now that userProj exists
 	// (see the portalH declaration above, in the /portal route block, for
