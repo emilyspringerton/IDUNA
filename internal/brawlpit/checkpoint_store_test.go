@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -27,7 +29,11 @@ func newCheckpointTestDB(t *testing.T) *sql.DB {
 			sha256          TEXT NOT NULL,
 			size_bytes      INTEGER NOT NULL,
 			blob_path       TEXT NOT NULL,
+			name            TEXT NOT NULL DEFAULT '',
 			is_active_opponent INTEGER NOT NULL DEFAULT 0,
+			weights_blob_path TEXT NOT NULL DEFAULT '',
+			weights_size_bytes INTEGER NOT NULL DEFAULT 0,
+			weights_sha256 TEXT NOT NULL DEFAULT '',
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
@@ -230,5 +236,84 @@ func TestCheckpointStore_SetActiveOpponentUnknownIDFails(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	if _, err := store.SetActiveOpponent(context.Background(), 999); err == nil {
 		t.Error("expected activating a nonexistent checkpoint id to fail")
+	}
+}
+
+func TestCheckpointStore_CreateGeneratesARealNameWithRoleAndTimestamp(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	before := time.Now().UTC()
+
+	c, err := store.Create(ctx, "main_exploiter", 2, 1500, "this-box", "x.zip", []byte("data"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !strings.HasPrefix(c.Name, "main_exploiter_") {
+		t.Fatalf("expected name to start with the real archetype, got %q", c.Name)
+	}
+	// "main_exploiter_YYYYMMDD_HHMMSS" -- confirm it parses back as a real, recent UTC time.
+	tsPart := strings.TrimPrefix(c.Name, "main_exploiter_")
+	parsed, err := time.Parse("20060102_150405", tsPart)
+	if err != nil {
+		t.Fatalf("expected a real, parseable to-the-second timestamp suffix, got %q: %v", tsPart, err)
+	}
+	if parsed.Before(before.Add(-2*time.Second)) || parsed.After(time.Now().UTC().Add(2*time.Second)) {
+		t.Errorf("timestamp in name isn't close to real creation time: %v", parsed)
+	}
+}
+
+func TestCheckpointStore_SetWeightsAndReadWeights(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+
+	c, _ := store.Create(ctx, "main", 0, 1500, "this-box", "main0.zip", []byte("zip data"))
+	if c.HasWeights {
+		t.Error("a freshly created checkpoint must not report HasWeights before SetWeights is called")
+	}
+
+	weights := []byte("BPMW-fake-weights-payload")
+	updated, err := store.SetWeights(ctx, c.ID, weights)
+	if err != nil {
+		t.Fatalf("SetWeights: %v", err)
+	}
+	if !updated.HasWeights {
+		t.Error("HasWeights must be true after a real SetWeights call")
+	}
+	if updated.WeightsSizeBytes != int64(len(weights)) {
+		t.Errorf("wrong WeightsSizeBytes: %d", updated.WeightsSizeBytes)
+	}
+	if len(updated.WeightsSHA256) != 64 {
+		t.Errorf("expected a real 64-char hex sha256 for the weights blob, got %q", updated.WeightsSHA256)
+	}
+
+	_, data, err := store.ReadWeights(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("ReadWeights: %v", err)
+	}
+	if string(data) != string(weights) {
+		t.Error("ReadWeights returned different bytes than SetWeights stored")
+	}
+}
+
+func TestCheckpointStore_ReadWeightsFailsWhenNoneSet(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	c, _ := store.Create(ctx, "main", 0, 1500, "this-box", "main0.zip", []byte("data"))
+	if _, _, err := store.ReadWeights(ctx, c.ID); err == nil {
+		t.Error("expected reading weights from a checkpoint with none set to fail")
+	}
+}
+
+func TestCheckpointStore_SetWeightsRejectsEmptyAndOversized(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	c, _ := store.Create(ctx, "main", 0, 1500, "this-box", "main0.zip", []byte("data"))
+
+	if _, err := store.SetWeights(ctx, c.ID, []byte{}); err == nil {
+		t.Error("expected an empty weights file to be rejected")
+	}
+	huge := make([]byte, 20*1024*1024+1)
+	if _, err := store.SetWeights(ctx, c.ID, huge); err == nil {
+		t.Error("expected an oversized weights file to be rejected")
 	}
 }

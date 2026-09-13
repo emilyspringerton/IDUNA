@@ -16,6 +16,9 @@ import (
 	"iduna/internal/brawlpit"
 )
 
+const weightsContentType = "application/x-brawlpit-weights"
+const weightsContentTypeLZ4 = "application/x-brawlpit-weights-lz4"
+
 // BrawlpitCheckpointsHandler serves every /api/v1/brawlpit-checkpoints... route.
 type BrawlpitCheckpointsHandler struct {
 	Store *brawlpit.CheckpointStore
@@ -43,6 +46,8 @@ func (h *BrawlpitCheckpointsHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		h.getActive(w, r)
 	case len(parts) == 2 && parts[1] == "download" && r.Method == http.MethodGet:
 		h.download(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "weights" && r.Method == http.MethodGet:
+		h.downloadWeights(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -117,6 +122,27 @@ func (h *BrawlpitCheckpointsHandler) upload(w http.ResponseWriter, r *http.Reque
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// weights_file is optional (S421-02, founder real-time: "ensure that the client actually
+	// uses that model... make sure the model downloads with lz4") -- the real, exported native-
+	// inference blob (scripts/export_policy_weights.py's own "BPMW" format) for this SAME
+	// checkpoint, uploaded alongside the .zip in one request rather than a second round trip.
+	// An older caller that never sends this field still creates a real checkpoint with no
+	// weights attached (HasWeights=false) -- not a hard requirement of this endpoint.
+	if weightsFile, _, err := r.FormFile("weights_file"); err == nil {
+		defer weightsFile.Close()
+		weightsData, err := io.ReadAll(weightsFile)
+		if err != nil {
+			mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("read uploaded weights file: %v", err))
+			return
+		}
+		c, err = h.Store.SetWeights(r.Context(), c.ID, weightsData)
+		if err != nil {
+			mmoWriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, c)
 }
 
@@ -136,6 +162,39 @@ func (h *BrawlpitCheckpointsHandler) download(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Length", strconv.FormatInt(c.SizeBytes, 10))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// downloadWeights serves GET /api/v1/brawlpit-checkpoints/:id/weights -- the real, small,
+// native-client-loadable inference blob (S421-02), distinct from download()'s own full .zip
+// training-state artifact. `?compress=lz4` (default, matching this monorepo's own standing
+// "LZ4 is always the default" convention -- founder real-time: "make sure the model downloads
+// with lz4") runs the SAME bytes through this package's own PARENA-compiled LZ4 codec
+// (internal/brawlpit.CompressLZ4, the identical cgo binding brawlpit_levels_public.go's own
+// `?compress=lz4` export already uses) -- BRAWLPIT's native client links the identical codec
+// directly (packages/common/lz4/), so it decompresses with the exact same real format this
+// server compresses with. Pass `?compress=none` for the raw, uncompressed bytes.
+func (h *BrawlpitCheckpointsHandler) downloadWeights(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	_, data, err := h.Store.ReadWeights(r.Context(), id)
+	if err != nil {
+		mmoWriteError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	if r.URL.Query().Get("compress") == "none" {
+		w.Header().Set("Content-Type", weightsContentType)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
+	compressed := brawlpit.CompressLZ4(data)
+	w.Header().Set("Content-Type", weightsContentTypeLZ4)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(compressed)
 }
 
 // BrawlpitCheckpointActivateHandler serves PATCH /admin/nock/api/brawlpit-checkpoints/:id/activate

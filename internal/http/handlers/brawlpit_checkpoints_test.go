@@ -32,7 +32,11 @@ func newBrawlpitCheckpointsTestHandler(t *testing.T) (*handlers.BrawlpitCheckpoi
 			sha256          TEXT NOT NULL,
 			size_bytes      INTEGER NOT NULL,
 			blob_path       TEXT NOT NULL,
+			name            TEXT NOT NULL DEFAULT '',
 			is_active_opponent INTEGER NOT NULL DEFAULT 0,
+			weights_blob_path TEXT NOT NULL DEFAULT '',
+			weights_size_bytes INTEGER NOT NULL DEFAULT 0,
+			weights_sha256 TEXT NOT NULL DEFAULT '',
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
@@ -175,5 +179,108 @@ func TestBrawlpitCheckpointActivateHandler_SetsAndGetsActive(t *testing.T) {
 	json.Unmarshal(getRec.Body.Bytes(), &active)
 	if active.ID != 1 || !active.IsActiveOpponent {
 		t.Fatalf("expected checkpoint 1 to be the real active opponent, got %+v", active)
+	}
+}
+
+func multipartUploadBodyWithWeights(t *testing.T, role, generation, elo, sourceLocation, filename string, content []byte, weightsFilename string, weightsContent []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	_ = w.WriteField("role", role)
+	_ = w.WriteField("generation", generation)
+	_ = w.WriteField("elo", elo)
+	_ = w.WriteField("source_location", sourceLocation)
+	fw, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatalf("write file field: %v", err)
+	}
+	if weightsFilename != "" {
+		wfw, err := w.CreateFormFile("weights_file", weightsFilename)
+		if err != nil {
+			t.Fatalf("CreateFormFile(weights_file): %v", err)
+		}
+		if _, err := wfw.Write(weightsContent); err != nil {
+			t.Fatalf("write weights_file field: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return body, w.FormDataContentType()
+}
+
+func TestBrawlpitCheckpointsHandler_UploadWithWeightsAndDownloadLZ4(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+
+	weightsPayload := []byte("BPMW-fake-real-weights-bytes-for-a-real-round-trip-test")
+	body, contentType := multipartUploadBodyWithWeights(t, "main", "0", "1500", "this-box",
+		"main0.zip", []byte("zip data"), "main0.weights.bin", weightsPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created brawlpit.Checkpoint
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	if !created.HasWeights {
+		t.Fatalf("expected HasWeights=true after uploading with a weights_file, got %+v", created)
+	}
+
+	// Default (no ?compress=) must be LZ4-compressed (S421-02, "make sure the model downloads
+	// with lz4").
+	lz4Rec := httptest.NewRecorder()
+	h.ServeHTTP(lz4Rec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints/1/weights", nil))
+	if lz4Rec.Code != http.StatusOK {
+		t.Fatalf("weights download: expected 200, got %d: %s", lz4Rec.Code, lz4Rec.Body.String())
+	}
+	decompressed := brawlpit.DecompressLZ4(lz4Rec.Body.Bytes())
+	if string(decompressed) != string(weightsPayload) {
+		t.Errorf("LZ4-decompressed weights don't match the real uploaded bytes: got %q", decompressed)
+	}
+
+	// ?compress=none must return the exact raw bytes.
+	rawRec := httptest.NewRecorder()
+	h.ServeHTTP(rawRec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints/1/weights?compress=none", nil))
+	if rawRec.Body.String() != string(weightsPayload) {
+		t.Errorf("raw (uncompressed) weights download doesn't match the real uploaded bytes: got %q", rawRec.Body.String())
+	}
+}
+
+func TestBrawlpitCheckpointsHandler_UploadWithoutWeightsHasNoWeights(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+	body, contentType := multipartUploadBody(t, "main", "0", "1500", "this-box", "main0.zip", []byte("data"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var created brawlpit.Checkpoint
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.HasWeights {
+		t.Error("a checkpoint uploaded with no weights_file must report HasWeights=false")
+	}
+
+	weightsRec := httptest.NewRecorder()
+	h.ServeHTTP(weightsRec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints/1/weights", nil))
+	if weightsRec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 fetching weights for a checkpoint with none, got %d", weightsRec.Code)
+	}
+}
+
+func TestBrawlpitCheckpointsHandler_CreatedCheckpointHasARealName(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+	body, contentType := multipartUploadBody(t, "league_exploiter", "0", "1500", "this-box", "x.zip", []byte("data"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var created brawlpit.Checkpoint
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.Name == "" {
+		t.Error("a real, uploaded checkpoint must get a real, non-empty name")
 	}
 }

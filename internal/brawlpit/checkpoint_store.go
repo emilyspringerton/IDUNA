@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // ValidCheckpointRoles mirrors scripts/rl_league.py's own real LeagueRole enum values exactly
@@ -35,7 +36,13 @@ var validSourceLocation = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9 ._-]{0,199}
 
 // Checkpoint is one row of the brawlpit_rl_checkpoints table.
 type Checkpoint struct {
-	ID               int64   `json:"id"`
+	ID int64 `json:"id"`
+	// Name is a real, human-readable identifier -- "<role>_<YYYYMMDD>_<HHMMSS>" (UTC, to the
+	// second), generated server-side from the row's own real creation time (S421-02, founder
+	// real-time: "make sure that the models have like some id number or something to identify
+	// them maybe datestamp to the second with the archetype type"). Never trusted from the
+	// uploader -- this is what the AI Opponents UI and the in-game HUD both display.
+	Name             string  `json:"name"`
 	Role             string  `json:"role"`
 	Generation       int     `json:"generation"`
 	Elo              float64 `json:"elo"`
@@ -44,13 +51,37 @@ type Checkpoint struct {
 	SHA256           string  `json:"sha256"`
 	SizeBytes        int64   `json:"size_bytes"`
 	IsActiveOpponent bool    `json:"is_active_opponent"`
-	CreatedAt        string  `json:"created_at"`
+	// HasWeights/WeightsSizeBytes/WeightsSHA256 describe the real, separate exported MLP
+	// inference blob (scripts/export_policy_weights.py's own "BPMW" binary format) this
+	// checkpoint carries, if any -- see SetWeights' own doc comment. HasWeights is real and
+	// explicit rather than making callers infer "no weights" from WeightsSizeBytes==0.
+	HasWeights       bool   `json:"has_weights"`
+	WeightsSizeBytes int64  `json:"weights_size_bytes"`
+	WeightsSHA256    string `json:"weights_sha256"`
+	CreatedAt        string `json:"created_at"`
+}
+
+const checkpointColumns = `id, name, role, generation, elo, source_location, filename, sha256, size_bytes,
+	is_active_opponent, weights_blob_path, weights_size_bytes, weights_sha256, created_at`
+
+// scanCheckpointRow reads one real row matching checkpointColumns' own exact column order --
+// shared by every query below so the column list and the Scan() call can never silently drift
+// apart from each other.
+func scanCheckpointRow(scan func(...any) error) (*Checkpoint, error) {
+	var c Checkpoint
+	var weightsBlobPath string
+	if err := scan(&c.ID, &c.Name, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes,
+		&c.IsActiveOpponent, &weightsBlobPath, &c.WeightsSizeBytes, &c.WeightsSHA256, &c.CreatedAt); err != nil {
+		return nil, err
+	}
+	c.HasWeights = weightsBlobPath != ""
+	return &c, nil
 }
 
 // CheckpointStore is the real, SQLite-metadata + on-disk-blob backed registry.
 type CheckpointStore struct {
 	DB      *sql.DB
-	BlobDir string // e.g. var/brawlpit-checkpoints -- real .zip files, named by this row's own id
+	BlobDir string // e.g. var/brawlpit-checkpoints -- real .zip/.bin files, named by this row's own id
 }
 
 func validateCheckpointInput(role, sourceLocation, filename string, data []byte) error {
@@ -91,10 +122,13 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 		return nil, fmt.Errorf("brawlpit: create blob dir: %w", err)
 	}
 
+	// "<role>_<YYYYMMDD>_<HHMMSS>" UTC, to the second -- see Checkpoint.Name's own doc comment.
+	name := fmt.Sprintf("%s_%s", role, time.Now().UTC().Format("20060102_150405"))
+
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO brawlpit_rl_checkpoints (role, generation, elo, source_location, filename, sha256, size_bytes, blob_path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, '')`,
-		role, generation, elo, sourceLocation, filename, sha, len(data))
+		`INSERT INTO brawlpit_rl_checkpoints (name, role, generation, elo, source_location, filename, sha256, size_bytes, blob_path)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
+		name, role, generation, elo, sourceLocation, filename, sha, len(data))
 	if err != nil {
 		return nil, fmt.Errorf("brawlpit: create checkpoint row: %w", err)
 	}
@@ -118,21 +152,15 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 }
 
 func (s *CheckpointStore) Get(ctx context.Context, id int64) (*Checkpoint, error) {
-	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
-		 FROM brawlpit_rl_checkpoints WHERE id = ?`, id)
-	return scanCheckpoint(row)
-}
-
-func scanCheckpoint(row *sql.Row) (*Checkpoint, error) {
-	var c Checkpoint
-	if err := row.Scan(&c.ID, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes, &c.IsActiveOpponent, &c.CreatedAt); err != nil {
+	row := s.DB.QueryRowContext(ctx, `SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE id = ?`, id)
+	c, err := scanCheckpointRow(row.Scan)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("brawlpit: checkpoint not found")
 		}
 		return nil, fmt.Errorf("brawlpit: get checkpoint: %w", err)
 	}
-	return &c, nil
+	return c, nil
 }
 
 // List returns every registered checkpoint, newest first, optionally filtered to one role (an
@@ -142,12 +170,10 @@ func (s *CheckpointStore) List(ctx context.Context, roleFilter string) ([]Checkp
 	var err error
 	if roleFilter != "" {
 		rows, err = s.DB.QueryContext(ctx,
-			`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
-			 FROM brawlpit_rl_checkpoints WHERE role = ? ORDER BY created_at DESC`, roleFilter)
+			`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE role = ? ORDER BY created_at DESC`, roleFilter)
 	} else {
 		rows, err = s.DB.QueryContext(ctx,
-			`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
-			 FROM brawlpit_rl_checkpoints ORDER BY created_at DESC`)
+			`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("brawlpit: list checkpoints: %w", err)
@@ -156,11 +182,11 @@ func (s *CheckpointStore) List(ctx context.Context, roleFilter string) ([]Checkp
 
 	out := []Checkpoint{}
 	for rows.Next() {
-		var c Checkpoint
-		if err := rows.Scan(&c.ID, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes, &c.IsActiveOpponent, &c.CreatedAt); err != nil {
+		c, err := scanCheckpointRow(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("brawlpit: list checkpoints: %w", err)
 		}
-		out = append(out, c)
+		out = append(out, *c)
 	}
 	return out, rows.Err()
 }
@@ -199,14 +225,13 @@ func (s *CheckpointStore) SetActiveOpponent(ctx context.Context, id int64) (*Che
 // checkpoints and no explicit selection is a normal, expected state).
 func (s *CheckpointStore) GetActiveOpponent(ctx context.Context) (*Checkpoint, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
-		 FROM brawlpit_rl_checkpoints WHERE is_active_opponent = 1 LIMIT 1`)
-	c, err := scanCheckpoint(row)
+		`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE is_active_opponent = 1 LIMIT 1`)
+	c, err := scanCheckpointRow(row.Scan)
 	if err != nil {
-		if err.Error() == "brawlpit: checkpoint not found" {
+		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("brawlpit: get active opponent: %w", err)
 	}
 	return c, nil
 }
@@ -224,6 +249,64 @@ func (s *CheckpointStore) ReadBlob(ctx context.Context, id int64) (*Checkpoint, 
 	data, err := os.ReadFile(blobPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("brawlpit: read checkpoint blob: %w", err)
+	}
+	return c, data, nil
+}
+
+// SetWeights attaches the real, exported native-inference weights blob (scripts/
+// export_policy_weights.py's own "BPMW" binary format -- see packages/common/mlp_policy.h's own
+// matching loader) to an existing checkpoint row (S421-02, founder real-time: "ensure that the
+// client actually uses that model"). A real, separate artifact from the .zip ReadBlob/Create
+// above manage -- the .zip stays the resumable stable_baselines3 training state; this is the
+// small, portable blob BRAWLPIT's native client actually downloads and runs. Stored RAW
+// (uncompressed) on disk -- LZ4 compression is a real, separate WIRE concern applied at the HTTP
+// handler layer on download (matching brawlpit_levels_public.go's own `?compress=lz4` precedent),
+// not baked into how this store keeps its own files.
+func (s *CheckpointStore) SetWeights(ctx context.Context, id int64, data []byte) (*Checkpoint, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("brawlpit: weights file is empty")
+	}
+	const maxWeightsBytes = 20 * 1024 * 1024 // real, generous bound -- a real export is tens of KB
+	if len(data) > maxWeightsBytes {
+		return nil, fmt.Errorf("brawlpit: weights file too large (%d bytes, max %d)", len(data), maxWeightsBytes)
+	}
+	if _, err := s.Get(ctx, id); err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(s.BlobDir, 0o755); err != nil {
+		return nil, fmt.Errorf("brawlpit: create blob dir: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	sha := hex.EncodeToString(sum[:])
+	weightsPath := filepath.Join(s.BlobDir, fmt.Sprintf("%d.weights.bin", id))
+	if err := os.WriteFile(weightsPath, data, 0o644); err != nil {
+		return nil, fmt.Errorf("brawlpit: write weights blob: %w", err)
+	}
+	if _, err := s.DB.ExecContext(ctx,
+		`UPDATE brawlpit_rl_checkpoints SET weights_blob_path = ?, weights_size_bytes = ?, weights_sha256 = ? WHERE id = ?`,
+		weightsPath, len(data), sha, id); err != nil {
+		return nil, fmt.Errorf("brawlpit: record weights blob: %w", err)
+	}
+	return s.Get(ctx, id)
+}
+
+// ReadWeights returns the real, raw (uncompressed) exported weights bytes for a checkpoint, or a
+// real, checked error if this checkpoint has no weights attached yet (an older checkpoint from
+// before S421-02, or one never exported) -- callers (the download handler) apply LZ4 compression
+// on top for the wire, matching this file's own SetWeights doc comment.
+func (s *CheckpointStore) ReadWeights(ctx context.Context, id int64) (*Checkpoint, []byte, error) {
+	c, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !c.HasWeights {
+		return nil, nil, fmt.Errorf("brawlpit: checkpoint %d has no exported weights", id)
+	}
+	weightsPath := filepath.Join(s.BlobDir, fmt.Sprintf("%d.weights.bin", id))
+	data, err := os.ReadFile(weightsPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("brawlpit: read weights blob: %w", err)
 	}
 	return c, data, nil
 }
