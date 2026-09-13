@@ -671,7 +671,18 @@ func main() {
 		}
 		brawlpitCheckpointsPublicH.ServeHTTP(w, r)
 	}))
-	mux.Handle("/api/v1/brawlpit-checkpoints/", brawlpitCheckpointsPublicH)
+	// S421-04, founder real-time: "can we start recording the match results with the actual
+	// outcomes?" -- POST .../match-result needs the same M2M brawlpit.checkpoints.write gate as
+	// the upload route above, but it lives under the trailing-slash catch-all (a sub-path, not
+	// the exact base path) alongside the public GET .../active|:id/download|:id/weights routes,
+	// so the split has to happen on method+path together here, not just method.
+	mux.Handle("/api/v1/brawlpit-checkpoints/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/match-result") {
+			brawlpitCheckpointsH.ServeHTTP(w, r)
+			return
+		}
+		brawlpitCheckpointsPublicH.ServeHTTP(w, r)
+	}))
 
 	// S421, founder real-time: "just like the level editor (or the skins interface) we should be
 	// able to select a model for the opponent from the registry" -- the one write action a human

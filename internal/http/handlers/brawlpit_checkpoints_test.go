@@ -284,3 +284,46 @@ func TestBrawlpitCheckpointsHandler_CreatedCheckpointHasARealName(t *testing.T) 
 		t.Error("a real, uploaded checkpoint must get a real, non-empty name")
 	}
 }
+
+func TestBrawlpitCheckpointsHandler_RecordMatchResult(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+
+	bodyA, contentTypeA := multipartUploadBody(t, "main", "0", "1500", "this-box", "a.zip", []byte("a"))
+	reqA := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", bodyA)
+	reqA.Header.Set("Content-Type", contentTypeA)
+	h.ServeHTTP(httptest.NewRecorder(), reqA)
+
+	bodyB, contentTypeB := multipartUploadBody(t, "league_exploiter", "0", "1500", "this-box", "b.zip", []byte("b"))
+	reqB := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", bodyB)
+	reqB.Header.Set("Content-Type", contentTypeB)
+	h.ServeHTTP(httptest.NewRecorder(), reqB)
+
+	resultBody, _ := json.Marshal(map[string]any{"a_id": 1, "b_id": 2, "score_a": 1.0})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints/match-result", bytes.NewReader(resultBody)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	listRec := httptest.NewRecorder()
+	h.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints", nil))
+	var list []brawlpit.Checkpoint
+	json.Unmarshal(listRec.Body.Bytes(), &list)
+	for _, c := range list {
+		if c.ID == 1 && c.Elo <= 1500 {
+			t.Errorf("winner's Elo should have moved up, got %v", c.Elo)
+		}
+		if c.ID == 2 && c.Elo >= 1500 {
+			t.Errorf("loser's Elo should have moved down, got %v", c.Elo)
+		}
+	}
+}
+
+func TestBrawlpitCheckpointsHandler_RecordMatchResultRejectsBadJSON(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints/match-result", bytes.NewReader([]byte("not json"))))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid JSON, got %d", rec.Code)
+	}
+}

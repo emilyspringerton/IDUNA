@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -309,4 +310,75 @@ func (s *CheckpointStore) ReadWeights(ctx context.Context, id int64) (*Checkpoin
 		return nil, nil, fmt.Errorf("brawlpit: read weights blob: %w", err)
 	}
 	return c, data, nil
+}
+
+// EloK is the real, standard "fast-moving" K-factor (USCF uses 32 for players under ~2100
+// rating) -- the exact same constant BRAWLPIT/scripts/rl_league.py's own ELO_K already uses, so
+// a rating computed one way and moved the other stays comparable.
+const EloK = 32.0
+
+// eloExpected is the standard Elo expected-score formula: the probability A beats B, in [0, 1].
+// Unexported -- RecordMatchResult below is the real, only public entry point (mirrors
+// rl_league.py's own elo_expected/elo_update split, kept private here since nothing outside this
+// file has a real reason to call the raw formula directly yet).
+func eloExpected(ratingA, ratingB float64) float64 {
+	return 1.0 / (1.0 + math.Pow(10, (ratingB-ratingA)/400.0))
+}
+
+// RecordMatchResult applies one real match outcome (S421-04, founder real-time: "can we start
+// recording the match results with the actual outcomes?") -- scoreA is 1.0 (A won), 0.5 (draw),
+// or 0.0 (A lost); B's score is always the complement, matching Elo's own zero-sum design (same
+// real formula BRAWLPIT/scripts/rl_league.py's own elo_update already uses, so a rating computed
+// by a local evaluation script and one recorded here stay on the same real scale). Real,
+// deliberate design point: this is genuinely the ONLY thing that ever MOVES a checkpoint's Elo
+// off its inherited value -- Create()'s own Elo parameter and register_generation_snapshot's own
+// "inherit forward" behavior (rl_league.py) both just carry a rating along; only a real,
+// evaluated match outcome changes it. Both updates happen in one transaction so a crash between
+// them can never leave only one side's rating moved.
+func (s *CheckpointStore) RecordMatchResult(ctx context.Context, idA, idB int64, scoreA float64) (*Checkpoint, *Checkpoint, error) {
+	if scoreA < 0 || scoreA > 1 {
+		return nil, nil, fmt.Errorf("brawlpit: score_a must be in [0, 1], got %v", scoreA)
+	}
+	if idA == idB {
+		return nil, nil, fmt.Errorf("brawlpit: a checkpoint cannot play a match against itself")
+	}
+	a, err := s.Get(ctx, idA)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := s.Get(ctx, idB)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	expectedA := eloExpected(a.Elo, b.Elo)
+	scoreB := 1.0 - scoreA
+	expectedB := 1.0 - expectedA
+	newEloA := a.Elo + EloK*(scoreA-expectedA)
+	newEloB := b.Elo + EloK*(scoreB-expectedB)
+
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("brawlpit: record match result: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET elo = ? WHERE id = ?`, newEloA, idA); err != nil {
+		return nil, nil, fmt.Errorf("brawlpit: record match result: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET elo = ? WHERE id = ?`, newEloB, idB); err != nil {
+		return nil, nil, fmt.Errorf("brawlpit: record match result: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("brawlpit: record match result: %w", err)
+	}
+
+	updatedA, err := s.Get(ctx, idA)
+	if err != nil {
+		return nil, nil, err
+	}
+	updatedB, err := s.Get(ctx, idB)
+	if err != nil {
+		return nil, nil, err
+	}
+	return updatedA, updatedB, nil
 }

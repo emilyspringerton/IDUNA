@@ -7,6 +7,7 @@ package handlers
 // same trust level GET /api/v1/brawlpit-levels already established.
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,6 +49,8 @@ func (h *BrawlpitCheckpointsHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		h.download(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "weights" && r.Method == http.MethodGet:
 		h.downloadWeights(w, r, parts[0])
+	case len(parts) == 1 && parts[0] == "match-result" && r.Method == http.MethodPost:
+		h.recordMatchResult(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -195,6 +198,33 @@ func (h *BrawlpitCheckpointsHandler) downloadWeights(w http.ResponseWriter, r *h
 	w.Header().Set("Content-Type", weightsContentTypeLZ4)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(compressed)
+}
+
+type recordMatchResultReq struct {
+	AID    int64   `json:"a_id"`
+	BID    int64   `json:"b_id"`
+	ScoreA float64 `json:"score_a"`
+}
+
+// recordMatchResult serves POST /api/v1/brawlpit-checkpoints/match-result (S421-04, founder
+// real-time: "can we start recording the match results with the actual outcomes?") -- the real,
+// only thing that ever MOVES a checkpoint's Elo off its inherited value (see
+// CheckpointStore.RecordMatchResult's own doc comment). Gated behind the same real M2M
+// brawlpit.checkpoints.write permission the upload route already uses (main.go's own routing) --
+// this is training-pipeline-reported data, not a human action, same trust level as pushing a new
+// checkpoint file.
+func (h *BrawlpitCheckpointsHandler) recordMatchResult(w http.ResponseWriter, r *http.Request) {
+	var req recordMatchResultReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	updatedA, updatedB, err := h.Store.RecordMatchResult(r.Context(), req.AID, req.BID, req.ScoreA)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]*brawlpit.Checkpoint{"a": updatedA, "b": updatedB})
 }
 
 // BrawlpitCheckpointActivateHandler serves PATCH /admin/nock/api/brawlpit-checkpoints/:id/activate

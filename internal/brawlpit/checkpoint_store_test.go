@@ -3,6 +3,7 @@ package brawlpit
 import (
 	"context"
 	"database/sql"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -315,5 +316,90 @@ func TestCheckpointStore_SetWeightsRejectsEmptyAndOversized(t *testing.T) {
 	huge := make([]byte, 20*1024*1024+1)
 	if _, err := store.SetWeights(ctx, c.ID, huge); err == nil {
 		t.Error("expected an oversized weights file to be rejected")
+	}
+}
+
+func TestCheckpointStore_RecordMatchResultUpdatesBothSides(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	b, _ := store.Create(ctx, "league_exploiter", 0, 1500, "this-box", "b.zip", []byte("b"))
+
+	updatedA, updatedB, err := store.RecordMatchResult(ctx, a.ID, b.ID, 1.0)
+	if err != nil {
+		t.Fatalf("RecordMatchResult: %v", err)
+	}
+	if updatedA.Elo <= 1500 {
+		t.Errorf("winner's Elo should have increased, got %v", updatedA.Elo)
+	}
+	if updatedB.Elo >= 1500 {
+		t.Errorf("loser's Elo should have decreased, got %v", updatedB.Elo)
+	}
+
+	// Re-read independently -- proves this is real, durable persisted state.
+	refetchedA, _ := store.Get(ctx, a.ID)
+	refetchedB, _ := store.Get(ctx, b.ID)
+	if refetchedA.Elo != updatedA.Elo || refetchedB.Elo != updatedB.Elo {
+		t.Error("Elo changes from RecordMatchResult must actually persist")
+	}
+}
+
+func TestCheckpointStore_RecordMatchResultIsZeroSum(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	b, _ := store.Create(ctx, "main", 1, 1600, "this-box", "b.zip", []byte("b"))
+
+	updatedA, updatedB, err := store.RecordMatchResult(ctx, a.ID, b.ID, 1.0)
+	if err != nil {
+		t.Fatalf("RecordMatchResult: %v", err)
+	}
+	deltaA := updatedA.Elo - 1500
+	deltaB := updatedB.Elo - 1600
+	if math.Abs(deltaA+deltaB) > 1e-6 {
+		t.Errorf("expected a real zero-sum Elo update, got deltaA=%v deltaB=%v", deltaA, deltaB)
+	}
+}
+
+func TestCheckpointStore_RecordMatchResultDrawChangesNothingBetweenEquals(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	b, _ := store.Create(ctx, "main", 1, 1500, "this-box", "b.zip", []byte("b"))
+
+	updatedA, updatedB, err := store.RecordMatchResult(ctx, a.ID, b.ID, 0.5)
+	if err != nil {
+		t.Fatalf("RecordMatchResult: %v", err)
+	}
+	if math.Abs(updatedA.Elo-1500) > 1e-6 || math.Abs(updatedB.Elo-1500) > 1e-6 {
+		t.Errorf("a real draw between equally-rated checkpoints should change nothing, got %v/%v", updatedA.Elo, updatedB.Elo)
+	}
+}
+
+func TestCheckpointStore_RecordMatchResultRejectsInvalidScore(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	b, _ := store.Create(ctx, "main", 1, 1500, "this-box", "b.zip", []byte("b"))
+	if _, _, err := store.RecordMatchResult(ctx, a.ID, b.ID, 1.5); err == nil {
+		t.Error("expected an out-of-range score_a to be rejected")
+	}
+}
+
+func TestCheckpointStore_RecordMatchResultRejectsSelfMatch(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	if _, _, err := store.RecordMatchResult(ctx, a.ID, a.ID, 1.0); err == nil {
+		t.Error("expected a checkpoint playing itself to be rejected")
+	}
+}
+
+func TestCheckpointStore_RecordMatchResultUnknownIDFails(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	if _, _, err := store.RecordMatchResult(ctx, a.ID, 999, 1.0); err == nil {
+		t.Error("expected a nonexistent opponent id to fail")
 	}
 }
