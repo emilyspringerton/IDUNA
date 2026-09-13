@@ -27,6 +27,7 @@ func newCheckpointTestDB(t *testing.T) *sql.DB {
 			sha256          TEXT NOT NULL,
 			size_bytes      INTEGER NOT NULL,
 			blob_path       TEXT NOT NULL,
+			is_active_opponent INTEGER NOT NULL DEFAULT 0,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
@@ -184,5 +185,50 @@ func TestCheckpointStore_RejectsOversizedFile(t *testing.T) {
 	huge := make([]byte, 200*1024*1024+1)
 	if _, err := store.Create(ctx, "main", 0, 1500, "colab", "huge.zip", huge); err == nil {
 		t.Error("expected an oversized checkpoint file to be rejected")
+	}
+}
+
+func TestCheckpointStore_SetActiveOpponent(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+
+	a, _ := store.Create(ctx, "main", 0, 1500, "this-box", "a.zip", []byte("a"))
+	b, _ := store.Create(ctx, "main", 1, 1650, "this-box", "b.zip", []byte("b"))
+
+	if got, err := store.GetActiveOpponent(ctx); err != nil || got != nil {
+		t.Fatalf("expected no active opponent yet, got %+v, err=%v", got, err)
+	}
+
+	activated, err := store.SetActiveOpponent(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("SetActiveOpponent: %v", err)
+	}
+	if !activated.IsActiveOpponent {
+		t.Error("the just-activated checkpoint's own returned struct should report is_active_opponent=true")
+	}
+
+	active, err := store.GetActiveOpponent(ctx)
+	if err != nil || active == nil || active.ID != a.ID {
+		t.Fatalf("expected checkpoint %d active, got %+v, err=%v", a.ID, active, err)
+	}
+
+	// Switching to b must clear a's own flag -- exactly one active opponent at a time.
+	if _, err := store.SetActiveOpponent(ctx, b.ID); err != nil {
+		t.Fatalf("SetActiveOpponent(b): %v", err)
+	}
+	active, _ = store.GetActiveOpponent(ctx)
+	if active == nil || active.ID != b.ID {
+		t.Fatalf("expected checkpoint %d active after switching, got %+v", b.ID, active)
+	}
+	refetchedA, _ := store.Get(ctx, a.ID)
+	if refetchedA.IsActiveOpponent {
+		t.Error("activating b must clear a's own is_active_opponent flag")
+	}
+}
+
+func TestCheckpointStore_SetActiveOpponentUnknownIDFails(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	if _, err := store.SetActiveOpponent(context.Background(), 999); err == nil {
+		t.Error("expected activating a nonexistent checkpoint id to fail")
 	}
 }

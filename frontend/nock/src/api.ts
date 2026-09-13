@@ -296,3 +296,49 @@ export async function generateProcedural(project: string, name: string, prompt: 
   if (res.status === 422) return { ok: false, error: body.error ?? 'generation failed', source: body.source ?? '' }
   throw new Error(`${res.status}: ${JSON.stringify(body)}`)
 }
+
+// ---- BRAWLPIT RL checkpoint registry (S420/S421) ----
+// A "checkpoint" here is a real, uploaded RL training snapshot -- see
+// IDUNA/internal/brawlpit/checkpoint_store.go's own doc comment. List/download are real, public
+// GETs at /api/v1/brawlpit-checkpoints (a different base path than the admin /admin/nock/api/
+// surface every other NOCK feature uses, matching S420's own real trust-level split: uploading
+// is an M2M training-pipeline action, but BROWSING the registry and SELECTING an opponent are a
+// real, human, in-NOCK action -- see AiOpponents.tsx).
+
+export interface Checkpoint {
+  id: number
+  role: string
+  generation: number
+  elo: number
+  source_location: string
+  filename: string
+  sha256: string
+  size_bytes: number
+  is_active_opponent: boolean
+  created_at: string
+}
+
+const CHECKPOINTS_BASE = '/api/v1/brawlpit-checkpoints'
+const CHECKPOINTS_ADMIN_BASE = '/admin/nock/api/brawlpit-checkpoints'
+
+async function creq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${CHECKPOINTS_BASE}${path}`, { credentials: 'include', ...opts })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  return (await res.json()) as T
+}
+
+export const checkpoints = {
+  list: (role?: string) => creq<Checkpoint[]>(role ? `?role=${enc(role)}` : ''),
+  getActive: () => creq<Checkpoint | null>('/active'),
+  // activate is the one write action a human makes through this UI -- admin-gated, a genuinely
+  // different route/trust level from the public list/getActive reads above (see main.go's own
+  // real routing split).
+  activate: (id: number) =>
+    fetch(`${CHECKPOINTS_ADMIN_BASE}/${id}/activate`, { method: 'PATCH', credentials: 'include' }).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+      return (await res.json()) as Checkpoint
+    }),
+}

@@ -39,11 +39,26 @@ func (h *BrawlpitCheckpointsHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		h.list(w, r)
 	case len(parts) == 0 && r.Method == http.MethodPost:
 		h.upload(w, r)
+	case len(parts) == 1 && parts[0] == "active" && r.Method == http.MethodGet:
+		h.getActive(w, r)
 	case len(parts) == 2 && parts[1] == "download" && r.Method == http.MethodGet:
 		h.download(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// getActive is real, public read state (S421, "select a model for the opponent from the
+// registry") -- the same trust level list/download already have. Returns the current selection
+// as a bare Checkpoint, or `null` (200, not 404) if no selection has ever been made -- a real,
+// expected, honest state for a fresh registry, matching GetActiveOpponent's own doc comment.
+func (h *BrawlpitCheckpointsHandler) getActive(w http.ResponseWriter, r *http.Request) {
+	c, err := h.Store.GetActiveOpponent(r.Context())
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }
 
 func (h *BrawlpitCheckpointsHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -121,4 +136,39 @@ func (h *BrawlpitCheckpointsHandler) download(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Length", strconv.FormatInt(c.SizeBytes, 10))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// BrawlpitCheckpointActivateHandler serves PATCH /admin/nock/api/brawlpit-checkpoints/:id/activate
+// -- the one write action a human makes through the real selection UI (frontend/nock/src/
+// AiOpponents.tsx), admin-gated the same way brawlpit-levels' own editing surface already is
+// (a genuinely different trust level from the M2M-agent-gated upload above: a human picking an
+// opponent through the UI, not a training pipeline pushing a new checkpoint file).
+type BrawlpitCheckpointActivateHandler struct {
+	Store *brawlpit.CheckpointStore
+}
+
+func (h *BrawlpitCheckpointActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.NotFound(w, r)
+		return
+	}
+	const prefix = "/admin/nock/api/brawlpit-checkpoints/"
+	const suffix = "/activate"
+	path := r.URL.Path
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		http.NotFound(w, r)
+		return
+	}
+	idStr := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	c, err := h.Store.SetActiveOpponent(r.Context(), id)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }

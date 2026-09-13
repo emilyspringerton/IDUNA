@@ -32,6 +32,7 @@ func newBrawlpitCheckpointsTestHandler(t *testing.T) (*handlers.BrawlpitCheckpoi
 			sha256          TEXT NOT NULL,
 			size_bytes      INTEGER NOT NULL,
 			blob_path       TEXT NOT NULL,
+			is_active_opponent INTEGER NOT NULL DEFAULT 0,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
@@ -138,5 +139,41 @@ func TestBrawlpitCheckpointsHandler_DownloadNotFound(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints/999/download", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for a nonexistent checkpoint, got %d", rec.Code)
+	}
+}
+
+func TestBrawlpitCheckpointsHandler_GetActiveWhenNoneSet(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints/active", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.String() != "null\n" && rec.Body.String() != "null" {
+		t.Errorf("expected a real, honest null when no opponent is selected, got %q", rec.Body.String())
+	}
+}
+
+func TestBrawlpitCheckpointActivateHandler_SetsAndGetsActive(t *testing.T) {
+	h, _ := newBrawlpitCheckpointsTestHandler(t)
+
+	body, contentType := multipartUploadBody(t, "main", "5", "1700", "this-box", "main5.zip", []byte("data"))
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/v1/brawlpit-checkpoints", body)
+	uploadReq.Header.Set("Content-Type", contentType)
+	h.ServeHTTP(httptest.NewRecorder(), uploadReq)
+
+	activateH := &handlers.BrawlpitCheckpointActivateHandler{Store: h.Store}
+	rec := httptest.NewRecorder()
+	activateH.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/admin/nock/api/brawlpit-checkpoints/1/activate", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("activate: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/api/v1/brawlpit-checkpoints/active", nil))
+	var active brawlpit.Checkpoint
+	json.Unmarshal(getRec.Body.Bytes(), &active)
+	if active.ID != 1 || !active.IsActiveOpponent {
+		t.Fatalf("expected checkpoint 1 to be the real active opponent, got %+v", active)
 	}
 }

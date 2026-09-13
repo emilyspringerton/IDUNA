@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, generateProcedural, textures, type Project, type TextureSummary } from './api'
 import LevelEditor from './LevelEditor'
+import AiOpponents from './AiOpponents'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -647,7 +648,7 @@ function TextureLibrary() {
 export default function App() {
   const { projects, refresh } = useProjects()
   const [active, setActive] = useState<string | null>(null)
-  const [tab, setTab] = useState<'projects' | 'textures' | 'brawlpit'>('textures')
+  const [tab, setTab] = useState<'projects' | 'textures' | 'brawlpit' | 'ai-opponents'>('textures')
 
   return (
     <div className="app">
@@ -664,6 +665,9 @@ export default function App() {
           <button className={tab === 'brawlpit' ? 'active' : ''} onClick={() => setTab('brawlpit')}>
             BRAWLPIT Levels
           </button>
+          <button className={tab === 'ai-opponents' ? 'active' : ''} onClick={() => setTab('ai-opponents')}>
+            BRAWLPIT AI Opponents
+          </button>
         </nav>
       </header>
 
@@ -673,6 +677,10 @@ export default function App() {
         </div>
       ) : tab === 'brawlpit' ? (
         <LevelEditor />
+      ) : tab === 'ai-opponents' ? (
+        <div className="layout-single">
+          <AiOpponents />
+        </div>
       ) : (
         <div className="layout">
           <aside className="project-list">

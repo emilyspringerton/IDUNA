@@ -321,3 +321,37 @@ textarea {
 .guide-from-edge-row button {
   @apply px-2 py-0.5 text-xs;
 }
+
+/* S421: BRAWLPIT AI Opponents (checkpoint registry browsing/selection). */
+
+.ai-opponents {
+  @apply flex max-w-4xl flex-col gap-4;
+}
+
+.ai-opponents-header {
+  @apply flex flex-col gap-2;
+}
+
+.ai-opponents-header select {
+  @apply ml-2;
+}
+
+.checkpoint-table {
+  @apply w-full border-collapse text-sm;
+}
+
+.checkpoint-table th {
+  @apply border-b border-line px-2 py-1 text-left text-xs uppercase tracking-wide text-muted;
+}
+
+.checkpoint-table td {
+  @apply border-b border-line px-2 py-1;
+}
+
+.checkpoint-table tr.active-opponent-row {
+  @apply bg-panel;
+}
+
+.active-badge {
+  @apply text-sm text-gold;
+}

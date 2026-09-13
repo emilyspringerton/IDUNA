@@ -673,6 +673,18 @@ func main() {
 	}))
 	mux.Handle("/api/v1/brawlpit-checkpoints/", brawlpitCheckpointsPublicH)
 
+	// S421, founder real-time: "just like the level editor (or the skins interface) we should be
+	// able to select a model for the opponent from the registry" -- the one write action a human
+	// makes through the real selection UI, admin-gated the same way brawlpit-levels' own editing
+	// surface already is (a human picking an opponent through NOCK's UI, not the training
+	// pipeline's own M2M upload above).
+	brawlpitCheckpointActivateH := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(
+		middleware.RequirePermission("iduna.admin")(
+			&handlers.BrawlpitCheckpointActivateHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}},
+		),
+	)
+	mux.Handle("/admin/nock/api/brawlpit-checkpoints/", brawlpitCheckpointActivateH)
+
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.
 	gfdMobDropsJSONPath := getenv("GFD_MOB_DROPS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/mob_drops.json")

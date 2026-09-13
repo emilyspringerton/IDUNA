@@ -35,15 +35,16 @@ var validSourceLocation = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9 ._-]{0,199}
 
 // Checkpoint is one row of the brawlpit_rl_checkpoints table.
 type Checkpoint struct {
-	ID             int64   `json:"id"`
-	Role           string  `json:"role"`
-	Generation     int     `json:"generation"`
-	Elo            float64 `json:"elo"`
-	SourceLocation string  `json:"source_location"`
-	Filename       string  `json:"filename"`
-	SHA256         string  `json:"sha256"`
-	SizeBytes      int64   `json:"size_bytes"`
-	CreatedAt      string  `json:"created_at"`
+	ID               int64   `json:"id"`
+	Role             string  `json:"role"`
+	Generation       int     `json:"generation"`
+	Elo              float64 `json:"elo"`
+	SourceLocation   string  `json:"source_location"`
+	Filename         string  `json:"filename"`
+	SHA256           string  `json:"sha256"`
+	SizeBytes        int64   `json:"size_bytes"`
+	IsActiveOpponent bool    `json:"is_active_opponent"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 // CheckpointStore is the real, SQLite-metadata + on-disk-blob backed registry.
@@ -118,10 +119,14 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 
 func (s *CheckpointStore) Get(ctx context.Context, id int64) (*Checkpoint, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, created_at
+		`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
 		 FROM brawlpit_rl_checkpoints WHERE id = ?`, id)
+	return scanCheckpoint(row)
+}
+
+func scanCheckpoint(row *sql.Row) (*Checkpoint, error) {
 	var c Checkpoint
-	if err := row.Scan(&c.ID, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes, &c.CreatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes, &c.IsActiveOpponent, &c.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("brawlpit: checkpoint not found")
 		}
@@ -137,11 +142,11 @@ func (s *CheckpointStore) List(ctx context.Context, roleFilter string) ([]Checkp
 	var err error
 	if roleFilter != "" {
 		rows, err = s.DB.QueryContext(ctx,
-			`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, created_at
+			`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
 			 FROM brawlpit_rl_checkpoints WHERE role = ? ORDER BY created_at DESC`, roleFilter)
 	} else {
 		rows, err = s.DB.QueryContext(ctx,
-			`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, created_at
+			`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
 			 FROM brawlpit_rl_checkpoints ORDER BY created_at DESC`)
 	}
 	if err != nil {
@@ -152,12 +157,58 @@ func (s *CheckpointStore) List(ctx context.Context, roleFilter string) ([]Checkp
 	out := []Checkpoint{}
 	for rows.Next() {
 		var c Checkpoint
-		if err := rows.Scan(&c.ID, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes, &c.IsActiveOpponent, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("brawlpit: list checkpoints: %w", err)
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// SetActiveOpponent marks checkpoint `id` as the one real, global "selected opponent" (S421,
+// founder real-time: "just like the level editor... select a model for the opponent from the
+// registry") and clears the flag on every other row -- a real, deliberate single-selection
+// invariant enforced in application logic (SQLite has no partial-unique-index shortcut this
+// codebase already leans on elsewhere), done as two statements in one transaction so a crash
+// between them can never leave two checkpoints simultaneously marked active.
+func (s *CheckpointStore) SetActiveOpponent(ctx context.Context, id int64) (*Checkpoint, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("brawlpit: set active opponent: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_active_opponent = 0`); err != nil {
+		return nil, fmt.Errorf("brawlpit: clear prior active opponent: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_active_opponent = 1 WHERE id = ?`, id)
+	if err != nil {
+		return nil, fmt.Errorf("brawlpit: set active opponent: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("brawlpit: checkpoint %d not found", id)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("brawlpit: set active opponent: %w", err)
+	}
+	return s.Get(ctx, id)
+}
+
+// GetActiveOpponent returns the current global selection, or (nil, nil) if none has ever been
+// set -- a real, honest "no selection yet" state, not an error (a fresh registry with only
+// checkpoints and no explicit selection is a normal, expected state).
+func (s *CheckpointStore) GetActiveOpponent(ctx context.Context) (*Checkpoint, error) {
+	row := s.DB.QueryRowContext(ctx,
+		`SELECT id, role, generation, elo, source_location, filename, sha256, size_bytes, is_active_opponent, created_at
+		 FROM brawlpit_rl_checkpoints WHERE is_active_opponent = 1 LIMIT 1`)
+	c, err := scanCheckpoint(row)
+	if err != nil {
+		if err.Error() == "brawlpit: checkpoint not found" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return c, nil
 }
 
 // ReadBlob returns the real, raw checkpoint bytes for downloading -- a real, direct file read,

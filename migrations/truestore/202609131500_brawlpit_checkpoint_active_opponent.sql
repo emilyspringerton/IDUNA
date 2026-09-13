@@ -1,0 +1,13 @@
+-- S421: "just like the level editor... select a model for the opponent from the registry"
+-- (founder real-time). A real, single, global "active opponent" pointer into the checkpoint
+-- registry -- the concrete selection mechanism the browsing UI (frontend/nock/src/
+-- AiOpponents.tsx) sets, and the real hook a future native-inference feature (BRAWLPIT actually
+-- loading the selected checkpoint's weights to drive gameplay -- S419-10/S421-02, not built yet)
+-- will read from.
+--
+-- Deliberately ONE global flag, not one per training role (main/main_exploiter/
+-- league_exploiter): those roles are a training-time concept (AlphaStar-league archetypes) with
+-- no meaning to an actual player picking an opponent -- role/generation/elo stay visible as
+-- real metadata to help a human choose, but the selection itself is just "this one checkpoint,"
+-- full stop.
+ALTER TABLE brawlpit_rl_checkpoints ADD COLUMN is_active_opponent INTEGER NOT NULL DEFAULT 0;
