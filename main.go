@@ -630,10 +630,21 @@ func main() {
 	// a new tab -- per the founder's explicit "parlay [NOCK's] interface" framing, but backed by
 	// its own real package/table (internal/brawlpit), not folded into internal/nock itself, same
 	// design principle that already keeps NOCK un-coupled from any one specific game.
-	brawlpitLevelsH := &handlers.BrawlpitLevelsHandler{Store: &brawlpit.LevelStore{DB: db}}
+	brawlpitLevelStore := &brawlpit.LevelStore{DB: db}
+	brawlpitLevelsH := &handlers.BrawlpitLevelsHandler{Store: brawlpitLevelStore}
 	brawlpitLevelsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(brawlpitLevelsH))
 	mux.Handle("/admin/nock/api/brawlpit-levels", brawlpitLevelsProtected)
 	mux.Handle("/admin/nock/api/brawlpit-levels/", brawlpitLevelsProtected)
+
+	// S417-02, founder real-time: "brawlpit needs a level selection/browser interface it needs
+	// to work over https or some secure channel" -- a real, PUBLIC (unauthenticated), read-only
+	// mirror of the same store, for the native BRAWLPIT client to list/fetch community levels.
+	// Deliberately unauthenticated (browsing is public discovery, not editing) and a genuinely
+	// separate, minimal handler type with no write methods at all -- see
+	// brawlpit_levels_public.go's own doc comment.
+	brawlpitLevelsPublicH := &handlers.BrawlpitLevelsPublicHandler{Store: brawlpitLevelStore}
+	mux.Handle("/api/v1/brawlpit-levels", brawlpitLevelsPublicH)
+	mux.Handle("/api/v1/brawlpit-levels/", brawlpitLevelsPublicH)
 
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.
