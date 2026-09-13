@@ -205,6 +205,68 @@ export const textures = {
   },
 }
 
+// ---- BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
+// editor online - web technologies - we already started building nock - can we finish building
+// out some of that interface so we can kind of parlay it into an online brawlpit level editor?")
+// ----
+// Platform mirrors BRAWLPIT/packages/common/protocol.h's own real Platform2D struct exactly
+// (x/y/w/h are world-unit floats; type 0=SOLID, 1=PASSTHROUGH) -- see
+// IDUNA/internal/brawlpit/level_store.go's own matching Go struct.
+
+export interface Platform {
+  x: number
+  y: number
+  w: number
+  h: number
+  type: 0 | 1
+}
+
+export interface Level {
+  id: number
+  name: string
+  width: number
+  height: number
+  platforms: Platform[]
+  created_at: string
+  updated_at: string
+}
+
+export interface LevelSummary {
+  id: number
+  name: string
+  width: number
+  height: number
+  platform_count: number
+  created_at: string
+  updated_at: string
+}
+
+const LEVELS_BASE = '/admin/nock/api/brawlpit-levels'
+
+async function lreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${LEVELS_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const levels = {
+  list: () => lreq<LevelSummary[]>(''),
+  get: (id: number) => lreq<Level>(`/${id}`),
+  create: (name: string, width: number, height: number, platforms: Platform[]) =>
+    lreq<Level>('', { method: 'POST', body: JSON.stringify({ name, width, height, platforms }) }),
+  save: (id: number, width: number, height: number, platforms: Platform[]) =>
+    lreq<Level>(`/${id}`, { method: 'PUT', body: JSON.stringify({ width, height, platforms }) }),
+  rename: (id: number, name: string) => lreq<Level>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  delete: (id: number) => lreq<void>(`/${id}`, { method: 'DELETE' }),
+  clone: (id: number, name: string) => lreq<Level>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
+  exportUrl: (id: number) => `${LEVELS_BASE}/${id}/export?_=${Date.now()}`,
+}
+
 export async function generateProcedural(project: string, name: string, prompt: string): Promise<GenerateResult> {
   const res = await fetch(`${API_BASE}/projects/${enc(project)}/generate`, {
     method: 'POST',

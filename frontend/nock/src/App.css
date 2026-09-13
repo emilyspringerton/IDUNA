@@ -206,3 +206,37 @@ textarea {
 .texture-actions button {
   @apply px-2 py-1 text-xs;
 }
+
+/* BRAWLPIT level editor (S415-02/03) -- reuses .layout/.project-list/.project-header/
+   .editor-body/.canvas-pane/.side-pane from the Project (layer) editor above; these rules add
+   only what's genuinely new for this tab. */
+
+.level-name-input {
+  @apply w-56;
+}
+
+.level-canvas {
+  @apply cursor-crosshair rounded border border-line;
+  touch-action: none; /* pointer drag must not trigger scroll/zoom gestures on the canvas */
+}
+
+.platform-inspector {
+  @apply flex flex-col gap-2;
+}
+
+.platform-inspector h3 {
+  @apply m-0 text-sm text-gold;
+}
+
+.platform-inspector label {
+  @apply flex items-center justify-between gap-2 text-sm text-muted;
+}
+
+.platform-inspector input,
+.platform-inspector select {
+  @apply w-24;
+}
+
+.export-link {
+  @apply rounded border border-line px-2 py-1 text-sm text-gold no-underline hover:bg-panel;
+}
