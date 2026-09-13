@@ -307,6 +307,7 @@ export async function generateProcedural(project: string, name: string, prompt: 
 
 export interface Checkpoint {
   id: number
+  name: string
   role: string
   generation: number
   elo: number
@@ -315,6 +316,9 @@ export interface Checkpoint {
   sha256: string
   size_bytes: number
   is_active_opponent: boolean
+  has_weights: boolean
+  weights_size_bytes: number
+  weights_sha256: string
   created_at: string
 }
 

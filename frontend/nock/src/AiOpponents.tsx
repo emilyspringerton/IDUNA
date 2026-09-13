@@ -39,17 +39,22 @@ function CheckpointRow({
 }) {
   return (
     <tr className={isActive ? 'active-opponent-row' : ''}>
+      <td className="checkpoint-name">{c.name || `#${c.id}`}</td>
       <td>{ROLE_LABELS[c.role] ?? c.role}</td>
       <td>{c.generation}</td>
       <td>{c.elo.toFixed(0)}</td>
       <td>{c.source_location}</td>
+      <td title={c.has_weights ? 'the native BRAWLPIT client can load this one' : 'no exported weights yet -- native client can\'t use this one'}>
+        {c.has_weights ? '✓' : '—'}
+      </td>
       <td>{formatBytes(c.size_bytes)}</td>
       <td>{new Date(c.created_at).toLocaleString()}</td>
       <td>
         {isActive ? (
           <span className="active-badge">★ current opponent</span>
         ) : (
-          <button type="button" disabled={busy} onClick={onActivate}>
+          <button type="button" disabled={busy || !c.has_weights} onClick={onActivate}
+                  title={!c.has_weights ? 'this checkpoint has no exported native-inference weights yet' : ''}>
             Set as opponent
           </button>
         )}
@@ -119,8 +124,8 @@ export default function AiOpponents() {
 
       {active && (
         <p className="hint">
-          Current opponent: <strong>{ROLE_LABELS[active.role] ?? active.role}</strong> gen {active.generation}, Elo{' '}
-          {active.elo.toFixed(0)} (from {active.source_location})
+          Current opponent: <strong>{active.name || `#${active.id}`}</strong> ({ROLE_LABELS[active.role] ?? active.role} gen{' '}
+          {active.generation}, Elo {active.elo.toFixed(0)}, from {active.source_location})
         </p>
       )}
 
@@ -132,10 +137,12 @@ export default function AiOpponents() {
         <table className="checkpoint-table">
           <thead>
             <tr>
+              <th>Name</th>
               <th>Role</th>
               <th>Gen</th>
               <th>Elo</th>
               <th>From</th>
+              <th>Native</th>
               <th>Size</th>
               <th>Created</th>
               <th></th>
