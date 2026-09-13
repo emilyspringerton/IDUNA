@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-13
+- feat(brawlpit): S421 -- select an opponent from the RL checkpoint registry, like the level editor. SetActiveOpponent/GetActiveOpponent (a real, transactional, single global selection), GET /api/v1/brawlpit-checkpoints/active (public), PATCH /admin/nock/api/brawlpit-checkpoints/:id/activate (admin-gated), new 'BRAWLPIT AI Opponents' NOCK tab. 6 new Go tests. Live-verified against production. Real, honest, named scope: selection is complete, native in-game inference isn't built yet. Commit b1bf5fe. (sess-20260905-0720-ec33e7c5)
 - feat(brawlpit): S418-01..04 guide-based snapping for the NOCK level editor -- author-placed guides (ruler drag / platform-edge capture), edge/center snapping with screen-space threshold + Alt override, mirror-axis command; guides are real level data but never appear in the client-facing export. Commit 4dff14b, Apple #19323. (sess-20260905-0720-ec33e7c5)
 - S417-03: real LZ4-style compression via PARENA's own compiled lz4.prn, wired into GET /api/v1/brawlpit-levels/:id/export?compress=lz4. Live-verified over okemily.com. (sess-20260905-0720-ec33e7c5)
 - S417-02: real, public, read-only HTTPS API for BRAWLPIT level browsing (/api/v1/brawlpit-levels) -- list+export, no auth, no write methods. Live-verified over okemily.com. (sess-20260905-0720-ec33e7c5)
