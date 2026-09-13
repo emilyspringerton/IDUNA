@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-13
+- feat(brawlpit): S418-01..04 guide-based snapping for the NOCK level editor -- author-placed guides (ruler drag / platform-edge capture), edge/center snapping with screen-space threshold + Alt override, mirror-axis command; guides are real level data but never appear in the client-facing export. Commit 4dff14b, Apple #19323. (sess-20260905-0720-ec33e7c5)
 - S417-03: real LZ4-style compression via PARENA's own compiled lz4.prn, wired into GET /api/v1/brawlpit-levels/:id/export?compress=lz4. Live-verified over okemily.com. (sess-20260905-0720-ec33e7c5)
 - S417-02: real, public, read-only HTTPS API for BRAWLPIT level browsing (/api/v1/brawlpit-levels) -- list+export, no auth, no write methods. Live-verified over okemily.com. (sess-20260905-0720-ec33e7c5)
 - S415-02/03/04: real BRAWLPIT online level editor -- new internal/brawlpit.LevelStore + REST API + a canvas-based LevelEditor.tsx tab in the NOCK React app. Live-verified end to end: a level authored via the store, exported, loaded through BRAWLPIT's real native C loader. (sess-20260905-0720-ec33e7c5)
