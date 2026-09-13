@@ -12,6 +12,11 @@ package handlers
 //   PATCH  /api/v1/characters/:id/gold/credit          — credit gold, bounded per call (2026-07-31)
 //   GET    /api/v1/characters/:id/inventory           — bag inventory (S129-05)
 //   GET    /api/v1/characters/:id/equipment           — equipped slots (S129-05)
+//   PATCH  /api/v1/characters/:id/equipment           — equip/unequip one slot (real production
+//                                                        data-loss fix, 2026-09-12: this GET was
+//                                                        the ONLY real equipment endpoint until
+//                                                        this write half was added -- nothing a
+//                                                        player equipped ever persisted before)
 //   GET    /api/v1/hats                               — hat catalog (WOTAN_HAT_STORE_NORTHSTAR.md Phase 1)
 //   GET    /api/v1/characters/:id/hats                — a character's owned hats
 //   POST   /api/v1/characters/:id/hats/buy            — buy a hat by hat_id; deducts Flow atomically
@@ -243,6 +248,14 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 	if r.Method == http.MethodGet && strings.HasSuffix(path, "/equipment") {
 		id := extractSegment(path, "/api/v1/characters/", "/equipment")
 		h.handleGetEquipment(w, r, id)
+		return
+	}
+	// PATCH /api/v1/characters/:id/equipment (real production data-loss fix, 2026-09-12, founder
+	// real-time: "gear needs to persist what the fuck why was that deferred") -- the write half
+	// GET above never had. See handleUpdateEquipment's own doc comment.
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/equipment") {
+		id := extractSegment(path, "/api/v1/characters/", "/equipment")
+		h.handleUpdateEquipment(w, r, id)
 		return
 	}
 	// POST /api/v1/characters/:id/hats/buy (WOTAN_HAT_STORE_NORTHSTAR.md Phase 1) -- checked
@@ -1044,6 +1057,61 @@ func (h *MMOHandler) handleGetEquipment(w http.ResponseWriter, r *http.Request, 
 		slots = []eqSlot{}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"equipment": slots})
+}
+
+// handleUpdateEquipment upserts (or clears) one equipped slot
+// (PATCH /api/v1/characters/:id/equipment). Payload: {"slot":"main","item_id":"sword"} to equip,
+// or {"slot":"main","item_id":""} (or item_id omitted) to unequip/clear that slot.
+//
+// Real production data-loss fix (2026-09-12, founder real-time, after finding equipment had zero
+// persistence anywhere: "gear needs to persist what the fuck why was that deferred"). Before this
+// handler, GET above was the only real endpoint -- checked directly, no PATCH/PUT ever existed,
+// so nothing a player equipped survived a reconnect or restart.
+//
+// item_id here is apps2/mud's own itemdef.Registry lookup key (e.g. "sword"), the same string
+// gear.ItemEntry.ItemID already holds for every real equip call in that codebase -- NOT
+// necessarily a real item-instance UUID from the `items` table. character_equipment's own schema
+// has no foreign key on item_id (checked directly), so this is a real, valid, permanent choice,
+// not a shortcut awaiting a "real" follow-up: a bare registry-key string is exactly what this
+// column is for.
+func (h *MMOHandler) handleUpdateEquipment(w http.ResponseWriter, r *http.Request, characterID string) {
+	var req struct {
+		Slot   string `json:"slot"`
+		ItemID string `json:"item_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Slot == "" {
+		mmoWriteError(w, http.StatusBadRequest, "slot required")
+		return
+	}
+	if req.ItemID == "" {
+		// Unequip: a NULL item_id (not a deleted row) matches GET's own real "slot exists but
+		// empty" shape (COALESCE(item_id, '') above already treats NULL and '' identically on
+		// read, so either representation is safe -- NULL chosen here to match the column's own
+		// real DEFAULT).
+		_, err := h.DB.ExecContext(r.Context(),
+			`INSERT INTO character_equipment (character_id, slot, item_id) VALUES (?, ?, NULL)
+			 ON CONFLICT(character_id, slot) DO UPDATE SET item_id = NULL`,
+			characterID, req.Slot)
+		if err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+		return
+	}
+	_, err := h.DB.ExecContext(r.Context(),
+		`INSERT INTO character_equipment (character_id, slot, item_id) VALUES (?, ?, ?)
+		 ON CONFLICT(character_id, slot) DO UPDATE SET item_id = excluded.item_id`,
+		characterID, req.Slot, req.ItemID)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 // ── Items (S75-03) ────────────────────────────────────────────────────────────

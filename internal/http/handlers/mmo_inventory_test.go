@@ -324,3 +324,123 @@ func TestGetEquipmentWithSlots(t *testing.T) {
 		t.Error("expected main_hand slot with sword-1")
 	}
 }
+
+// TestUpdateEquipment_* guard the real production data-loss fix (2026-09-12, founder real-time:
+// "gear needs to persist what the fuck why was that deferred") -- GET above was the only real
+// equipment endpoint that ever existed; nothing a player equipped survived a reconnect or
+// restart. These test the new PATCH write half directly.
+
+func TestUpdateEquipmentEquipsIntoAFreshSlot(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-5")
+
+	h := &handlers.MMOHandler{DB: db}
+	body, _ := json.Marshal(map[string]string{"slot": "main", "item_id": "sword"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/characters/char-5/equipment", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var itemID sql.NullString
+	if err := db.QueryRow(`SELECT item_id FROM character_equipment WHERE character_id='char-5' AND slot='main'`).Scan(&itemID); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !itemID.Valid || itemID.String != "sword" {
+		t.Errorf("expected slot main to hold 'sword', got %+v", itemID)
+	}
+}
+
+// TestUpdateEquipmentReplacesAnAlreadyEquippedSlot is the exact real scenario this fix targets:
+// a player re-equipping a different item in a slot they'd already put something in.
+func TestUpdateEquipmentReplacesAnAlreadyEquippedSlot(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-6")
+	db.Exec(`INSERT INTO character_equipment (character_id,slot,item_id) VALUES ('char-6','main','sword')`)
+
+	h := &handlers.MMOHandler{DB: db}
+	body, _ := json.Marshal(map[string]string{"slot": "main", "item_id": "axe"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/characters/char-6/equipment", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var itemID string
+	db.QueryRow(`SELECT item_id FROM character_equipment WHERE character_id='char-6' AND slot='main'`).Scan(&itemID)
+	if itemID != "axe" {
+		t.Errorf("expected slot main to now hold 'axe', got %q", itemID)
+	}
+}
+
+// TestUpdateEquipmentEmptyItemIDClearsTheSlot -- unequip must clear the slot, not leave the
+// stale item_id sitting there (which would make a later GET lie about what's really equipped).
+func TestUpdateEquipmentEmptyItemIDClearsTheSlot(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-7")
+	db.Exec(`INSERT INTO character_equipment (character_id,slot,item_id) VALUES ('char-7','main','sword')`)
+
+	h := &handlers.MMOHandler{DB: db}
+	body, _ := json.Marshal(map[string]string{"slot": "main", "item_id": ""})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/characters/char-7/equipment", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var itemID sql.NullString
+	db.QueryRow(`SELECT item_id FROM character_equipment WHERE character_id='char-7' AND slot='main'`).Scan(&itemID)
+	if itemID.Valid {
+		t.Errorf("expected slot main's item_id to be NULL after clearing, got %q", itemID.String)
+	}
+}
+
+func TestUpdateEquipmentMissingSlotIsBadRequest(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-8")
+
+	h := &handlers.MMOHandler{DB: db}
+	body, _ := json.Marshal(map[string]string{"item_id": "sword"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/characters/char-8/equipment", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for a missing slot, got %d", rec.Code)
+	}
+}
+
+// TestUpdateEquipmentThenGetRoundTrips is the real end-to-end guarantee: whatever a PATCH writes,
+// the existing GET must read back -- exactly the round trip a real reconnect now performs.
+func TestUpdateEquipmentThenGetRoundTrips(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "char-9")
+
+	h := &handlers.MMOHandler{DB: db}
+	body, _ := json.Marshal(map[string]string{"slot": "off", "item_id": "buckler"})
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/v1/characters/char-9/equipment", bytes.NewReader(body))
+	patchRec := httptest.NewRecorder()
+	h.ServeHTTP(patchRec, patchReq)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("PATCH: expected 200, got %d: %s", patchRec.Code, patchRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/characters/char-9/equipment", nil)
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	var resp struct {
+		Equipment []map[string]interface{} `json:"equipment"`
+	}
+	json.NewDecoder(getRec.Body).Decode(&resp)
+	if len(resp.Equipment) != 1 || resp.Equipment[0]["slot"] != "off" || resp.Equipment[0]["item_id"] != "buckler" {
+		t.Fatalf("round trip failed, GET returned: %+v", resp.Equipment)
+	}
+}
