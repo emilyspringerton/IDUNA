@@ -20,6 +20,7 @@ package handlers
 // founder's own "get it online" framing doesn't ask for.
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,6 +73,15 @@ func (h *BrawlpitLevelsPublicHandler) list(w http.ResponseWriter, r *http.Reques
 // export returns the real, native-loader-facing document (BRAWLPIT/packages/common/
 // level_format.h's own level_parse_json contract) -- exactly the same shape the admin-side
 // export already returns (brawlpit_levels.go), just reachable without an admin cookie.
+//
+// `?compress=lz4` (S417-03, founder real-time: "PARENA has lz4" / "you can build parena in")
+// returns the SAME JSON bytes run through this package's own PARENA-compiled LZ4-style codec
+// (internal/brawlpit's cgo binding over lz4.prn) instead of plain JSON -- BRAWLPIT's native
+// client links the identical codec directly (packages/common/lz4/), so it decompresses with the
+// exact same real format this server compresses with. Real Content-Type
+// application/x-brawlpit-lz4 names this as a real, own wire format (see lz4_wrapper.c's own doc
+// comment on why this isn't liblz4's own bitstream), not a generic compressed-JSON convention a
+// client might mistake for gzip/deflate.
 func (h *BrawlpitLevelsPublicHandler) export(w http.ResponseWriter, r *http.Request, idStr string) {
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -81,6 +91,19 @@ func (h *BrawlpitLevelsPublicHandler) export(w http.ResponseWriter, r *http.Requ
 	doc, err := h.Store.Export(r.Context(), id)
 	if err != nil {
 		mmoWriteError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	if r.URL.Query().Get("compress") == "lz4" {
+		raw, err := json.Marshal(doc)
+		if err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		compressed := brawlpit.CompressLZ4(raw)
+		w.Header().Set("Content-Type", "application/x-brawlpit-lz4")
+		w.WriteHeader(http.StatusOK)
+		w.Write(compressed)
 		return
 	}
 	writeJSON(w, http.StatusOK, doc)
