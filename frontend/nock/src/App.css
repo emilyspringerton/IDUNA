@@ -88,22 +88,21 @@ header h1 {
 }
 
 .material-panel li {
-  /* Real fix, founder real-time (screenshot): "review the photo its a little jacked up." The
-     name+spec text and the delete button used to share one flex row with no defined internal
-     structure -- in this sidebar's real ~220px width, the spec/shininess text wrapped
-     unpredictably under the name, at low contrast (see --color-muted's own fix above), which is
-     what read as a stray colored line in the screenshot. Now: name+hint stack in their own
-     column, delete button pinned to a fixed-width column on the right, aligned to the top so
-     wrapping never collides with the button. */
-  @apply flex items-start justify-between gap-2 rounded-md border border-line bg-panel p-2;
+  /* Real fix, founder real-time (two rounds of screenshots): "review the photo its a little
+     jacked up" -> "it lost the names of the materials." The first fix nested a flex-row inside a
+     flex-column inside a flex-row (li > .material-panel-name > name-span) -- one nesting level
+     too many, and the name span's own `truncate` (needs a definite width from its own flex
+     context) collapsed to invisible instead of showing text. Flattened: <li> is a simple column
+     (title row, then hint text below, no nested flex-in-flex-in-flex), each level styled once. */
+  @apply flex flex-col gap-1 rounded-md border border-line bg-panel p-2;
 }
 
-.material-panel-name {
-  @apply flex min-w-0 flex-col;
+.material-panel-row {
+  @apply flex items-center justify-between gap-2;
 }
 
-.material-panel-name > span:first-child {
-  @apply truncate font-semibold text-ink;
+.material-panel-title {
+  @apply font-semibold text-ink;
 }
 
 .material-panel-delete {
