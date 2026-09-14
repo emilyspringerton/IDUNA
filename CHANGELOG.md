@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-14
+- Added ShaderHPSLight to the shankpit materials validShaderNames registry, NOCK Materials panel shader picker gets the new option. Commit 50a7e45 (sess-20260905-0720-ec33e7c5)
 - Added ShaderIPSLight to the shankpit materials validShaderNames registry; NOCK's Materials panel gets a real shader picker (standard/ips_light) and its per-material Delete button is removed to prevent accidentally orphaning a hooked-up material from its shader. Commit 8d7f2fa (sess-20260905-0720-ec33e7c5)
 - feat: WASD moves the spawner marker in the SHANKPIT level editor (camera-relative, horizontal-only, skips text fields) (sess-20260905-0720-ec33e7c5)
 - fix: materials panel lost material names (over-nested flex+truncate collapsed the name span) -- flattened to a simple title-row + hint-line structure (sess-20260905-0720-ec33e7c5)
