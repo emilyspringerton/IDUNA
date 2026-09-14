@@ -42,28 +42,57 @@ type Wall struct {
 	Friction float64 `json:"friction"`
 }
 
+// GridCellSize is the real, fixed, constant world-unit size of one ground-plane grid square --
+// founder, direct: "the squares are always the same size" / "so the units needs to be the number
+// of squares in the grid." The plane's own real editable field is a SQUARE COUNT
+// (GroundPlaneSquares), not a raw world-unit length -- the actual world-unit footprint is always
+// GroundPlaneSquares * GridCellSize.
+//
+// REAL, FOUND, LIVE value, not invented: SHANKPIT's own native client (apps/lobby/src/main.c)
+// already has a real, working "Matrix floor" grid + a magenta-glow footstep trail effect
+// (draw_grid/update_and_draw_trails) at a fixed real cell size, `#define GRID_SIZE 50.0f` --
+// founder, direct: "shankpit has it built in that the grid lights up when you touch it... it
+// would be great if we integrated with that." This constant matches that exactly (not 1.0) so a
+// level authored here lines up, square-for-square, with the real in-game glowing-trail floor
+// instead of introducing a second, mismatched grid convention. Shared, by convention (not by
+// import -- this is a Go/C/TS boundary with no shared schema to generate from), with the
+// identical constant in ShankpitLevelEditor.tsx and packages/world/level_boxes.h -- kept in sync
+// by hand.
+const GridCellSize = 50.0
+
 // Level is one row of the shankpit_levels table.
 type Level struct {
-	ID        int64   `json:"id"`
-	Name      string  `json:"name"`
-	Width     float64 `json:"width"`
-	Height    float64 `json:"height"`
-	Depth     float64 `json:"depth"`
-	Walls     []Wall  `json:"walls"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID                 int64   `json:"id"`
+	Name               string  `json:"name"`
+	Width              float64 `json:"width"`
+	Height             float64 `json:"height"`
+	Depth              float64 `json:"depth"`
+	// GroundPlaneEnabled/GroundPlaneSquares (founder real-time: "i want there to be a plane by
+	// default that the player collides with - the checkerboard in the level editor - that
+	// should constitute the plane for that level... configurable in terms of size... turn on
+	// able and off able per level") -- a real, first-class, per-level, persisted property, not a
+	// Wall and not a hardcoded engine default. GroundPlaneSquares is a real square COUNT (see
+	// GridCellSize's own doc comment for why), not a raw length.
+	GroundPlaneEnabled bool    `json:"ground_plane_enabled"`
+	GroundPlaneSquares int     `json:"ground_plane_squares"`
+	Walls              []Wall  `json:"walls"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
 }
 
-// ExportDoc is the real, native-loader-facing shape (SHANKPIT/packages/map/map.h's own `Wall`/
-// `GameMap` contract) -- narrower than Level (no id/timestamps), matching internal/brawlpit's own
-// ExportDoc precedent exactly.
+// ExportDoc is the real, native-loader-facing shape (SHANKPIT's own real physics.h `Box`/
+// `phys_set_custom_level` contract -- see packages/world/level_boxes.h's own doc comment for the
+// real, found-live correction on which native format this actually targets) -- narrower than
+// Level (no id/timestamps), matching internal/brawlpit's own ExportDoc precedent exactly.
 type ExportDoc struct {
-	Version int     `json:"version"`
-	Name    string  `json:"name"`
-	Width   float64 `json:"width"`
-	Height  float64 `json:"height"`
-	Depth   float64 `json:"depth"`
-	Walls   []Wall  `json:"walls"`
+	Version            int     `json:"version"`
+	Name               string  `json:"name"`
+	Width              float64 `json:"width"`
+	Height             float64 `json:"height"`
+	Depth              float64 `json:"depth"`
+	GroundPlaneEnabled bool    `json:"ground_plane_enabled"`
+	GroundPlaneSquares int     `json:"ground_plane_squares"`
+	Walls              []Wall  `json:"walls"`
 }
 
 var validLevelName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,63}$`)
@@ -82,6 +111,19 @@ func ValidateName(name string) error {
 // -- kept in exact sync so a level saved here can never exceed what the native GameMap can
 // actually hold, same real reason internal/brawlpit.MaxPlatforms exists.
 const MaxWalls = 100
+
+// MinGroundPlaneSquares/MaxGroundPlaneSquares bound the real, editable square-count field --
+// a real, sane range (1 = a single 1x1 square, 2000 = a 2000x2000-unit plane, comfortably larger
+// than any real level authored here yet) rather than an unbounded integer.
+const MinGroundPlaneSquares = 1
+const MaxGroundPlaneSquares = 2000
+
+func validateGroundPlane(squares int) error {
+	if squares < MinGroundPlaneSquares || squares > MaxGroundPlaneSquares {
+		return fmt.Errorf("shankpit: ground_plane_squares must be in [%d, %d], got %d", MinGroundPlaneSquares, MaxGroundPlaneSquares, squares)
+	}
+	return nil
+}
 
 func validateWalls(walls []Wall) error {
 	if len(walls) > MaxWalls {
@@ -112,8 +154,11 @@ type LevelStore struct {
 // own real "create a level, then add a cube" flow, S459-01 before S459-04) -- unlike BRAWLPIT's
 // own CreateLevel, an empty wall list is not an error here, since there is no equivalent real
 // native-loader requirement forcing "at least one platform" the way BRAWLPIT's 2D format does.
-func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, walls []Wall) (*Level, error) {
+func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall) (*Level, error) {
 	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
+	if err := validateGroundPlane(groundPlaneSquares); err != nil {
 		return nil, err
 	}
 	if err := validateWalls(walls); err != nil {
@@ -127,8 +172,8 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 		return nil, fmt.Errorf("shankpit: marshal walls: %w", err)
 	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO shankpit_levels (name, width, height, depth, walls_json) VALUES (?, ?, ?, ?, ?)`,
-		name, width, height, depth, string(wallsJSON))
+		`INSERT INTO shankpit_levels (name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		name, width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON))
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: create level: %w", err)
 	}
@@ -142,7 +187,7 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, walls_json, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
@@ -150,7 +195,7 @@ func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
 	var wallsJSON string
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &wallsJSON, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
@@ -165,21 +210,23 @@ func scanLevel(row *sql.Row) (*Level, error) {
 // LevelSummary is the real, lightweight shape a level LIST returns -- everything about a Level
 // except its own full wall array, matching internal/brawlpit.LevelSummary's own precedent.
 type LevelSummary struct {
-	ID        int64   `json:"id"`
-	Name      string  `json:"name"`
-	Width     float64 `json:"width"`
-	Height    float64 `json:"height"`
-	Depth     float64 `json:"depth"`
-	WallCount int     `json:"wall_count"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID                 int64   `json:"id"`
+	Name               string  `json:"name"`
+	Width              float64 `json:"width"`
+	Height             float64 `json:"height"`
+	Depth              float64 `json:"depth"`
+	GroundPlaneEnabled bool    `json:"ground_plane_enabled"`
+	GroundPlaneSquares int     `json:"ground_plane_squares"`
+	WallCount          int     `json:"wall_count"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
 }
 
 // ListLevels returns every level as a real, lightweight summary, newest first -- the real
 // level-select registry primitive this section exists to build.
 func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, width, height, depth, walls_json, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, created_at, updated_at
 		 FROM shankpit_levels ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: list levels: %w", err)
@@ -190,7 +237,7 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	for rows.Next() {
 		var sum LevelSummary
 		var wallsJSON string
-		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &wallsJSON, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
+		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("shankpit: list levels: %w", err)
 		}
 		var walls []Wall
@@ -204,12 +251,15 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 }
 
 // UpdateLevel replaces a level's own real editable fields in place -- the web editor's own real
-// "save" action (dimensions + the full wall layout can both change together in one save). This is
-// the one endpoint both S459-04 "create a cube" (append a default wall to the array, save) and
-// S459-05 "face-drag editing" (adjust an existing wall's center/size, save) both go through --
-// matching BRAWLPIT's own LevelStore precedent exactly: there is no separate "add one platform"
-// endpoint there either, the whole array is replaced together.
-func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, walls []Wall) (*Level, error) {
+// "save" action (dimensions + ground plane + the full wall layout can all change together in one
+// save). This is the one endpoint both S459-04 "create a cube" (append a default wall to the
+// array, save) and S459-05 "face-drag editing" (adjust an existing wall's center/size, save) both
+// go through -- matching BRAWLPIT's own LevelStore precedent exactly: there is no separate "add
+// one platform" endpoint there either, the whole array is replaced together.
+func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall) (*Level, error) {
+	if err := validateGroundPlane(groundPlaneSquares); err != nil {
+		return nil, err
+	}
 	if err := validateWalls(walls); err != nil {
 		return nil, err
 	}
@@ -221,8 +271,8 @@ func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, d
 		return nil, fmt.Errorf("shankpit: marshal walls: %w", err)
 	}
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, walls_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		width, height, depth, string(wallsJSON), id)
+		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, ground_plane_enabled = ?, ground_plane_squares = ?, walls_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), id)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: update level: %w", err)
 	}
@@ -255,7 +305,7 @@ func (s *LevelStore) CloneLevel(ctx context.Context, id int64, newName string) (
 	if err != nil {
 		return nil, err
 	}
-	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.Walls)
+	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.GroundPlaneEnabled, src.GroundPlaneSquares, src.Walls)
 }
 
 // DeleteLevel permanently removes a level row.
@@ -279,5 +329,9 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExportDoc{Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth, Walls: lvl.Walls}, nil
+	return &ExportDoc{
+		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
+		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares,
+		Walls: lvl.Walls,
+	}, nil
 }

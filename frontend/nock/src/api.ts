@@ -305,12 +305,22 @@ export interface ShankpitWall {
   friction: number
 }
 
+// SHANKPIT_GRID_CELL_SIZE is the real, fixed, constant world-unit size of one ground-plane grid
+// square -- matches IDUNA/internal/shankpit.GridCellSize (Go) and SHANKPIT's own real, already-
+// existing `#define GRID_SIZE 50.0f` (apps/lobby/src/main.c) exactly, kept in sync by hand across
+// this Go/C/TS boundary. See that Go constant's own doc comment for the full rationale (founder:
+// "the squares are always the same size" / "shankpit has it built in that the grid lights up
+// when you touch it... it would be great if we integrated with that").
+export const SHANKPIT_GRID_CELL_SIZE = 50
+
 export interface ShankpitLevel {
   id: number
   name: string
   width: number
   height: number
   depth: number
+  ground_plane_enabled: boolean
+  ground_plane_squares: number
   walls: ShankpitWall[]
   created_at: string
   updated_at: string
@@ -322,6 +332,8 @@ export interface ShankpitLevelSummary {
   width: number
   height: number
   depth: number
+  ground_plane_enabled: boolean
+  ground_plane_squares: number
   wall_count: number
   created_at: string
   updated_at: string
@@ -343,10 +355,47 @@ async function sreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
 export const shankpitLevels = {
   list: () => sreq<ShankpitLevelSummary[]>(''),
   get: (id: number) => sreq<ShankpitLevel>(`/${id}`),
-  create: (name: string, width: number, height: number, depth: number, walls: ShankpitWall[]) =>
-    sreq<ShankpitLevel>('', { method: 'POST', body: JSON.stringify({ name, width, height, depth, walls }) }),
-  save: (id: number, width: number, height: number, depth: number, walls: ShankpitWall[]) =>
-    sreq<ShankpitLevel>(`/${id}`, { method: 'PUT', body: JSON.stringify({ width, height, depth, walls }) }),
+  create: (
+    name: string,
+    width: number,
+    height: number,
+    depth: number,
+    groundPlaneEnabled: boolean,
+    groundPlaneSquares: number,
+    walls: ShankpitWall[],
+  ) =>
+    sreq<ShankpitLevel>('', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        width,
+        height,
+        depth,
+        ground_plane_enabled: groundPlaneEnabled,
+        ground_plane_squares: groundPlaneSquares,
+        walls,
+      }),
+    }),
+  save: (
+    id: number,
+    width: number,
+    height: number,
+    depth: number,
+    groundPlaneEnabled: boolean,
+    groundPlaneSquares: number,
+    walls: ShankpitWall[],
+  ) =>
+    sreq<ShankpitLevel>(`/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        width,
+        height,
+        depth,
+        ground_plane_enabled: groundPlaneEnabled,
+        ground_plane_squares: groundPlaneSquares,
+        walls,
+      }),
+    }),
   rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   delete: (id: number) => sreq<void>(`/${id}`, { method: 'DELETE' }),
   clone: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),

@@ -18,11 +18,13 @@ func newTestStore(t *testing.T) *shankpit.LevelStore {
 	}
 	_, err = db.Exec(`
 		CREATE TABLE shankpit_levels (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			name       TEXT NOT NULL,
-			width      REAL NOT NULL DEFAULT 100,
-			height     REAL NOT NULL DEFAULT 50,
-			depth      REAL NOT NULL DEFAULT 100,
+			id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+			name                 TEXT NOT NULL,
+			width                REAL NOT NULL DEFAULT 100,
+			height               REAL NOT NULL DEFAULT 50,
+			depth                REAL NOT NULL DEFAULT 100,
+			ground_plane_enabled BOOLEAN NOT NULL DEFAULT 1,
+			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -42,7 +44,7 @@ func aCube() shankpit.Wall {
 
 func TestCreateLevel_EmptyWallsAllowed(t *testing.T) {
 	s := newTestStore(t)
-	lvl, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, nil)
+	lvl, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil)
 	if err != nil {
 		t.Fatalf("create with zero walls should succeed (S459-01 before S459-04): %v", err)
 	}
@@ -53,7 +55,7 @@ func TestCreateLevel_EmptyWallsAllowed(t *testing.T) {
 
 func TestCreateLevel_RejectsInvalidName(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateLevel(context.Background(), "", 100, 50, 100, nil); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "", 100, 50, 100, true, 2, nil); err == nil {
 		t.Fatal("expected an error for an empty name")
 	}
 }
@@ -62,7 +64,7 @@ func TestCreateLevel_RejectsNonPositiveWallSize(t *testing.T) {
 	s := newTestStore(t)
 	bad := aCube()
 	bad.SX = 0
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, []shankpit.Wall{bad}); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{bad}); err == nil {
 		t.Fatal("expected an error for a zero-size wall")
 	}
 }
@@ -71,8 +73,33 @@ func TestCreateLevel_RejectsOutOfRangeColor(t *testing.T) {
 	s := newTestStore(t)
 	bad := aCube()
 	bad.R = 1.5
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, []shankpit.Wall{bad}); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{bad}); err == nil {
 		t.Fatal("expected an error for an out-of-[0,1] color component")
+	}
+}
+
+func TestCreateLevel_RejectsOutOfRangeGroundPlaneSquares(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 0, nil); err == nil {
+		t.Fatal("expected an error for ground_plane_squares below the real minimum")
+	}
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, shankpit.MaxGroundPlaneSquares+1, nil); err == nil {
+		t.Fatal("expected an error for ground_plane_squares above the real maximum")
+	}
+}
+
+func TestExport_CarriesGroundPlaneFields(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, false, 7, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if doc.GroundPlaneEnabled != false || doc.GroundPlaneSquares != 7 {
+		t.Fatalf("unexpected export doc ground plane fields: %+v", doc)
 	}
 }
 
@@ -84,7 +111,7 @@ func TestCreateLevel_RejectsTooManyWalls(t *testing.T) {
 		w.ID = i
 		walls[i] = w
 	}
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, walls); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, walls); err == nil {
 		t.Fatal("expected an error for exceeding MaxWalls")
 	}
 }
@@ -95,7 +122,7 @@ func TestCreateLevel_RejectsTooManyWalls(t *testing.T) {
 // one face, the rest of the box stays put" contract is broken.
 func TestFaceDragEditing_ReshapesCubeWithoutMovingOppositeFace(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, []shankpit.Wall{aCube()})
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube()})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -111,7 +138,7 @@ func TestFaceDragEditing_ReshapesCubeWithoutMovingOppositeFace(t *testing.T) {
 	edited.X = newCenterX
 	edited.SX = newSX
 
-	updated, err := s.UpdateLevel(context.Background(), created.ID, created.Width, created.Height, created.Depth, []shankpit.Wall{edited})
+	updated, err := s.UpdateLevel(context.Background(), created.ID, created.Width, created.Height, created.Depth, true, 2, []shankpit.Wall{edited})
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -128,7 +155,7 @@ func TestFaceDragEditing_ReshapesCubeWithoutMovingOppositeFace(t *testing.T) {
 
 func TestListLevels_ReturnsWallCountNotFullWalls(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, []shankpit.Wall{aCube(), aCube()}); err != nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube(), aCube()}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	list, err := s.ListLevels(context.Background())
@@ -142,7 +169,7 @@ func TestListLevels_ReturnsWallCountNotFullWalls(t *testing.T) {
 
 func TestRenameLevel(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Old Name", 100, 50, 100, nil)
+	created, err := s.CreateLevel(context.Background(), "Old Name", 100, 50, 100, true, 2, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -157,7 +184,7 @@ func TestRenameLevel(t *testing.T) {
 
 func TestCloneLevel_CopiesWalls(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Original", 100, 50, 100, []shankpit.Wall{aCube()})
+	created, err := s.CreateLevel(context.Background(), "Original", 100, 50, 100, true, 2, []shankpit.Wall{aCube()})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -172,7 +199,7 @@ func TestCloneLevel_CopiesWalls(t *testing.T) {
 
 func TestDeleteLevel(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, nil)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -186,7 +213,7 @@ func TestDeleteLevel(t *testing.T) {
 
 func TestExport_MatchesNativeWallShape(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, []shankpit.Wall{aCube()})
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube()})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

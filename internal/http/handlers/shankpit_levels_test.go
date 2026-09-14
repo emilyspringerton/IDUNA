@@ -23,11 +23,13 @@ func newShankpitLevelsTestStore(t *testing.T) *shankpit.LevelStore {
 	}
 	_, err = db.Exec(`
 		CREATE TABLE shankpit_levels (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			name       TEXT NOT NULL,
-			width      REAL NOT NULL DEFAULT 100,
-			height     REAL NOT NULL DEFAULT 50,
-			depth      REAL NOT NULL DEFAULT 100,
+			id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+			name                 TEXT NOT NULL,
+			width                REAL NOT NULL DEFAULT 100,
+			height               REAL NOT NULL DEFAULT 50,
+			depth                REAL NOT NULL DEFAULT 100,
+			ground_plane_enabled BOOLEAN NOT NULL DEFAULT 1,
+			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -47,6 +49,7 @@ func TestShankpitLevelsHandler_CreateListGet(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{
 		"name": "Black Mesa Transit", "width": 100, "height": 50, "depth": 100,
+		"ground_plane_enabled": true, "ground_plane_squares": 2,
 		"walls": []map[string]any{{"id": 1, "x": 0, "y": 0, "z": 0, "sx": 4, "sy": 4, "sz": 4, "r": 0.5, "g": 0.5, "b": 0.5, "friction": 0.8}},
 	})
 	rec := httptest.NewRecorder()
@@ -88,7 +91,7 @@ func TestShankpitLevelsHandler_CreateRejectsInvalidWall(t *testing.T) {
 func TestShankpitLevelsHandler_UpdateReshapesWall(t *testing.T) {
 	store := newShankpitLevelsTestStore(t)
 	h := &handlers.ShankpitLevelsHandler{Store: store}
-	if _, err := store.CreateLevel(context.Background(), "Test Level", 100, 50, 100, []shankpit.Wall{
+	if _, err := store.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{
 		{ID: 1, X: 0, Y: 0, Z: 0, SX: 4, SY: 4, SZ: 4, R: 0.5, G: 0.5, B: 0.5, Friction: 0.8},
 	}); err != nil {
 		t.Fatalf("seed create: %v", err)
@@ -96,6 +99,7 @@ func TestShankpitLevelsHandler_UpdateReshapesWall(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{
 		"width": 100, "height": 50, "depth": 100,
+		"ground_plane_enabled": true, "ground_plane_squares": 2,
 		"walls": []map[string]any{{"id": 1, "x": 3, "y": 0, "z": 0, "sx": 10, "sy": 4, "sz": 4, "r": 0.5, "g": 0.5, "b": 0.5, "friction": 0.8}},
 	})
 	rec := httptest.NewRecorder()
@@ -121,7 +125,7 @@ func TestShankpitLevelsPublicHandler_NoWriteMethods(t *testing.T) {
 
 func TestShankpitLevelsPublicHandler_ListAndExport(t *testing.T) {
 	store := newShankpitLevelsTestStore(t)
-	if _, err := store.CreateLevel(context.Background(), "Public Level", 100, 50, 100, []shankpit.Wall{
+	if _, err := store.CreateLevel(context.Background(), "Public Level", 100, 50, 100, true, 2, []shankpit.Wall{
 		{ID: 1, X: 0, Y: 0, Z: 0, SX: 4, SY: 4, SZ: 4, R: 0.5, G: 0.5, B: 0.5, Friction: 0.8},
 	}); err != nil {
 		t.Fatalf("seed create: %v", err)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { shankpitLevels, type ShankpitLevelSummary, type ShankpitWall } from './api'
+import { SHANKPIT_GRID_CELL_SIZE, shankpitLevels, type ShankpitLevelSummary, type ShankpitWall } from './api'
 
 // ShankpitLevelEditor.tsx — SHANKPIT NOCK level editor v0 frontend (EMILY/BACKLOG.md SECTION 459,
 // founder real-time: "so v0 it and start working dont worry about the current levels lets just go
@@ -31,8 +31,30 @@ function defaultSpawnerPos(): { x: number; y: number; z: number } {
   return { x: 0, y: 2, z: 0 }
 }
 
-function newDefaultLevel(): { name: string; width: number; height: number; depth: number; walls: ShankpitWall[] } {
-  return { name: '', width: 100, height: 50, depth: 100, walls: [aDefaultWall(1, defaultSpawnerPos())] }
+// DEFAULT_GROUND_PLANE_SQUARES=2 -- a real, deliberate default so a brand new level starts with
+// solid ground to build on ("i want there to be a plane by default that the player collides
+// with... for rapid prototyping"): 2 squares * SHANKPIT_GRID_CELL_SIZE(50) = a 100x100-unit
+// plane, matching this level's own default width/depth exactly.
+const DEFAULT_GROUND_PLANE_SQUARES = 2
+
+function newDefaultLevel(): {
+  name: string
+  width: number
+  height: number
+  depth: number
+  groundPlaneEnabled: boolean
+  groundPlaneSquares: number
+  walls: ShankpitWall[]
+} {
+  return {
+    name: '',
+    width: 100,
+    height: 50,
+    depth: 100,
+    groundPlaneEnabled: true,
+    groundPlaneSquares: DEFAULT_GROUND_PLANE_SQUARES,
+    walls: [aDefaultWall(1, defaultSpawnerPos())],
+  }
 }
 
 function nextWallId(walls: ShankpitWall[]): number {
@@ -144,6 +166,8 @@ function Viewport3D({
   width,
   height,
   depth,
+  groundPlaneEnabled,
+  groundPlaneSquares,
   walls,
   selected,
   onSelect,
@@ -156,6 +180,8 @@ function Viewport3D({
   width: number
   height: number
   depth: number
+  groundPlaneEnabled: boolean
+  groundPlaneSquares: number
   walls: ShankpitWall[]
   selected: number | null
   onSelect: (i: number | null) => void
@@ -171,6 +197,7 @@ function Viewport3D({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const meshesRef = useRef<THREE.Mesh[]>([])
   const spawnerMeshRef = useRef<THREE.Mesh | null>(null)
+  const gridRef = useRef<THREE.GridHelper | null>(null)
   const wallsRef = useRef(walls)
   const selectedRef = useRef(selected)
   const editModeRef = useRef(editMode)
@@ -216,8 +243,9 @@ function Viewport3D({
     sun.position.set(30, 60, 20)
     scene.add(sun)
 
-    const grid = new THREE.GridHelper(Math.max(width, depth, 20) * 1.5, 24, 0x444a58, 0x2a2e38)
-    scene.add(grid)
+    // The real ground plane grid itself is owned by a separate effect below (driven by
+    // groundPlaneEnabled/groundPlaneSquares, which can change without a full scene re-init) --
+    // nothing created here.
 
     // The spawner -- founder real-time: "there should be a spawner object that you can move
     // around... fixes the problem of cubes spawning on eachother." A real, movable marker (not
@@ -433,6 +461,30 @@ function Viewport3D({
     spawnerMeshRef.current?.position.set(spawner.x, spawner.y, spawner.z)
   }, [spawner])
 
+  // The real ground plane (S459-08, founder real-time: "i want there to be a plane by default
+  // that the player collides with - the checkerboard in the level editor - that should
+  // constitute the plane for that level... configurable in terms of size... turn on able and off
+  // able per level"). Rebuilt whenever enabled/squares changes -- divisions === squares so every
+  // cell is EXACTLY SHANKPIT_GRID_CELL_SIZE world units ("the squares are always the same size"),
+  // matching SHANKPIT's own real, existing floor-grid convention (apps/lobby's own real
+  // `#define GRID_SIZE 50.0f`) rather than an arbitrary editor-only size.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    if (gridRef.current) {
+      scene.remove(gridRef.current)
+      gridRef.current.geometry.dispose()
+      ;(gridRef.current.material as THREE.Material).dispose()
+      gridRef.current = null
+    }
+    if (groundPlaneEnabled && groundPlaneSquares > 0) {
+      const size = groundPlaneSquares * SHANKPIT_GRID_CELL_SIZE
+      const grid = new THREE.GridHelper(size, groundPlaneSquares, 0x444a58, 0x2a2e38)
+      scene.add(grid)
+      gridRef.current = grid
+    }
+  }, [groundPlaneEnabled, groundPlaneSquares])
+
   function applySelectionOutline() {
     walls.forEach((w, i) => {
       const mesh = meshesRef.current[i]
@@ -496,7 +548,15 @@ export default function ShankpitLevelEditor() {
 
   const load = useCallback(async (id: number) => {
     const lvl = await shankpitLevels.get(id)
-    setDraft({ name: lvl.name, width: lvl.width, height: lvl.height, depth: lvl.depth, walls: lvl.walls })
+    setDraft({
+      name: lvl.name,
+      width: lvl.width,
+      height: lvl.height,
+      depth: lvl.depth,
+      groundPlaneEnabled: lvl.ground_plane_enabled,
+      groundPlaneSquares: lvl.ground_plane_squares,
+      walls: lvl.walls,
+    })
     setActiveId(id)
     setSelected(null)
     setDirty(false)
@@ -542,11 +602,27 @@ export default function ShankpitLevelEditor() {
           setError('Name is required to create a new level.')
           return
         }
-        const created = await shankpitLevels.create(draft.name, draft.width, draft.height, draft.depth, draft.walls)
+        const created = await shankpitLevels.create(
+          draft.name,
+          draft.width,
+          draft.height,
+          draft.depth,
+          draft.groundPlaneEnabled,
+          draft.groundPlaneSquares,
+          draft.walls,
+        )
         id = created.id
         setActiveId(id)
       } else {
-        await shankpitLevels.save(id, draft.width, draft.height, draft.depth, draft.walls)
+        await shankpitLevels.save(
+          id,
+          draft.width,
+          draft.height,
+          draft.depth,
+          draft.groundPlaneEnabled,
+          draft.groundPlaneSquares,
+          draft.walls,
+        )
       }
       setDirty(false)
       refresh()
@@ -645,6 +721,32 @@ export default function ShankpitLevelEditor() {
               />
             </label>
           </div>
+          <div className="dims">
+            <label>
+              <input
+                type="checkbox"
+                checked={draft.groundPlaneEnabled}
+                onChange={(e) => {
+                  setDraft((d) => ({ ...d, groundPlaneEnabled: e.target.checked }))
+                  setDirty(true)
+                }}
+              />{' '}
+              Ground plane
+            </label>
+            <label>
+              squares ({SHANKPIT_GRID_CELL_SIZE}u each){' '}
+              <input
+                type="number"
+                min={1}
+                disabled={!draft.groundPlaneEnabled}
+                value={draft.groundPlaneSquares}
+                onChange={(e) => {
+                  setDraft((d) => ({ ...d, groundPlaneSquares: Math.max(1, Math.round(Number(e.target.value))) }))
+                  setDirty(true)
+                }}
+              />
+            </label>
+          </div>
           <div className="mode-toggle">
             <button type="button" className={editMode === 'object' ? 'active' : ''} onClick={() => setEditMode('object')}>
               Object mode
@@ -682,6 +784,8 @@ export default function ShankpitLevelEditor() {
               width={draft.width}
               height={draft.height}
               depth={draft.depth}
+              groundPlaneEnabled={draft.groundPlaneEnabled}
+              groundPlaneSquares={draft.groundPlaneSquares}
               walls={draft.walls}
               selected={selected}
               onSelect={setSelected}
