@@ -253,7 +253,13 @@ that looks like if its dumb... just note it for later"), not silently dropped.
    (premades)** — both named, both real, separate future tools.
 4. **PARENA Editor (PE) macro recording** — founder: "the parena editor will even allow us to
    program macros repeatable written in parena." No macro/scripting layer exists anywhere in
-   `internal/nock` yet.
+   `internal/nock` yet. **Real correction (2026-09-14)**: checked directly and confirmed this was
+   mis-homed — "PE" (the PARENA Editor) is `DUNG`, not `internal/nock`; this bullet was filed here
+   only because it shared a founder quote with #1 above. Real scoping pass moved to
+   `DUNG/NORTHSTAR.md`'s own "Real scoping pass: PE macro recording" section — the real hook
+   (`PARENA/stdlib/editor/events.prn`'s `subscribe`, `plugin.prn`'s `register-command`), the
+   founder's own "written in PARENA" constraint, and the one real open playback-mechanism question
+   all live there now. Nothing for NOCK to build here.
 5. **A native Windows client.** Founder, explicit and decisive: "i am on windows so im just
    thinking that instead of shipping the tech to me... what am i gonna do with it on my end...
    hit a sync button? ... lets build it into iduna for now... this is the easiest way to get a
