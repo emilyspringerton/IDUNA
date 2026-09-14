@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-14
+- fix: SHANKPIT level editor toolbar alignment + contrast -- .project-header/.dims got real flex-wrap (was squeezing controls, cutting off button text), --color-muted bumped 60%->78% opacity, materials list rows restructured as real cards (sess-20260905-0720-ec33e7c5)
 - feat: NOCK now runs daisyUI (cupcake light / dracula dark, both stock+colorful, OS-aware with a manual toggle) -- existing semantic color tokens alias daisyUI's real theme variables so every page re-themes for free; new docs/NOCK_STYLE_GUIDE.md (sess-20260905-0720-ec33e7c5)
 - feat: SHANKPIT sprays -- real registry (shankpit_sprays), Export to Spray button on the Projects tab, a Sprays tab to set the one real global default; native menu + T-key wall decals deliberately deferred (sess-20260905-0720-ec33e7c5)
 - fix: NOCK Materials panel was rendered as a 3rd grid child, covering the whole SHANKPIT level editor screen -- nested it inside the existing sidebar instead (sess-20260905-0720-ec33e7c5)
