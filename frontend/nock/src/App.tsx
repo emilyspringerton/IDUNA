@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, generateProcedural, shankpitSprays, textures, type Project, type TextureSummary } from './api'
+import { api, generateProcedural, shankpitSprays, textures, type Layer, type Project, type TextureSummary } from './api'
 import LevelEditor from './LevelEditor'
 import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
@@ -370,6 +370,77 @@ function LayerEffectsPanel({
   )
 }
 
+// LayerTransformPanel -- S416-02, "the biggest real gap between NOCK v0 and an actual
+// Photoshop-shaped tool -- every layer is forced full-canvas today." Same real "local draft
+// state, Apply button commits it" pattern LayerEffectsPanel above already established for
+// hue/sat/sharpen -- position/scale/rotation are real, destructive (baked into the manifest
+// immediately) adjustments too, not a live drag-handle overlay (a real, separate, larger
+// interaction-model addition, not attempted here).
+function LayerTransformPanel({
+  project,
+  layerName,
+  layer,
+  onChanged,
+}: {
+  project: string
+  layerName: string
+  layer: Layer
+  onChanged: () => void
+}) {
+  const [x, setX] = useState(layer.x ?? 0)
+  const [y, setY] = useState(layer.y ?? 0)
+  const [scale, setScale] = useState(layer.scale && layer.scale > 0 ? layer.scale : 100)
+  const [rotation, setRotation] = useState(layer.rotation ?? 0)
+
+  // Re-sync local draft state whenever the selected layer itself changes (switching layers
+  // shouldn't carry over the PREVIOUS layer's unsaved draft values) -- same real reason
+  // LayerEffectsPanel's own sibling would need this if it read initial values from props instead
+  // of a fixed default; this panel's initial values genuinely depend on which real layer is
+  // selected, so this effect is the real, necessary piece that one didn't need.
+  useEffect(() => {
+    setX(layer.x ?? 0)
+    setY(layer.y ?? 0)
+    setScale(layer.scale && layer.scale > 0 ? layer.scale : 100)
+    setRotation(layer.rotation ?? 0)
+  }, [layerName, layer.x, layer.y, layer.scale, layer.rotation])
+
+  return (
+    <div className="effects-panel">
+      <h3>Transform: {layerName}</h3>
+      <div className="effect-row">
+        <label>X {x}px</label>
+        <input type="number" value={x} onChange={(e) => setX(Number(e.target.value))} />
+        <label>Y {y}px</label>
+        <input type="number" value={y} onChange={(e) => setY(Number(e.target.value))} />
+      </div>
+      <div className="effect-row">
+        <label>Scale {scale}%</label>
+        <input type="range" min={1} max={400} value={scale} onChange={(e) => setScale(Number(e.target.value))} />
+        <label>Rotation {rotation}°</label>
+        <input type="range" min={0} max={359} value={rotation} onChange={(e) => setRotation(Number(e.target.value))} />
+        <button
+          onClick={async () => {
+            await api.setTransform(project, layerName, x, y, scale, rotation)
+            onChanged()
+          }}
+        >
+          Apply transform
+        </button>
+        <button
+          onClick={async () => {
+            setX(0); setY(0); setScale(100); setRotation(0)
+            await api.setTransform(project, layerName, 0, 0, 100, 0)
+            onChanged()
+          }}
+        >
+          Reset
+        </button>
+      </div>
+      <p className="hint">Destructive (baked into the layer immediately) — undo isn't real yet.</p>
+    </div>
+  )
+}
+
 function ProjectEditor({ name, onDeleted }: { name: string; onDeleted: () => void }) {
   const [project, setProject] = useState<Project | null>(null)
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null)
@@ -470,6 +541,9 @@ function ProjectEditor({ name, onDeleted }: { name: string; onDeleted: () => voi
 
           {selectedLayer && selectedLayerObj?.source && (
             <ProceduralSourceEditor project={project.name} layerName={selectedLayer} onChanged={refresh} />
+          )}
+          {selectedLayer && selectedLayerObj && (
+            <LayerTransformPanel project={project.name} layerName={selectedLayer} layer={selectedLayerObj} onChanged={refresh} />
           )}
           {selectedLayer && (
             <LayerEffectsPanel project={project.name} layerName={selectedLayer} onChanged={refresh} />

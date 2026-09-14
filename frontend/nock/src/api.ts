@@ -12,6 +12,14 @@ export interface Layer {
   /** Present only for a layer created by generateProcedural/AddProceduralLayer -- the saved
    * PARENA source that rendered it ("think GENERA OS": the source ships with the asset). */
   source?: string
+  /** x/y/scale/rotation (S416-02, "the biggest real gap between NOCK v0 and an actual
+   * Photoshop-shaped tool -- every layer is forced full-canvas today"). Omitted (undefined) on
+   * a layer that's never been transformed -- treat missing/0 scale as 100 (unchanged), matching
+   * Layer.EffectiveScale's own real Go-side convention. */
+  x?: number
+  y?: number
+  scale?: number
+  rotation?: number
 }
 
 export interface Project {
@@ -77,6 +85,12 @@ export const api = {
     req<Project>(`/projects/${enc(project)}/layers/${enc(layer)}/move`, {
       method: 'PATCH',
       body: JSON.stringify({ delta }),
+    }),
+
+  setTransform: (project: string, layer: string, x: number, y: number, scale: number, rotation: number) =>
+    req<Project>(`/projects/${enc(project)}/layers/${enc(layer)}/transform`, {
+      method: 'PATCH',
+      body: JSON.stringify({ x, y, scale, rotation }),
     }),
 
   setMask: (project: string, layer: string, file: File) => {

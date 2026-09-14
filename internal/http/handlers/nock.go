@@ -58,6 +58,8 @@ func (h *NockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.setOpacity(w, r, parts[1], parts[3])
 	case len(parts) == 5 && parts[0] == "projects" && parts[2] == "layers" && parts[4] == "visible" && r.Method == http.MethodPatch:
 		h.setVisible(w, r, parts[1], parts[3])
+	case len(parts) == 5 && parts[0] == "projects" && parts[2] == "layers" && parts[4] == "transform" && r.Method == http.MethodPatch:
+		h.setTransform(w, r, parts[1], parts[3])
 	case len(parts) == 5 && parts[0] == "projects" && parts[2] == "layers" && parts[4] == "move" && r.Method == http.MethodPatch:
 		h.moveLayer(w, r, parts[1], parts[3])
 	case len(parts) == 5 && parts[0] == "projects" && parts[2] == "layers" && parts[4] == "mask" && r.Method == http.MethodPost:
@@ -215,6 +217,27 @@ func (h *NockHandler) setVisible(w http.ResponseWriter, r *http.Request, project
 		return
 	}
 	p, err := h.Svc.SetVisible(project, layer, req.Visible)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+type transformReq struct {
+	X        int     `json:"x"`
+	Y        int     `json:"y"`
+	Scale    float64 `json:"scale"`
+	Rotation float64 `json:"rotation"`
+}
+
+func (h *NockHandler) setTransform(w http.ResponseWriter, r *http.Request, project, layer string) {
+	var req transformReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	p, err := h.Svc.SetTransform(project, layer, req.X, req.Y, req.Scale, req.Rotation)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return

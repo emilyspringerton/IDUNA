@@ -284,6 +284,83 @@ func TestResizeCanvasResizesLayers(t *testing.T) {
 	}
 }
 
+// TestSetTransformPositionsScalesAndRotatesLayer -- S416-02, "the biggest real gap between NOCK
+// v0 and an actual Photoshop-shaped tool -- every layer is forced full-canvas today." Real,
+// end-to-end verification via actual pixel sampling (not just "the API call didn't error").
+//
+// AddLayer's own existing, unchanged v0 behavior fits every imported image to the FULL canvas
+// size (imFitToCanvas) before it's ever stored -- a real, found-live fact this test's own first
+// draft got wrong (assumed a small imported square would stay small on disk; it doesn't, it's
+// resized to fill the canvas the moment it's imported, so a same-aspect-ratio 10x10 square on a
+// 40x40 canvas becomes a full 40x40 solid-red layer file). This transform feature doesn't change
+// that import-time behavior (a real, separate, riskier change -- imFitToCanvas's own fit-and-pad
+// shape is also relied on by mask application's own same-size-assumption, not touched here) --
+// it transforms whatever the layer file already is, same as a real image editor still lets you
+// scale/move/rotate a layer that happens to already be canvas-sized.
+func TestSetTransformPositionsScalesAndRotatesLayer(t *testing.T) {
+	requireConvert(t)
+	dir := t.TempDir()
+	svc, _ := NewService(dir)
+	svc.CreateProject("p1", 40, 40)
+
+	base := filepath.Join(dir, "base.png")
+	makeSolidPNG(t, base, "blue", 40, 40)
+	svc.AddLayer("p1", "base", base)
+
+	red := filepath.Join(dir, "red.png")
+	makeSolidPNG(t, red, "red", 40, 40) // imports as a full 40x40 red layer (see doc comment above)
+	svc.AddLayer("p1", "red", red)
+
+	// Scale the (now 40x40) red layer down to 50% (20x20) at origin (0,0) -- it should now only
+	// cover the top-left quadrant, leaving the rest of the canvas showing the blue base beneath.
+	if _, err := svc.SetTransform("p1", "red", 0, 0, 50, 0); err != nil {
+		t.Fatalf("SetTransform (scale): %v", err)
+	}
+	out := filepath.Join(dir, "out.png")
+	if err := svc.Export("p1", out, ""); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	insideShrunk := samplePixelAt(t, out, 5, 5)
+	if insideShrunk[0] < 200 || insideShrunk[2] > 50 {
+		t.Errorf("pixel at (5,5) (inside the shrunk 20x20 red square at origin) should be red: got RGB %v", insideShrunk)
+	}
+	outsideShrunk := samplePixelAt(t, out, 30, 30)
+	if outsideShrunk[0] > 50 || outsideShrunk[2] < 200 {
+		t.Errorf("pixel at (30,30) (outside the shrunk 20x20 square) should show the blue base beneath: got RGB %v", outsideShrunk)
+	}
+
+	// Now also move that same shrunk (20x20) layer to (15,15) -- (5,5) should revert to blue
+	// (the square isn't there anymore) and (20,20) (inside the moved square) should be red.
+	if _, err := svc.SetTransform("p1", "red", 15, 15, 50, 0); err != nil {
+		t.Fatalf("SetTransform (scale+move): %v", err)
+	}
+	if err := svc.Export("p1", out, ""); err != nil {
+		t.Fatalf("Export after move: %v", err)
+	}
+	nowBlue := samplePixelAt(t, out, 5, 5)
+	if nowBlue[0] > 50 || nowBlue[2] < 200 {
+		t.Errorf("pixel at (5,5) (the square moved away from origin) should now be blue: got RGB %v", nowBlue)
+	}
+	nowRed := samplePixelAt(t, out, 20, 20)
+	if nowRed[0] < 200 || nowRed[2] > 50 {
+		t.Errorf("pixel at (20,20) (inside the moved 20x20 square at 15,15) should be red: got RGB %v", nowRed)
+	}
+}
+
+// samplePixelAt reads the RGB of one specific pixel via ImageMagick, the same real "no Go image
+// decoding dependency" approach samplePixel below already established, just parameterized on
+// position instead of always sampling dead center.
+func samplePixelAt(t *testing.T, path string, x, y int) [3]int {
+	t.Helper()
+	crop := fmt.Sprintf("1x1+%d+%d", x, y)
+	cmd := exec.Command(convertBin, path, "-crop", crop, "+repage", "-flatten", "txt:-")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("samplePixelAt: %v", err)
+	}
+	return parsePixelTxt(t, string(out))
+}
+
 // samplePixel reads the RGB of the exact center pixel of a PNG/JPEG via ImageMagick `convert
 // ... txt:-`, for cheap real-output assertions without pulling in a Go image-decoding dependency.
 func samplePixel(t *testing.T, path string) [3]int {
@@ -303,8 +380,13 @@ func samplePixel(t *testing.T, path string) [3]int {
 	if err != nil {
 		t.Fatalf("sample pixel: %v", err)
 	}
-	// Output line looks like: "0,0: (255,0,0) #FF0000 red" -- parse the (r,g,b) tuple.
-	s := string(out)
+	return parsePixelTxt(t, string(out))
+}
+
+// parsePixelTxt parses ImageMagick's own `txt:-` output for a single pixel, e.g.
+// "0,0: (255,0,0) #FF0000 red", into an (r,g,b) tuple -- shared by samplePixel/samplePixelAt.
+func parsePixelTxt(t *testing.T, s string) [3]int {
+	t.Helper()
 	start := strings.IndexByte(s, '(')
 	end := strings.IndexByte(s, ')')
 	if start < 0 || end < 0 || end <= start {

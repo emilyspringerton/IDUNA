@@ -268,6 +268,35 @@ func (s *Service) SetVisible(projectName, layerName string, visible bool) (*Proj
 	return p, nil
 }
 
+// SetTransform sets a layer's real position/scale/rotation (S416-02, "the biggest real gap
+// between NOCK v0 and an actual Photoshop-shaped tool -- every layer is forced full-canvas
+// today"). scale is a percent; 0 is accepted and means "unchanged" (Layer.EffectiveScale's own
+// real convention), matching how an omitted value already behaves for a brand new layer, so
+// there's no separate "clear the scale" call needed -- setting it back to 0 IS clearing it.
+func (s *Service) SetTransform(projectName, layerName string, x, y int, scale, rotation float64) (*Project, error) {
+	if scale < 0 {
+		return nil, fmt.Errorf("nock: scale must be >= 0, got %g", scale)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.loadManifest(projectName)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := s.findLayer(p, layerName)
+	if err != nil {
+		return nil, err
+	}
+	p.Layers[idx].X = x
+	p.Layers[idx].Y = y
+	p.Layers[idx].Scale = scale
+	p.Layers[idx].Rotation = rotation
+	if err := s.saveManifest(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 // MoveLayer moves a layer earlier (toward the bottom, delta<0) or later (toward the top,
 // delta>0) in the stack by |delta| positions, clamped to the stack's own bounds.
 func (s *Service) MoveLayer(projectName, layerName string, delta int) (*Project, error) {
@@ -491,7 +520,7 @@ func (s *Service) Export(projectName, outPath, backgroundHex string) error {
 			working = maskOut
 		}
 		nextCanvas := filepath.Join(tmpDir, fmt.Sprintf("canvas-%d.png", i))
-		if err := imComposite(canvas, working, nextCanvas); err != nil {
+		if err := imCompositeTransformed(canvas, working, nextCanvas, l.X, l.Y, l.EffectiveScale(), l.Rotation); err != nil {
 			return err
 		}
 		canvas = nextCanvas

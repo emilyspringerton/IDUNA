@@ -34,12 +34,32 @@ type Layer struct {
 	Opacity int    `json:"opacity"`        // 0-100
 	Visible bool   `json:"visible"`
 	Mask    string `json:"mask,omitempty"` // path relative to the project dir, grayscale PNG; "" = no mask
+	// X/Y/Scale/Rotation (S416-02, "the biggest real gap between NOCK v0 and an actual
+	// Photoshop-shaped tool -- every layer is forced full-canvas today"). A real, deliberate
+	// backward-compatible shape: a layer that never sets these (every layer from before this
+	// change, and the Go zero value for any new layer that genuinely doesn't need them) behaves
+	// EXACTLY as before -- Scale's own zero value is special-cased to mean 100 (unchanged) rather
+	// than "0% size" everywhere it's actually used (effectiveScale below), so an old manifest.json
+	// on disk with no x/y/scale/rotation keys at all still composites pixel-identical to today.
+	X        int     `json:"x,omitempty"`        // pixels from canvas left, top-left of the (possibly scaled/rotated) layer
+	Y        int     `json:"y,omitempty"`        // pixels from canvas top
+	Scale    float64 `json:"scale,omitempty"`    // percent, 100 = unchanged; 0 (omitted/legacy) also means unchanged, see effectiveScale
+	Rotation float64 `json:"rotation,omitempty"` // degrees, clockwise, 0 = unchanged
 	// Source is the real PARENA program that generated this layer's own File, when the layer
 	// was created by AddProceduralLayer rather than imported from an image -- "think GENERA OS,"
 	// the founder's own framing for keeping a generated asset's real source alongside its
 	// rendered output rather than only the rendered pixels. "" for an ordinary imported/gradient
 	// layer (no generating program to keep).
 	Source string `json:"source,omitempty"` // path relative to the project dir, a .prn file
+}
+
+// EffectiveScale is l.Scale with the real "0/omitted means unchanged" convention applied -- see
+// the Layer.Scale field's own doc comment for why a bare zero value can't mean "0% size" here.
+func (l Layer) EffectiveScale() float64 {
+	if l.Scale <= 0 {
+		return 100
+	}
+	return l.Scale
 }
 
 // Project is one NOCK document: a fixed canvas size and an ordered layer stack.

@@ -11,7 +11,9 @@ package nock
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // convertBin is the real ImageMagick v6 binary this package shells out to. A package var (not a
@@ -113,6 +115,58 @@ func imApplyMask(src, maskSrc, dst string, width, height int, tmpDir string) err
 // addition, not built here since the founder's own list didn't ask for blend modes specifically).
 func imComposite(basePath, layerPath, dst string) error {
 	return runConvert(basePath, layerPath, "-compose", "over", "-composite", dst)
+}
+
+// imCompositeTransformed is imComposite plus real position/scale/rotation (S416-02, "the biggest
+// real gap between NOCK v0 and an actual Photoshop-shaped tool -- every layer is forced
+// full-canvas today"). scale is a percent (100 = unchanged, matching Layer.EffectiveScale's own
+// real convention); rotation is degrees clockwise. Real, deliberate order: resize THEN rotate
+// THEN position -- resizing after rotating would resize the already-larger rotated bounding box
+// instead of the layer's own real intended size, and `-background none` on the rotate step keeps
+// the corners genuinely transparent instead of ImageMagick's own default white fill (which would
+// composite as an opaque white box behind a rotated layer, real and wrong).
+func imCompositeTransformed(basePath, layerPath, dst string, x, y int, scalePct, rotationDeg float64) error {
+	if scalePct == 100 && rotationDeg == 0 && x == 0 && y == 0 {
+		return imComposite(basePath, layerPath, dst)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "nock-transform-*")
+	if err != nil {
+		return fmt.Errorf("nock: create transform temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	working := layerPath
+	if scalePct != 100 {
+		resized := filepath.Join(tmpDir, "resized.png")
+		if err := runConvert(working, "-resize", fmt.Sprintf("%g%%", scalePct), resized); err != nil {
+			return fmt.Errorf("nock: scale layer: %w", err)
+		}
+		working = resized
+	}
+	if rotationDeg != 0 {
+		rotated := filepath.Join(tmpDir, "rotated.png")
+		if err := runConvert(working, "-background", "none", "-rotate", fmt.Sprintf("%g", rotationDeg), rotated); err != nil {
+			return fmt.Errorf("nock: rotate layer: %w", err)
+		}
+		working = rotated
+	}
+
+	return runConvert(basePath, working, "-geometry", imGeometryOffset(x, y), "-compose", "over", "-composite", dst)
+}
+
+// imGeometryOffset formats an ImageMagick geometry offset -- ImageMagick's own real syntax
+// requires an explicit sign on EACH axis ("+10-5", never "10-5"), so a plain fmt.Sprintf("%d%d",
+// x, y) is wrong for a positive value (no leading +).
+func imGeometryOffset(x, y int) string {
+	xs, ys := "+", "+"
+	if x < 0 {
+		xs = ""
+	}
+	if y < 0 {
+		ys = ""
+	}
+	return fmt.Sprintf("%s%d%s%d", xs, x, ys, y)
 }
 
 // imModulate applies brightness/saturation/hue adjustment in place (ImageMagick's own real
