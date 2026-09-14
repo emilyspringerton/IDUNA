@@ -733,7 +733,7 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
   }
 
   return (
-    <aside className="project-list material-panel">
+    <div className="material-panel">
       <h2>Materials</h2>
       <ul>
         {materials.map((m) => (
@@ -760,7 +760,7 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
         + Add material
       </button>
       {error && <span className="error">{error}</span>}
-    </aside>
+    </div>
   )
 }
 
@@ -993,9 +993,8 @@ export default function ShankpitLevelEditor() {
         <button type="button" onClick={startNew}>
           + New level
         </button>
+        <MaterialsPanel materials={materials} refresh={refreshMaterials} />
       </aside>
-
-      <MaterialsPanel materials={materials} refresh={refreshMaterials} />
 
       <main>
         <div className="project-header">
