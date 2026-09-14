@@ -24,6 +24,7 @@ import (
 	"iduna/internal/mailinglist"
 	"iduna/internal/nock"
 	"iduna/internal/promptoverse"
+	"iduna/internal/shankpit"
 	"iduna/internal/statuspage"
 	"iduna/internal/store"
 	"iduna/internal/tenantprovision"
@@ -645,6 +646,22 @@ func main() {
 	brawlpitLevelsPublicH := &handlers.BrawlpitLevelsPublicHandler{Store: brawlpitLevelStore}
 	mux.Handle("/api/v1/brawlpit-levels", brawlpitLevelsPublicH)
 	mux.Handle("/api/v1/brawlpit-levels/", brawlpitLevelsPublicH)
+
+	// SHANKPIT NOCK level editor v0 (EMILY/BACKLOG.md SECTION 459, founder real-time: "so v0 it
+	// and start working dont worry about the current levels lets just go full level select
+	// brawlpit repo exact model for now") -- deliberately the exact same shape as BRAWLPIT's own
+	// level editor immediately above (admin-gated CRUD + a separate public read-only mirror), one
+	// game later. Own real package/table (internal/shankpit), not folded into internal/nock,
+	// same design principle that already keeps NOCK un-coupled from any one specific game.
+	shankpitLevelStore := &shankpit.LevelStore{DB: db}
+	shankpitLevelsH := &handlers.ShankpitLevelsHandler{Store: shankpitLevelStore}
+	shankpitLevelsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitLevelsH))
+	mux.Handle("/admin/nock/api/shankpit-levels", shankpitLevelsProtected)
+	mux.Handle("/admin/nock/api/shankpit-levels/", shankpitLevelsProtected)
+
+	shankpitLevelsPublicH := &handlers.ShankpitLevelsPublicHandler{Store: shankpitLevelStore}
+	mux.Handle("/api/v1/shankpit-levels", shankpitLevelsPublicH)
+	mux.Handle("/api/v1/shankpit-levels/", shankpitLevelsPublicH)
 
 	// S420, founder real-time: "lets make a checkpoint registry so we can train from multiple
 	// locations and then we can add checkpoints from colab?" -- a real, remote, shared RL
