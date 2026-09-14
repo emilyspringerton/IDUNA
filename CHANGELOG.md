@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-14
+- feat: SHANKPIT block materials (brick/concrete/wood/metal), a real named shader registry (NOCK stores shader_name only, never GLSL), materials embedded in level export (sess-20260905-0720-ec33e7c5)
 - feat: levels-as-objects for SHANKPIT NOCK level editor -- a level can now hold other levels as placed/rotated/plane-togglable objects ('a map is a composition of levels'), recursively flattened server-side into the same flat wall shape the native client already loads (sess-20260905-0720-ec33e7c5)
 - NOCK SHANKPIT level editor: constrain-Y object drag (checked by default) + undo/redo (Ctrl+Z/Ctrl+Shift+Z) (sess-20260905-0720-ec33e7c5)
 - S459-08: real, per-level, configurable ground plane -- `Level.GroundPlaneEnabled`/`GroundPlaneSquares`, threaded through Create/Update/Export/Clone + a new migration. `GridCellSize=50.0` matched against SHANKPIT's own real, already-existing `GRID_SIZE=50.0f` floor-grid convention. Frontend checkbox + squares input, real 3D-viewport grid driven by these fields. 2 new tests. Live-verified, built, deployed. Apple #19499. Commit `e0f735e`.
