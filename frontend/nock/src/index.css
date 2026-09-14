@@ -23,10 +23,12 @@
   --color-panel: var(--color-base-200);
   --color-line: var(--color-base-300);
   --color-ink: var(--color-base-content);
-  /* A real 60%-opacity mix of the theme's own text color, not a fixed hex or the (often much
-     darker) daisyUI "neutral" color -- reads as genuinely muted relative to --color-ink in BOTH
-     themes instead of looking right in only one of them. */
-  --color-muted: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  /* Real fix, founder real-time (screenshot): "increase contrast." A real 78%-opacity mix of the
+     theme's own text color (was 60% -- genuinely too faint at text-sm/text-xs sizes, this is
+     what actually read as illegible/line-like in the screenshot), not a fixed hex or the (often
+     much darker) daisyUI "neutral" color -- reads as genuinely muted relative to --color-ink in
+     BOTH themes instead of looking right (or washed out) in only one of them. */
+  --color-muted: color-mix(in oklch, var(--color-base-content) 78%, transparent);
   --color-gold: var(--color-primary);
   --color-gold-content: var(--color-primary-content);
   --color-danger: var(--color-error);
@@ -61,7 +63,7 @@ textarea {
 }
 
 .hint {
-  @apply text-sm opacity-70;
+  @apply text-sm opacity-80;
 }
 
 .error {

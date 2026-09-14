@@ -88,7 +88,26 @@ header h1 {
 }
 
 .material-panel li {
-  @apply flex items-center justify-between gap-2;
+  /* Real fix, founder real-time (screenshot): "review the photo its a little jacked up." The
+     name+spec text and the delete button used to share one flex row with no defined internal
+     structure -- in this sidebar's real ~220px width, the spec/shininess text wrapped
+     unpredictably under the name, at low contrast (see --color-muted's own fix above), which is
+     what read as a stray colored line in the screenshot. Now: name+hint stack in their own
+     column, delete button pinned to a fixed-width column on the right, aligned to the top so
+     wrapping never collides with the button. */
+  @apply flex items-start justify-between gap-2 rounded-md border border-line bg-panel p-2;
+}
+
+.material-panel-name {
+  @apply flex min-w-0 flex-col;
+}
+
+.material-panel-name > span:first-child {
+  @apply truncate font-semibold text-ink;
+}
+
+.material-panel-delete {
+  @apply btn-xs shrink-0;
 }
 
 .new-project-form {
@@ -105,11 +124,34 @@ main {
 }
 
 .project-header {
-  @apply mb-4 flex items-baseline justify-between;
+  /* Real fix, founder real-time (screenshot): "work on alignment and increase contrast" /
+     "review the photo its a little jacked up." Root cause: no flex-wrap at all on a row holding
+     a dozen+ controls (name, 3 dims groups, mode toggles, undo/redo, add-cube, add-object,
+     save/clone/export/delete) -- browsers squeezed every child below its own natural content
+     width instead of wrapping, which is what actually produced the cut-off button labels
+     ("Face...", "Add lev...") and the broken-looking dims fields. flex-wrap + a real row/column
+     gap lets it flow onto as many rows as it needs, at each control's own real size. */
+  @apply mb-4 flex flex-wrap items-center gap-x-4 gap-y-3;
 }
 
 .dims {
-  @apply text-sm font-normal text-muted;
+  /* .dims previously had NO layout properties at all -- its 3 <label> children (Width/Height/
+     Depth, or the ground-plane pair) just fell back to default inline flow, wrapping mid-group
+     in a way that split a label's own text from its input onto different visual lines. Real
+     fix: lay each group out as its own tidy row, each label as a non-wrapping unit. */
+  @apply flex flex-wrap items-center gap-3 text-sm;
+}
+
+.dims label {
+  @apply flex items-center gap-1.5 whitespace-nowrap;
+}
+
+.dims input[type='number'] {
+  @apply w-20;
+}
+
+.dims input[type='checkbox'] {
+  @apply checkbox checkbox-sm checkbox-primary;
 }
 
 .editor-body {
@@ -268,17 +310,23 @@ textarea {
 }
 
 .mode-toggle {
-  @apply flex gap-1;
+  @apply flex flex-wrap items-center gap-1;
 }
 .mode-toggle button {
-  @apply border border-line bg-transparent text-muted;
+  @apply btn-outline btn-primary btn-sm whitespace-nowrap;
 }
 .mode-toggle button.active {
-  @apply border-gold bg-gold text-gold-content;
+  @apply btn-primary;
+}
+.mode-toggle select {
+  @apply select select-sm w-auto;
 }
 
 .constrain-y {
-  @apply flex items-center gap-1 text-muted text-sm;
+  @apply flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm text-muted;
+}
+.constrain-y input[type='checkbox'] {
+  @apply checkbox checkbox-sm checkbox-primary;
 }
 
 .shankpit-viewport {

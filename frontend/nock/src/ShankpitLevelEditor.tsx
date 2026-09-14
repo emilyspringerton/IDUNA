@@ -738,11 +738,14 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
       <ul>
         {materials.map((m) => (
           <li key={m.id}>
-            <span>
-              {m.name} <span className="hint">(spec {m.specular}, shin {m.shininess})</span>
+            <span className="material-panel-name">
+              <span>{m.name}</span>
+              <span className="hint">
+                spec {m.specular}, shin {m.shininess}
+              </span>
             </span>
-            <button className="danger" type="button" onClick={() => shankpitMaterials.delete(m.id).then(refresh)}>
-              x
+            <button className="danger material-panel-delete" type="button" onClick={() => shankpitMaterials.delete(m.id).then(refresh)}>
+              Delete
             </button>
           </li>
         ))}
