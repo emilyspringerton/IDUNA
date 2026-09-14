@@ -313,6 +313,27 @@ export interface ShankpitWall {
 // when you touch it... it would be great if we integrated with that").
 export const SHANKPIT_GRID_CELL_SIZE = 50
 
+// ShankpitLevelObject mirrors IDUNA/internal/shankpit.LevelObject exactly -- a level placed as a
+// child object inside another level (S459-15, founder real-time: "i have this level 2222 -
+// already i want to use it as an object - the whole level ... a map is a composition of levels",
+// then "really a level and a map is the same thing - its like a smart document in photoshop where
+// you have like a photoshop doc in a photoshop doc"). There is no separate Map type: any
+// ShankpitLevel can hold objects. rot_y is snapped to 0/90/180/270 (founder: "snap rotate 90
+// degree turns is good for now"). plane_visible/plane_solid are real, stored, forward-compatible
+// per-instance overrides for the referenced level's own ground plane -- both default false
+// (founder: "DEFAULTS TO OFF") and are NOT yet acted on by the backend's own flatten/export pass,
+// see level_store.go's own flattenObjects doc comment for why.
+export interface ShankpitLevelObject {
+  id: number
+  ref_level_id: number
+  x: number
+  y: number
+  z: number
+  rot_y: 0 | 90 | 180 | 270
+  plane_visible: boolean
+  plane_solid: boolean
+}
+
 export interface ShankpitLevel {
   id: number
   name: string
@@ -322,6 +343,7 @@ export interface ShankpitLevel {
   ground_plane_enabled: boolean
   ground_plane_squares: number
   walls: ShankpitWall[]
+  objects: ShankpitLevelObject[]
   created_at: string
   updated_at: string
 }
@@ -335,6 +357,7 @@ export interface ShankpitLevelSummary {
   ground_plane_enabled: boolean
   ground_plane_squares: number
   wall_count: number
+  object_count: number
   created_at: string
   updated_at: string
 }
@@ -363,6 +386,7 @@ export const shankpitLevels = {
     groundPlaneEnabled: boolean,
     groundPlaneSquares: number,
     walls: ShankpitWall[],
+    objects: ShankpitLevelObject[],
   ) =>
     sreq<ShankpitLevel>('', {
       method: 'POST',
@@ -374,6 +398,7 @@ export const shankpitLevels = {
         ground_plane_enabled: groundPlaneEnabled,
         ground_plane_squares: groundPlaneSquares,
         walls,
+        objects,
       }),
     }),
   save: (
@@ -384,6 +409,7 @@ export const shankpitLevels = {
     groundPlaneEnabled: boolean,
     groundPlaneSquares: number,
     walls: ShankpitWall[],
+    objects: ShankpitLevelObject[],
   ) =>
     sreq<ShankpitLevel>(`/${id}`, {
       method: 'PUT',
@@ -394,6 +420,7 @@ export const shankpitLevels = {
         ground_plane_enabled: groundPlaneEnabled,
         ground_plane_squares: groundPlaneSquares,
         walls,
+        objects,
       }),
     }),
   rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),

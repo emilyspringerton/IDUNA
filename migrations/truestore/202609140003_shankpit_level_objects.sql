@@ -1,0 +1,20 @@
+-- SHANKPIT NOCK level editor -- levels as objects inside other levels (S459-15, founder
+-- real-time: "i have this level 2222 - already i want to use it as an object - the whole level -
+-- can you make the 'map editor' ... a map is a composition of levels ... i want to mirror the
+-- base i built for like a 2 base fortress vs fortress basic map ... its a bit fractal we can let
+-- it go further down or up but for now i want level 2222 as a 'MAP'." Direct follow-up, same
+-- session: "really a level and a map is the same thing - its like a smart document in photoshop
+-- where you have like a photoshop doc in a photoshop doc - so we want them to load the totally
+-- same way" -- there is no separate "Map" type. A level can now hold OBJECTS, each one a
+-- reference to another level placed at a position with a 90-degree-snapped Y rotation, the exact
+-- same self-similar composition a Photoshop smart-object nest is. objects_json wholesale-replaced
+-- on save, matching walls_json's own established convention exactly.
+--
+-- plane_visible/plane_solid (both default OFF, founder: "THEIR PLANE NEEDS TO BE TOGGALABLE ON
+-- THE MAP SIDE (toggle on and off AND toggle visual off - it can be on but invisible) DEFAULTS TO
+-- OFF") are stored per-object for forward compatibility, but v0's own real, honest scope (see
+-- internal/shankpit/level_store.go's own flattenObjects doc comment) never composes a nested
+-- level's own ground plane at all yet -- only the root level's own single plane renders/collides,
+-- matching "defaults to off" for every nested instance until a real per-instance plane placement
+-- design is built.
+ALTER TABLE shankpit_levels ADD COLUMN objects_json TEXT NOT NULL DEFAULT '[]';

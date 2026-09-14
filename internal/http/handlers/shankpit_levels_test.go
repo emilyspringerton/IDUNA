@@ -31,6 +31,7 @@ func newShankpitLevelsTestStore(t *testing.T) *shankpit.LevelStore {
 			ground_plane_enabled BOOLEAN NOT NULL DEFAULT 1,
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			walls_json TEXT NOT NULL DEFAULT '[]',
+			objects_json TEXT NOT NULL DEFAULT '[]',
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
@@ -93,7 +94,7 @@ func TestShankpitLevelsHandler_UpdateReshapesWall(t *testing.T) {
 	h := &handlers.ShankpitLevelsHandler{Store: store}
 	if _, err := store.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{
 		{ID: 1, X: 0, Y: 0, Z: 0, SX: 4, SY: 4, SZ: 4, R: 0.5, G: 0.5, B: 0.5, Friction: 0.8},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("seed create: %v", err)
 	}
 
@@ -127,7 +128,7 @@ func TestShankpitLevelsPublicHandler_ListAndExport(t *testing.T) {
 	store := newShankpitLevelsTestStore(t)
 	if _, err := store.CreateLevel(context.Background(), "Public Level", 100, 50, 100, true, 2, []shankpit.Wall{
 		{ID: 1, X: 0, Y: 0, Z: 0, SX: 4, SY: 4, SZ: 4, R: 0.5, G: 0.5, B: 0.5, Friction: 0.8},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("seed create: %v", err)
 	}
 	h := &handlers.ShankpitLevelsPublicHandler{Store: store}

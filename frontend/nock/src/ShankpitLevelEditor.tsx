@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { SHANKPIT_GRID_CELL_SIZE, shankpitLevels, type ShankpitLevelSummary, type ShankpitWall } from './api'
+import {
+  SHANKPIT_GRID_CELL_SIZE,
+  shankpitLevels,
+  type ShankpitLevelObject,
+  type ShankpitLevelSummary,
+  type ShankpitWall,
+} from './api'
 
 // ShankpitLevelEditor.tsx — SHANKPIT NOCK level editor v0 frontend (EMILY/BACKLOG.md SECTION 459,
 // founder real-time: "so v0 it and start working dont worry about the current levels lets just go
@@ -45,6 +51,7 @@ function newDefaultLevel(): {
   groundPlaneEnabled: boolean
   groundPlaneSquares: number
   walls: ShankpitWall[]
+  objects: ShankpitLevelObject[]
 } {
   return {
     name: '',
@@ -54,11 +61,24 @@ function newDefaultLevel(): {
     groundPlaneEnabled: true,
     groundPlaneSquares: DEFAULT_GROUND_PLANE_SQUARES,
     walls: [aDefaultWall(1, defaultSpawnerPos())],
+    objects: [],
   }
 }
 
 function nextWallId(walls: ShankpitWall[]): number {
   return walls.reduce((m, w) => Math.max(m, w.id), 0) + 1
+}
+
+function nextObjectId(objects: ShankpitLevelObject[]): number {
+  return objects.reduce((m, o) => Math.max(m, o.id), 0) + 1
+}
+
+// ROT_Y_STEPS -- "snap rotate 90 degree turns is good for now" (founder, real-time, S459-15).
+const ROT_Y_STEPS = [0, 90, 180, 270] as const
+
+function rotateY90Step(rotY: number): 0 | 90 | 180 | 270 {
+  const idx = ROT_Y_STEPS.indexOf(rotY as (typeof ROT_Y_STEPS)[number])
+  return ROT_Y_STEPS[(idx + 1) % ROT_Y_STEPS.length]
 }
 
 // Axis + sign identify exactly one of a box's 6 faces. faceNormal is that face's outward world
@@ -178,6 +198,8 @@ function Viewport3D({
   onSpawnerChange,
   constrainY,
   onDragStart,
+  objects,
+  levelSummaries,
 }: {
   width: number
   height: number
@@ -194,12 +216,15 @@ function Viewport3D({
   onSpawnerChange: (s: { x: number; y: number; z: number }) => void
   constrainY: boolean
   onDragStart: () => void
+  objects: ShankpitLevelObject[]
+  levelSummaries: ShankpitLevelSummary[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const meshesRef = useRef<THREE.Mesh[]>([])
+  const objectMeshesRef = useRef<THREE.Group[]>([])
   const spawnerMeshRef = useRef<THREE.Mesh | null>(null)
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const wallsRef = useRef(walls)
@@ -481,6 +506,52 @@ function Viewport3D({
     spawnerMeshRef.current?.position.set(spawner.x, spawner.y, spawner.z)
   }, [spawner])
 
+  // Level objects (S459-15, "a map is a composition of levels"): a real, non-interactive-for-v0
+  // wireframe preview of each placed child level's own footprint (its real width/height/depth,
+  // looked up from the already-fetched level list -- no extra fetch needed) at its placed
+  // position + 90-degree Y rotation. Position/rotation are edited via the inspector panel, not
+  // 3D-dragged, matching this feature's own real v0 scope. Rebuilt whenever the object list's own
+  // shape changes; kept in sync on every edit via the effect just below.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    for (const g of objectMeshesRef.current) {
+      scene.remove(g)
+      g.children.forEach((c) => {
+        if (c instanceof THREE.LineSegments) {
+          c.geometry.dispose()
+          ;(c.material as THREE.Material).dispose()
+        }
+      })
+    }
+    objectMeshesRef.current = objects.map((o) => {
+      const ref = levelSummaries.find((l) => l.id === o.ref_level_id)
+      const w = ref?.width ?? SHANKPIT_GRID_CELL_SIZE, h = ref?.height ?? SHANKPIT_GRID_CELL_SIZE, d = ref?.depth ?? SHANKPIT_GRID_CELL_SIZE
+      const geo = new THREE.BoxGeometry(w, h, d)
+      const wire = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xffaa33 }))
+      geo.dispose()
+      const group = new THREE.Group()
+      group.add(wire)
+      group.position.set(o.x, o.y + h / 2, o.z) // Y offset so the wireframe sits ON o.y (its own floor), not straddling it
+      group.rotation.y = -(o.rot_y * Math.PI) / 180
+      scene.add(group)
+      return group
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objects.length, levelSummaries.length])
+
+  useEffect(() => {
+    objects.forEach((o, i) => {
+      const group = objectMeshesRef.current[i]
+      if (!group) return
+      const ref = levelSummaries.find((l) => l.id === o.ref_level_id)
+      const h = ref?.height ?? SHANKPIT_GRID_CELL_SIZE
+      group.position.set(o.x, o.y + h / 2, o.z)
+      group.rotation.y = -(o.rot_y * Math.PI) / 180
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objects, levelSummaries])
+
   // The real ground plane (S459-08, founder real-time: "i want there to be a plane by default
   // that the player collides with - the checkerboard in the level editor - that should
   // constitute the plane for that level... configurable in terms of size... turn on able and off
@@ -552,6 +623,55 @@ function WallInspector({ wall, onChange, onDelete }: { wall: ShankpitWall; onCha
   )
 }
 
+// ObjectInspector -- S459-15, founder real-time: "a map is a composition of levels" / "we are
+// going to need to be able to rotate objects (levels) in the map, snap rotate 90 degree turns is
+// good for now" / "THEIR PLANE NEEDS TO BE TOGGALABLE ON THE MAP SIDE (toggle on and off AND
+// toggle visual off - it can be on but invisible) DEFAULTS TO OFF." Position/rotation edited here
+// numerically rather than 3D-dragged -- a real, deliberate v0 scope call (see Viewport3D's own
+// object-rendering effect doc comment), not a placeholder for missing functionality.
+function ObjectInspector({
+  obj,
+  refName,
+  onChange,
+  onDelete,
+}: {
+  obj: ShankpitLevelObject
+  refName: string
+  onChange: (o: ShankpitLevelObject) => void
+  onDelete: () => void
+}) {
+  const num = (v: string) => (v === '' ? 0 : Number(v))
+  return (
+    <div className="platform-inspector">
+      <h4>{refName}</h4>
+      <label>
+        X <input type="number" step={0.5} value={obj.x} onChange={(e) => onChange({ ...obj, x: num(e.target.value) })} />
+      </label>
+      <label>
+        Y <input type="number" step={0.5} value={obj.y} onChange={(e) => onChange({ ...obj, y: num(e.target.value) })} />
+      </label>
+      <label>
+        Z <input type="number" step={0.5} value={obj.z} onChange={(e) => onChange({ ...obj, z: num(e.target.value) })} />
+      </label>
+      <div className="mode-toggle">
+        <button type="button" onClick={() => onChange({ ...obj, rot_y: rotateY90Step(obj.rot_y) })}>
+          Rotate 90° (now {obj.rot_y}°)
+        </button>
+      </div>
+      <label>
+        <input type="checkbox" checked={obj.plane_visible} onChange={(e) => onChange({ ...obj, plane_visible: e.target.checked })} /> Plane
+        visible
+      </label>
+      <label>
+        <input type="checkbox" checked={obj.plane_solid} onChange={(e) => onChange({ ...obj, plane_solid: e.target.checked })} /> Plane solid
+      </label>
+      <button className="danger" type="button" onClick={onDelete}>
+        Remove object
+      </button>
+    </div>
+  )
+}
+
 export default function ShankpitLevelEditor() {
   const { list, refresh } = useLevelList()
   const [activeId, setActiveId] = useState<number | null>(null)
@@ -560,6 +680,7 @@ export default function ShankpitLevelEditor() {
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
+  const [objectPickLevelId, setObjectPickLevelId] = useState<number | ''>('')
   const [editMode, setEditMode] = useState<EditMode>('object')
   // Constrain Y while dragging in object mode -- founder real-time: "i need the blocks to notfly
   // up and down when i drag them around unless i uncheck the constrain z or y or whatever box" /
@@ -633,6 +754,7 @@ export default function ShankpitLevelEditor() {
       groundPlaneEnabled: lvl.ground_plane_enabled,
       groundPlaneSquares: lvl.ground_plane_squares,
       walls: lvl.walls,
+      objects: lvl.objects,
     })
     setActiveId(id)
     setSelected(null)
@@ -672,6 +794,33 @@ export default function ShankpitLevelEditor() {
     setSelected(null)
   }
 
+  const setObjects = (objects: ShankpitLevelObject[]) => {
+    setDraft((d) => ({ ...d, objects }))
+    setDirty(true)
+  }
+
+  // addObject -- S459-15, founder real-time: "i have this level 2222 ... i want to use it as an
+  // object - the whole level" / "a map is a composition of levels." Placed at the spawner's own
+  // current position (same "no accidental overlap" convenience addCube already gives cubes),
+  // unrotated -- rotate afterward via the inspector's own "Rotate 90°" button.
+  const addObject = (refLevelId: number) => {
+    pushHistory()
+    const id = nextObjectId(draft.objects)
+    setObjects([
+      ...draft.objects,
+      { id, ref_level_id: refLevelId, x: spawner.x, y: spawner.y, z: spawner.z, rot_y: 0, plane_visible: false, plane_solid: false },
+    ])
+  }
+
+  const updateObject = (updated: ShankpitLevelObject) => {
+    setObjects(draft.objects.map((o) => (o.id === updated.id ? updated : o)))
+  }
+
+  const deleteObject = (id: number) => {
+    pushHistory()
+    setObjects(draft.objects.filter((o) => o.id !== id))
+  }
+
   const save = async () => {
     setError(null)
     try {
@@ -689,6 +838,7 @@ export default function ShankpitLevelEditor() {
           draft.groundPlaneEnabled,
           draft.groundPlaneSquares,
           draft.walls,
+          draft.objects,
         )
         id = created.id
         setActiveId(id)
@@ -701,6 +851,7 @@ export default function ShankpitLevelEditor() {
           draft.groundPlaneEnabled,
           draft.groundPlaneSquares,
           draft.walls,
+          draft.objects,
         )
       }
       setDirty(false)
@@ -849,6 +1000,27 @@ export default function ShankpitLevelEditor() {
           <button type="button" onClick={addCube}>
             + Add cube
           </button>
+          <div className="mode-toggle">
+            <select value={objectPickLevelId} onChange={(e) => setObjectPickLevelId(e.target.value === '' ? '' : Number(e.target.value))}>
+              <option value="">Add level as object...</option>
+              {list
+                .filter((l) => l.id !== activeId)
+                .map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+            </select>
+            <button
+              type="button"
+              disabled={objectPickLevelId === ''}
+              onClick={() => {
+                if (objectPickLevelId !== '') addObject(objectPickLevelId)
+              }}
+            >
+              + Add object
+            </button>
+          </div>
           <button type="button" onClick={save} disabled={!dirty}>
             {activeId === null ? 'Create level' : 'Save changes'}
           </button>
@@ -887,6 +1059,8 @@ export default function ShankpitLevelEditor() {
               onSpawnerChange={setSpawner}
               constrainY={constrainY}
               onDragStart={pushHistory}
+              objects={draft.objects}
+              levelSummaries={list}
             />
             <p className="hint">
               Drag empty space to orbit, scroll to zoom.{' '}
@@ -908,6 +1082,20 @@ export default function ShankpitLevelEditor() {
               />
             ) : (
               <p className="hint">Select a cube to edit its exact position/size, or add a new one.</p>
+            )}
+            {draft.objects.length > 0 && (
+              <div className="object-list">
+                <h3>Objects (levels placed as objects)</h3>
+                {draft.objects.map((o) => (
+                  <ObjectInspector
+                    key={o.id}
+                    obj={o}
+                    refName={list.find((l) => l.id === o.ref_level_id)?.name ?? `level ${o.ref_level_id}`}
+                    onChange={updateObject}
+                    onDelete={() => deleteObject(o.id)}
+                  />
+                ))}
+              </div>
             )}
           </div>
         </div>

@@ -42,6 +42,55 @@ type Wall struct {
 	Friction float64 `json:"friction"`
 }
 
+// LevelObject is a level placed as a child object inside another level -- the "map" primitive,
+// founder real-time: "i have this level 2222 - already i want to use it as an object - the whole
+// level ... a map is a composition of levels" then, same session: "really a level and a map is
+// the same thing - its like a smart document in photoshop where you have like a photoshop doc in
+// a photoshop doc." There is no separate Map type -- any level can hold objects, each one a
+// reference to another level. RotY is snapped to one of {0, 90, 180, 270} (founder: "snap rotate
+// 90 degree turns is good for now"). PlaneVisible/PlaneSolid are real, stored, forward-compatible
+// per-instance overrides for the referenced level's own ground plane, but Export's own
+// flattenObjects does not act on them yet (both default false, matching "DEFAULTS TO OFF") -- see
+// that function's own doc comment for the real, honest, not-yet-built reason why.
+type LevelObject struct {
+	ID           int     `json:"id"`
+	RefLevelID   int64   `json:"ref_level_id"`
+	X            float64 `json:"x"`
+	Y            float64 `json:"y"`
+	Z            float64 `json:"z"`
+	RotY         int     `json:"rot_y"`
+	PlaneVisible bool    `json:"plane_visible"`
+	PlaneSolid   bool    `json:"plane_solid"`
+}
+
+// MaxLevelObjects bounds how many object children one level may hold -- a real, sane v0 cap
+// (mirrors MaxWalls's own reasoning), not unbounded.
+const MaxLevelObjects = 50
+
+// MaxLevelObjectDepth bounds recursive flatten nesting (levels containing objects that are
+// levels containing objects...) -- founder: "its a bit fractal we can let it go further down or
+// up." A real, finite safety bound, not infinite -- combined with the cycle check in
+// flattenObjects, this is what keeps a level that (directly or indirectly) references itself from
+// hanging or crashing Export.
+const MaxLevelObjectDepth = 6
+
+var validRotY = map[int]bool{0: true, 90: true, 180: true, 270: true}
+
+func validateObjects(selfID int64, objs []LevelObject) error {
+	if len(objs) > MaxLevelObjects {
+		return fmt.Errorf("shankpit: too many objects (%d, max %d)", len(objs), MaxLevelObjects)
+	}
+	for i, o := range objs {
+		if !validRotY[o.RotY] {
+			return fmt.Errorf("shankpit: object %d has invalid rot_y %d (must be 0, 90, 180, or 270)", i, o.RotY)
+		}
+		if o.RefLevelID == selfID {
+			return fmt.Errorf("shankpit: object %d references its own parent level directly -- not allowed (deeper cycles are caught at export time)", i)
+		}
+	}
+	return nil
+}
+
 // GridCellSize is the real, fixed, constant world-unit size of one ground-plane grid square --
 // founder, direct: "the squares are always the same size" / "so the units needs to be the number
 // of squares in the grid." The plane's own real editable field is a SQUARE COUNT
@@ -62,22 +111,23 @@ const GridCellSize = 50.0
 
 // Level is one row of the shankpit_levels table.
 type Level struct {
-	ID                 int64   `json:"id"`
-	Name               string  `json:"name"`
-	Width              float64 `json:"width"`
-	Height             float64 `json:"height"`
-	Depth              float64 `json:"depth"`
+	ID     int64   `json:"id"`
+	Name   string  `json:"name"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	Depth  float64 `json:"depth"`
 	// GroundPlaneEnabled/GroundPlaneSquares (founder real-time: "i want there to be a plane by
 	// default that the player collides with - the checkerboard in the level editor - that
 	// should constitute the plane for that level... configurable in terms of size... turn on
 	// able and off able per level") -- a real, first-class, per-level, persisted property, not a
 	// Wall and not a hardcoded engine default. GroundPlaneSquares is a real square COUNT (see
 	// GridCellSize's own doc comment for why), not a raw length.
-	GroundPlaneEnabled bool    `json:"ground_plane_enabled"`
-	GroundPlaneSquares int     `json:"ground_plane_squares"`
-	Walls              []Wall  `json:"walls"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
+	GroundPlaneEnabled bool          `json:"ground_plane_enabled"`
+	GroundPlaneSquares int           `json:"ground_plane_squares"`
+	Walls              []Wall        `json:"walls"`
+	Objects            []LevelObject `json:"objects"`
+	CreatedAt          string        `json:"created_at"`
+	UpdatedAt          string        `json:"updated_at"`
 }
 
 // ExportDoc is the real, native-loader-facing shape (SHANKPIT's own real physics.h `Box`/
@@ -154,7 +204,7 @@ type LevelStore struct {
 // own real "create a level, then add a cube" flow, S459-01 before S459-04) -- unlike BRAWLPIT's
 // own CreateLevel, an empty wall list is not an error here, since there is no equivalent real
 // native-loader requirement forcing "at least one platform" the way BRAWLPIT's 2D format does.
-func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall) (*Level, error) {
+func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject) (*Level, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
@@ -164,16 +214,26 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	if err := validateWalls(walls); err != nil {
 		return nil, err
 	}
+	if err := validateObjects(0, objects); err != nil {
+		return nil, err
+	}
 	if walls == nil {
 		walls = []Wall{}
+	}
+	if objects == nil {
+		objects = []LevelObject{}
 	}
 	wallsJSON, err := json.Marshal(walls)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: marshal walls: %w", err)
 	}
+	objectsJSON, err := json.Marshal(objects)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: marshal objects: %w", err)
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO shankpit_levels (name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		name, width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON))
+		`INSERT INTO shankpit_levels (name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		name, width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON))
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: create level: %w", err)
 	}
@@ -187,15 +247,15 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
 
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
-	var wallsJSON string
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	var wallsJSON, objectsJSON string
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
@@ -203,6 +263,9 @@ func scanLevel(row *sql.Row) (*Level, error) {
 	}
 	if err := json.Unmarshal([]byte(wallsJSON), &l.Walls); err != nil {
 		return nil, fmt.Errorf("shankpit: decode stored walls: %w", err)
+	}
+	if err := json.Unmarshal([]byte(objectsJSON), &l.Objects); err != nil {
+		return nil, fmt.Errorf("shankpit: decode stored objects: %w", err)
 	}
 	return &l, nil
 }
@@ -218,6 +281,7 @@ type LevelSummary struct {
 	GroundPlaneEnabled bool    `json:"ground_plane_enabled"`
 	GroundPlaneSquares int     `json:"ground_plane_squares"`
 	WallCount          int     `json:"wall_count"`
+	ObjectCount        int     `json:"object_count"`
 	CreatedAt          string  `json:"created_at"`
 	UpdatedAt          string  `json:"updated_at"`
 }
@@ -226,7 +290,7 @@ type LevelSummary struct {
 // level-select registry primitive this section exists to build.
 func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, created_at, updated_at
 		 FROM shankpit_levels ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: list levels: %w", err)
@@ -236,15 +300,20 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	out := []LevelSummary{}
 	for rows.Next() {
 		var sum LevelSummary
-		var wallsJSON string
-		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
+		var wallsJSON, objectsJSON string
+		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("shankpit: list levels: %w", err)
 		}
 		var walls []Wall
 		if err := json.Unmarshal([]byte(wallsJSON), &walls); err != nil {
 			return nil, fmt.Errorf("shankpit: decode stored walls: %w", err)
 		}
+		var objects []LevelObject
+		if err := json.Unmarshal([]byte(objectsJSON), &objects); err != nil {
+			return nil, fmt.Errorf("shankpit: decode stored objects: %w", err)
+		}
 		sum.WallCount = len(walls)
+		sum.ObjectCount = len(objects)
 		out = append(out, sum)
 	}
 	return out, rows.Err()
@@ -256,23 +325,33 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 // array, save) and S459-05 "face-drag editing" (adjust an existing wall's center/size, save) both
 // go through -- matching BRAWLPIT's own LevelStore precedent exactly: there is no separate "add
 // one platform" endpoint there either, the whole array is replaced together.
-func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall) (*Level, error) {
+func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject) (*Level, error) {
 	if err := validateGroundPlane(groundPlaneSquares); err != nil {
 		return nil, err
 	}
 	if err := validateWalls(walls); err != nil {
 		return nil, err
 	}
+	if err := validateObjects(id, objects); err != nil {
+		return nil, err
+	}
 	if walls == nil {
 		walls = []Wall{}
+	}
+	if objects == nil {
+		objects = []LevelObject{}
 	}
 	wallsJSON, err := json.Marshal(walls)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: marshal walls: %w", err)
 	}
+	objectsJSON, err := json.Marshal(objects)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: marshal objects: %w", err)
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, ground_plane_enabled = ?, ground_plane_squares = ?, walls_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), id)
+		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, ground_plane_enabled = ?, ground_plane_squares = ?, walls_json = ?, objects_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), id)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: update level: %w", err)
 	}
@@ -305,7 +384,7 @@ func (s *LevelStore) CloneLevel(ctx context.Context, id int64, newName string) (
 	if err != nil {
 		return nil, err
 	}
-	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.GroundPlaneEnabled, src.GroundPlaneSquares, src.Walls)
+	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.GroundPlaneEnabled, src.GroundPlaneSquares, src.Walls, src.Objects)
 }
 
 // DeleteLevel permanently removes a level row.
@@ -320,18 +399,122 @@ func (s *LevelStore) DeleteLevel(ctx context.Context, id int64) error {
 	return nil
 }
 
+// rotateY90 rotates a wall's own (x,z) center and (sx,sz) extents by a 0/90/180/270-degree
+// Y-axis turn (founder: "snap rotate 90 degree turns is good for now") -- exact for an
+// axis-aligned box at these angles (no trig needed): a 90/270 turn swaps X and Z (negating one),
+// and swaps the sx/sz extents along with them since an axis-aligned box's own footprint rotates
+// with it. y and sy are never touched -- this is Y-axis-only rotation, matching NOCK's own
+// established "constrain Y" convention for objects elsewhere in this system.
+func rotateY90(x, z, sx, sz float64, rotY int) (rx, rz, rsx, rsz float64) {
+	switch rotY {
+	case 90:
+		return -z, x, sz, sx
+	case 180:
+		return -x, -z, sx, sz
+	case 270:
+		return z, -x, sz, sx
+	default:
+		return x, z, sx, sz
+	}
+}
+
+// flattenObjects recursively resolves a level's own object children (each one a reference to
+// another level, founder: "a map is a composition of levels ... its a bit fractal we can let it
+// go further down or up") into a flat wall list the native SHANKPIT client already understands
+// unchanged -- see this function's own call site in Export for why that matters. Each object's
+// own transform (position + 90-degree Y rotation) is applied to every wall the referenced level
+// contributes, INCLUDING that level's own further-nested objects (recursion), so an object that
+// is itself a composed map works exactly the same as one that's a single flat level -- the real
+// "smart document in photoshop where you have like a photoshop doc in a photoshop doc" self-
+// similarity the founder asked for directly.
+//
+// visited is a real cycle guard (a level that directly or indirectly references itself would
+// otherwise recurse forever) and depth is a real, finite backstop on top of it -- both return a
+// real, honest error rather than hanging or silently truncating.
+//
+// REAL, HONEST, NOT-YET-BUILT: a referenced level's own ground plane (GroundPlaneEnabled/
+// GroundPlaneSquares) is never composed here, regardless of the object's own PlaneVisible/
+// PlaneSolid fields -- those are stored (see LevelObject's own doc comment) but not yet acted on.
+// physics.h's own SCENE_CUSTOM_LEVEL only supports ONE ground plane for the whole scene today
+// (a single enabled/squares pair, not one per placed object at its own offset); composing several
+// independently-positioned, independently-toggleable planes is real, scoped future work, not
+// something this pass silently fakes. Only the ROOT level's own plane (set on the top-level
+// Export call) ever reaches the native client -- every nested object contributes geometry only,
+// matching "DEFAULTS TO OFF" for the nested case.
+func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, originX, originY, originZ float64, originRotY int, visited map[int64]bool, depth int) ([]Wall, error) {
+	if depth > MaxLevelObjectDepth {
+		return nil, fmt.Errorf("shankpit: object nesting too deep (max %d) -- possible runaway composition", MaxLevelObjectDepth)
+	}
+	var out []Wall
+	for _, obj := range objects {
+		if visited[obj.RefLevelID] {
+			return nil, fmt.Errorf("shankpit: level object cycle detected involving level %d", obj.RefLevelID)
+		}
+		child, err := s.GetLevel(ctx, obj.RefLevelID)
+		if err != nil {
+			return nil, fmt.Errorf("shankpit: object references level %d: %w", obj.RefLevelID, err)
+		}
+		childVisited := make(map[int64]bool, len(visited)+1)
+		for k := range visited {
+			childVisited[k] = true
+		}
+		childVisited[obj.RefLevelID] = true
+
+		// Compose the object's own local transform (its position/rotation within ITS parent)
+		// with the parent's own already-accumulated world transform, so nesting several levels
+		// deep places everything correctly, not just one level down.
+		ox, oz, _, _ := rotateY90(obj.X, obj.Z, 0, 0, originRotY)
+		worldX := originX + ox
+		worldZ := originZ + oz
+		worldY := originY + obj.Y
+		worldRotY := (originRotY + obj.RotY) % 360
+
+		for _, w := range child.Walls {
+			rx, rz, rsx, rsz := rotateY90(w.X, w.Z, w.SX, w.SZ, worldRotY)
+			out = append(out, Wall{
+				ID: 0, X: worldX + rx, Y: worldY + w.Y, Z: worldZ + rz,
+				SX: rsx, SY: w.SY, SZ: rsz,
+				R: w.R, G: w.G, B: w.B, Friction: w.Friction,
+			})
+		}
+		nested, err := s.flattenObjects(ctx, child.Objects, worldX, worldY, worldZ, worldRotY, childVisited, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, nested...)
+	}
+	return out, nil
+}
+
 // Export returns the real, native-loader-facing document for a level -- the real end-to-end
-// target once SHANKPIT's own map loader gains a JSON path (not built yet -- v0's own real scope
-// is the registry + editing surface, matching BRAWLPIT's own S415-01/S415-04 sequencing where the
-// web editor and its export shape landed before the native loader consumed it).
+// target the native SHANKPIT client actually consumes (apps/lobby + apps/server's own
+// packages/world/level_boxes.h loader, S459-07/08/11). A level's own object children (S459-15)
+// are recursively flattened into ONE flat wall list right here, server-side, in Go -- the native
+// client itself needs zero changes to load a composed "map": it always just sees one flat
+// walls[] + one ground-plane pair, the exact same shape as a single, object-free level, matching
+// the founder's own explicit "we want them to load the totally same way."
 func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	lvl, err := s.GetLevel(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	walls := append([]Wall{}, lvl.Walls...)
+	if len(lvl.Objects) > 0 {
+		flattened, err := s.flattenObjects(ctx, lvl.Objects, 0, 0, 0, 0, map[int64]bool{id: true}, 1)
+		if err != nil {
+			return nil, err
+		}
+		walls = append(walls, flattened...)
+	}
+	if len(walls) > MaxWalls {
+		return nil, fmt.Errorf("shankpit: composed level %d has too many boxes after flattening objects (%d, max %d)", id, len(walls), MaxWalls)
+	}
+	for i := range walls {
+		walls[i].ID = i + 1 // renumbered sequentially -- see flattenObjects' own doc comment on why wall IDs are safe to reassign
+	}
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares,
-		Walls: lvl.Walls,
+		Walls: walls,
 	}, nil
 }
