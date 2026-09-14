@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-14
+- feat: SHANKPIT sprays -- real registry (shankpit_sprays), Export to Spray button on the Projects tab, a Sprays tab to set the one real global default; native menu + T-key wall decals deliberately deferred (sess-20260905-0720-ec33e7c5)
 - fix: NOCK Materials panel was rendered as a 3rd grid child, covering the whole SHANKPIT level editor screen -- nested it inside the existing sidebar instead (sess-20260905-0720-ec33e7c5)
 - feat: SHANKPIT block materials (brick/concrete/wood/metal), a real named shader registry (NOCK stores shader_name only, never GLSL), materials embedded in level export (sess-20260905-0720-ec33e7c5)
 - feat: levels-as-objects for SHANKPIT NOCK level editor -- a level can now hold other levels as placed/rotated/plane-togglable objects ('a map is a composition of levels'), recursively flattened server-side into the same flat wall shape the native client already loads (sess-20260905-0720-ec33e7c5)
