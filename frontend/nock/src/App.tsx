@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, generateProcedural, textures, type Project, type TextureSummary } from './api'
+import { api, generateProcedural, shankpitSprays, textures, type Project, type TextureSummary } from './api'
 import LevelEditor from './LevelEditor'
 import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
+import Sprays from './Sprays'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -420,6 +421,21 @@ function ProjectEditor({ name, onDeleted }: { name: string; onDeleted: () => voi
             <a href={api.exportUrl(project.name, 'jpg')} download={`${project.name}.jpg`}>
               Export JPG
             </a>
+            <button
+              type="button"
+              onClick={async () => {
+                const sprayName = prompt(`Spray name`, project.name)
+                if (!sprayName) return
+                try {
+                  await shankpitSprays.exportProjectToSpray(project.name, project.width, project.height, sprayName)
+                  alert(`Exported "${sprayName}" to the sprays registry.`)
+                } catch (err) {
+                  alert(`Export to spray failed: ${String(err)}`)
+                }
+              }}
+            >
+              Export to Spray
+            </button>
           </div>
         </div>
 
@@ -646,8 +662,8 @@ function TextureLibrary() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'brawlpit' | 'ai-opponents' | 'shankpit'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'brawlpit', 'ai-opponents', 'shankpit']
+type Tab = 'projects' | 'textures' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'sprays'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'brawlpit', 'ai-opponents', 'shankpit', 'sprays']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -698,6 +714,9 @@ export default function App() {
           <button className={tab === 'shankpit' ? 'active' : ''} onClick={() => setTab('shankpit')}>
             SHANKPIT Levels
           </button>
+          <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
+            Sprays
+          </button>
         </nav>
       </header>
 
@@ -713,6 +732,8 @@ export default function App() {
         <div className="layout-single">
           <AiOpponents />
         </div>
+      ) : tab === 'sprays' ? (
+        <Sprays />
       ) : (
         <div className="layout">
           <aside className="project-list">

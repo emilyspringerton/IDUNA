@@ -675,6 +675,19 @@ func main() {
 	shankpitMaterialsPublicH := &handlers.ShankpitMaterialsPublicHandler{Store: shankpitMaterialStore}
 	mux.Handle("/api/v1/shankpit-materials", shankpitMaterialsPublicH)
 
+	// S459-19, founder real-time: "can we implement sprays? ... export to spray goes to sprays
+	// registry same treatment ... we need a nock sprays interface right now just to set the
+	// default." Same real admin-CRUD-plus-public-registry split as levels/materials above.
+	shankpitSprayStore := &shankpit.SprayStore{DB: db}
+	shankpitSpraysH := &handlers.ShankpitSpraysHandler{Store: shankpitSprayStore}
+	shankpitSpraysProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitSpraysH))
+	mux.Handle("/admin/nock/api/shankpit-sprays", shankpitSpraysProtected)
+	mux.Handle("/admin/nock/api/shankpit-sprays/", shankpitSpraysProtected)
+
+	shankpitSpraysPublicH := &handlers.ShankpitSpraysPublicHandler{Store: shankpitSprayStore}
+	mux.Handle("/api/v1/shankpit-sprays", shankpitSpraysPublicH)
+	mux.Handle("/api/v1/shankpit-sprays/", shankpitSpraysPublicH)
+
 	// S420, founder real-time: "lets make a checkpoint registry so we can train from multiple
 	// locations and then we can add checkpoints from colab?" -- a real, remote, shared RL
 	// checkpoint registry (see internal/brawlpit/checkpoint_store.go's own doc comment for why a

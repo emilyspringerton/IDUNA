@@ -201,6 +201,29 @@ textarea {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 }
 
+.spray-grid {
+  @apply grid gap-4;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+
+.spray-card {
+  @apply flex flex-col items-center gap-1 rounded-lg border border-line bg-panel p-3;
+}
+
+.spray-card.active {
+  @apply border-gold;
+}
+
+.spray-card img {
+  @apply rounded border border-line;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #1e1e1e 0% 50%) 50% / 16px 16px;
+  image-rendering: pixelated;
+}
+
+.spray-card-name {
+  @apply font-semibold text-ink;
+}
+
 .texture-card {
   @apply flex flex-col overflow-hidden rounded-lg border border-line bg-panel;
 }

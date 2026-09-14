@@ -479,6 +479,57 @@ export const shankpitLevels = {
   exportUrl: (id: number) => `${SHANKPIT_LEVELS_BASE}/${id}/export?_=${Date.now()}`,
 }
 
+// ---- SHANKPIT sprays (S459-19, founder real-time: "can we implement sprays? ... export to spray
+// goes to sprays registry same treatment ... we need a nock sprays interface right now just to
+// set the default") ----
+
+export interface ShankpitSpray {
+  id: number
+  name: string
+  width: number
+  height: number
+  is_default: boolean
+  created_at: string
+  updated_at: string
+}
+
+const SHANKPIT_SPRAYS_BASE = '/admin/nock/api/shankpit-sprays'
+
+async function sprreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${SHANKPIT_SPRAYS_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const shankpitSprays = {
+  list: () => sprreq<ShankpitSpray[]>(''),
+  imageUrl: (id: number) => `${SHANKPIT_SPRAYS_BASE}/${id}/image?_=${Date.now()}`,
+  create: (name: string, width: number, height: number, pngBase64: string) =>
+    sprreq<ShankpitSpray>('', { method: 'POST', body: JSON.stringify({ name, width, height, png_base64: pngBase64 }) }),
+  setDefault: (id: number) => sprreq<ShankpitSpray>(`/${id}/default`, { method: 'PATCH' }),
+  delete: (id: number) => sprreq<void>(`/${id}`, { method: 'DELETE' }),
+
+  // exportProjectToSpray -- the real target of the Projects tab's own "Export to Spray" button:
+  // fetches the project's already-rendered composite PNG (the exact same export the "Export PNG"
+  // link downloads) and posts it straight to the sprays registry as a new, independent row.
+  async exportProjectToSpray(projectName: string, width: number, height: number, sprayName: string): Promise<ShankpitSpray> {
+    const res = await fetch(api.exportUrl(projectName, 'png'), { credentials: 'include' })
+    if (!res.ok) throw new Error(`${res.status}: failed to fetch project export`)
+    const blob = await res.blob()
+    const buf = await blob.arrayBuffer()
+    let binary = ''
+    const bytes = new Uint8Array(buf)
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+    const base64 = btoa(binary)
+    return shankpitSprays.create(sprayName, width, height, base64)
+  },
+}
+
 export async function generateProcedural(project: string, name: string, prompt: string): Promise<GenerateResult> {
   const res = await fetch(`${API_BASE}/projects/${enc(project)}/generate`, {
     method: 'POST',
