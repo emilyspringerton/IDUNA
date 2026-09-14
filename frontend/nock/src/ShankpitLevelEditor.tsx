@@ -246,6 +246,7 @@ function Viewport3D({
   const selectedRef = useRef(selected)
   const editModeRef = useRef(editMode)
   const spawnerRef = useRef(spawner)
+  const onSpawnerChangeRef = useRef(onSpawnerChange)
   const constrainYRef = useRef(constrainY)
   const onDragStartRef = useRef(onDragStart)
   const camStateRef = useRef<CameraState>({
@@ -266,6 +267,7 @@ function Viewport3D({
   selectedRef.current = selected
   editModeRef.current = editMode
   spawnerRef.current = spawner
+  onSpawnerChangeRef.current = onSpawnerChange
   constrainYRef.current = constrainY
   onDragStartRef.current = onDragStart
 
@@ -520,6 +522,43 @@ function Viewport3D({
   useEffect(() => {
     spawnerMeshRef.current?.position.set(spawner.x, spawner.y, spawner.z)
   }, [spawner])
+
+  // WASD moves the spawner -- founder real-time: "in the shankpit level editor can you have wasd
+  // move around the spawner?" Camera-relative (matches every FPS/editor convention: W is "toward
+  // what the camera is looking at," not a fixed world axis), horizontal-only (spawner.y is
+  // untouched, same "constrain Y" spirit already established for object dragging). Skips entirely
+  // while a text field has focus so it never steals keystrokes from the level-name/dims/material
+  // inputs elsewhere on this page.
+  useEffect(() => {
+    const SPAWNER_MOVE_STEP = 2
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      const key = e.key.toLowerCase()
+      if (key !== 'w' && key !== 'a' && key !== 's' && key !== 'd') return
+      e.preventDefault()
+      const theta = camStateRef.current.theta
+      // Derived from cameraPositionFrom's own convention (camera sits at
+      // target + radius*(sinTheta, _, cosTheta)) via forward = normalize(target - camera),
+      // right = normalize(cross(forward, up)) -- see this block's own PR description for the
+      // by-hand derivation, verified at theta=0 (forward=(0,0,-1), right=(1,0,0), the standard
+      // "looking down -Z, right is +X" check).
+      const forwardX = -Math.sin(theta)
+      const forwardZ = -Math.cos(theta)
+      const rightX = Math.cos(theta)
+      const rightZ = -Math.sin(theta)
+      let dx = 0
+      let dz = 0
+      if (key === 'w') { dx += forwardX; dz += forwardZ }
+      if (key === 's') { dx -= forwardX; dz -= forwardZ }
+      if (key === 'd') { dx += rightX; dz += rightZ }
+      if (key === 'a') { dx -= rightX; dz -= rightZ }
+      const s = spawnerRef.current
+      onSpawnerChangeRef.current({ x: s.x + dx * SPAWNER_MOVE_STEP, y: s.y, z: s.z + dz * SPAWNER_MOVE_STEP })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   // Level objects (S459-15, "a map is a composition of levels"): a real, non-interactive-for-v0
   // wireframe preview of each placed child level's own footprint (its real width/height/depth,
