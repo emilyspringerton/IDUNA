@@ -52,7 +52,17 @@ const ShaderStandard = "standard"
 // uses, since a light fixture shouldn't itself look dark on its unlit side.
 const ShaderIPSLight = "ips_light"
 
-var validShaderNames = map[string]bool{ShaderStandard: true, ShaderIPSLight: true}
+// ShaderHPSLight -- founder real-time, 2026-09-14: "can you do it again for a high pressure
+// sodium light with a flicker like in this video" (a YouTube link that couldn't actually be
+// fetched/watched from here -- built from well-documented real HPS behavior instead: a dying/
+// cycling HPS bulb repeatedly strikes, brightens, dims, nearly extinguishes, and restrikes over a
+// few real seconds, not a fast strobe). Native side: packages/render/material_shaders.h's own
+// SHADER_HPS_LIGHT -- same real unlit-emissive treatment ShaderIPSLight established, plus a real,
+// animated multi-frequency flicker term and a warm amber/orange sodium-vapor color (real HPS
+// lamps emit an almost-monochromatic yellow-orange, the sodium D line at ~589nm).
+const ShaderHPSLight = "hps_light"
+
+var validShaderNames = map[string]bool{ShaderStandard: true, ShaderIPSLight: true, ShaderHPSLight: true}
 
 // DefaultMaterialName is what a Wall with an empty/unset Material field resolves to -- founder,
 // direct: "the default material is brick because thats the texture of blocks by default." Also

@@ -801,6 +801,7 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
         <select value={shaderName} onChange={(e) => setShaderName(e.target.value)}>
           <option value="standard">standard (Blinn-Phong)</option>
           <option value="ips_light">ips_light (emissive panel)</option>
+          <option value="hps_light">hps_light (flickering sodium lamp)</option>
         </select>
       </label>
       <button type="button" onClick={add} disabled={!name}>
