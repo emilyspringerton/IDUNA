@@ -284,6 +284,75 @@ export const levels = {
   saveGuides: (id: number, guides: Guide[]) => lreq<Level>(`/${id}/guides`, { method: 'PUT', body: JSON.stringify({ guides }) }),
 }
 
+// ---- SHANKPIT NOCK level editor v0 (EMILY/BACKLOG.md SECTION 459, founder real-time: "so v0 it
+// and start working dont worry about the current levels lets just go full level select brawlpit
+// repo exact model for now") ----
+// Wall mirrors SHANKPIT/packages/map/map.h's own real Wall struct exactly (center x/y/z, FULL
+// extents sx/sy/sz -- confirmed against map.c's own collision code, not min/max corners) -- see
+// IDUNA/internal/shankpit/level_store.go's own matching Go struct.
+
+export interface ShankpitWall {
+  id: number
+  x: number
+  y: number
+  z: number
+  sx: number
+  sy: number
+  sz: number
+  r: number
+  g: number
+  b: number
+  friction: number
+}
+
+export interface ShankpitLevel {
+  id: number
+  name: string
+  width: number
+  height: number
+  depth: number
+  walls: ShankpitWall[]
+  created_at: string
+  updated_at: string
+}
+
+export interface ShankpitLevelSummary {
+  id: number
+  name: string
+  width: number
+  height: number
+  depth: number
+  wall_count: number
+  created_at: string
+  updated_at: string
+}
+
+const SHANKPIT_LEVELS_BASE = '/admin/nock/api/shankpit-levels'
+
+async function sreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${SHANKPIT_LEVELS_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const shankpitLevels = {
+  list: () => sreq<ShankpitLevelSummary[]>(''),
+  get: (id: number) => sreq<ShankpitLevel>(`/${id}`),
+  create: (name: string, width: number, height: number, depth: number, walls: ShankpitWall[]) =>
+    sreq<ShankpitLevel>('', { method: 'POST', body: JSON.stringify({ name, width, height, depth, walls }) }),
+  save: (id: number, width: number, height: number, depth: number, walls: ShankpitWall[]) =>
+    sreq<ShankpitLevel>(`/${id}`, { method: 'PUT', body: JSON.stringify({ width, height, depth, walls }) }),
+  rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  delete: (id: number) => sreq<void>(`/${id}`, { method: 'DELETE' }),
+  clone: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
+  exportUrl: (id: number) => `${SHANKPIT_LEVELS_BASE}/${id}/export?_=${Date.now()}`,
+}
+
 export async function generateProcedural(project: string, name: string, prompt: string): Promise<GenerateResult> {
   const res = await fetch(`${API_BASE}/projects/${enc(project)}/generate`, {
     method: 'POST',

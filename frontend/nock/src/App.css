@@ -220,6 +220,19 @@ textarea {
   touch-action: none; /* pointer drag must not trigger scroll/zoom gestures on the canvas */
 }
 
+.shankpit-viewport {
+  @apply cursor-grab rounded border border-line;
+  width: 800px;
+  height: 560px;
+  max-width: 100%;
+  touch-action: none; /* pointer drag must not trigger scroll/zoom gestures on the canvas */
+}
+.shankpit-viewport canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .platform-inspector {
   @apply flex flex-col gap-2;
 }
