@@ -176,6 +176,8 @@ function Viewport3D({
   editMode,
   spawner,
   onSpawnerChange,
+  constrainY,
+  onDragStart,
 }: {
   width: number
   height: number
@@ -190,6 +192,8 @@ function Viewport3D({
   editMode: EditMode
   spawner: { x: number; y: number; z: number }
   onSpawnerChange: (s: { x: number; y: number; z: number }) => void
+  constrainY: boolean
+  onDragStart: () => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -202,6 +206,8 @@ function Viewport3D({
   const selectedRef = useRef(selected)
   const editModeRef = useRef(editMode)
   const spawnerRef = useRef(spawner)
+  const constrainYRef = useRef(constrainY)
+  const onDragStartRef = useRef(onDragStart)
   const camStateRef = useRef<CameraState>({
     target: new THREE.Vector3(0, height / 4, 0),
     radius: Math.max(width, depth, height) * 1.1 + 5,
@@ -220,6 +226,8 @@ function Viewport3D({
   selectedRef.current = selected
   editModeRef.current = editMode
   spawnerRef.current = spawner
+  constrainYRef.current = constrainY
+  onDragStartRef.current = onDragStart
 
   // One-time scene/renderer/camera setup.
   useEffect(() => {
@@ -297,6 +305,16 @@ function Viewport3D({
       return new THREE.Plane().setFromNormalAndCoplanarPoint(normal, point)
     }
 
+    // "i need the blocks to notfly up and down when i drag them around unless i uncheck the
+    // constrain z or y or whatever box" -- a horizontal (Y-up-normal) plane through the object's
+    // current position instead of the camera-facing plane. Intersecting the mouse ray against
+    // this plane keeps the object's Y fixed for the whole drag; only X/Z ever change.
+    const horizontalPlaneThrough = (point: THREE.Vector3) => {
+      return new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), point)
+    }
+    const dragPlaneThrough = (point: THREE.Vector3) =>
+      constrainYRef.current ? horizontalPlaneThrough(point) : cameraFacingPlaneThrough(point)
+
     const onPointerDown = (e: PointerEvent) => {
       container.setPointerCapture(e.pointerId)
       setNdcFromEvent(e)
@@ -312,6 +330,7 @@ function Viewport3D({
           onSelect(wall.id)
           const axisDir = new THREE.Vector3(hit.axis === 'x' ? 1 : 0, hit.axis === 'y' ? 1 : 0, hit.axis === 'z' ? 1 : 0)
           const startT = hits[0].point.clone().dot(axisDir) // coordinate along the axis at the hit point
+          onDragStartRef.current()
           dragRef.current = { mode: 'face', hit, linePoint: hits[0].point.clone(), axisDir, startT, startWall: { ...wall } }
           return
         }
@@ -326,7 +345,7 @@ function Viewport3D({
       if (hits.length > 0) {
         const mesh = hits[0].object as THREE.Mesh
         if (mesh === spawnerMeshRef.current) {
-          const plane = cameraFacingPlaneThrough(mesh.position.clone())
+          const plane = dragPlaneThrough(mesh.position.clone())
           const grabOffset = new THREE.Vector3().subVectors(mesh.position, hits[0].point)
           dragRef.current = { mode: 'move-spawner', plane, grabOffset }
           return
@@ -334,8 +353,9 @@ function Viewport3D({
         const wallIndex = meshesRef.current.indexOf(mesh)
         const wall = wallsRef.current[wallIndex]
         onSelect(wall.id)
-        const plane = cameraFacingPlaneThrough(mesh.position.clone())
+        const plane = dragPlaneThrough(mesh.position.clone())
         const grabOffset = new THREE.Vector3().subVectors(mesh.position, hits[0].point)
+        onDragStartRef.current()
         dragRef.current = { mode: 'move-wall', wallIndex, plane, grabOffset, startWall: { ...wall } }
         return
       }
@@ -541,10 +561,67 @@ export default function ShankpitLevelEditor() {
   const [error, setError] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
   const [editMode, setEditMode] = useState<EditMode>('object')
+  // Constrain Y while dragging in object mode -- founder real-time: "i need the blocks to notfly
+  // up and down when i drag them around unless i uncheck the constrain z or y or whatever box" /
+  // "thats really important." Checked (constrained) by default -- dragging a cube glides it along
+  // its own current height instead of free 3D movement, so leveling walls to the ground doesn't
+  // require fighting the drag plane.
+  const [constrainY, setConstrainY] = useState(true)
   // The spawner is deliberately NOT level data -- a per-session authoring convenience only (see
   // Viewport3D's own doc comment on the spawner mesh), so it isn't part of `draft`/persisted with
   // the level; it just resets to a sensible default on new/load.
   const [spawner, setSpawner] = useState(defaultSpawnerPos())
+
+  // Undo/redo (founder real-time: "I ALSO NEED REDO... thats really important"). A plain, real
+  // history-stack of past draft snapshots -- deliberately NOT Redux: this app has an explicit,
+  // already-established "no framework beyond React itself for a v0 this small" precedent
+  // (NOCK_NORTHSTAR.md's own real "no Redux" call, matching LevelEditor.tsx's own doc comment),
+  // and undo/redo needs nothing Redux provides that a plain array + two setState calls doesn't
+  // already give here. draftRef mirrors the established wallsRef/selectedRef pattern elsewhere in
+  // this file -- lets pushHistory (passed into Viewport3D's own one-time-setup effect) always read
+  // the CURRENT draft at call time without needing the callback reference itself to be stable.
+  const [history, setHistory] = useState<typeof draft[]>([])
+  const [future, setFuture] = useState<typeof draft[]>([])
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+
+  const pushHistory = useCallback(() => {
+    setHistory((h) => [...h, draftRef.current])
+    setFuture([])
+  }, [])
+
+  const undo = useCallback(() => {
+    setHistory((h) => {
+      if (h.length === 0) return h
+      const prev = h[h.length - 1]
+      setFuture((f) => [draftRef.current, ...f])
+      setDraft(prev)
+      setDirty(true)
+      return h.slice(0, -1)
+    })
+  }, [])
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f
+      const next = f[0]
+      setHistory((h) => [...h, draftRef.current])
+      setDraft(next)
+      setDirty(true)
+      return f.slice(1)
+    })
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return
+      e.preventDefault()
+      if (e.shiftKey) redo()
+      else undo()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [undo, redo])
 
   const load = useCallback(async (id: number) => {
     const lvl = await shankpitLevels.get(id)
@@ -579,6 +656,7 @@ export default function ShankpitLevelEditor() {
   }
 
   const addCube = () => {
+    pushHistory()
     const id = nextWallId(draft.walls)
     // Spawns at the spawner's own current position, not a fixed default -- founder real-time:
     // "fixes the problem of cubes spawning on eachother you can move the cube spawner if you are
@@ -589,6 +667,7 @@ export default function ShankpitLevelEditor() {
 
   const deleteSelected = () => {
     if (selected === null) return
+    pushHistory()
     setWalls(draft.walls.filter((w) => w.id !== selected))
     setSelected(null)
   }
@@ -755,6 +834,18 @@ export default function ShankpitLevelEditor() {
               Face mode
             </button>
           </div>
+          <label className="constrain-y">
+            <input type="checkbox" checked={constrainY} onChange={(e) => setConstrainY(e.target.checked)} />{' '}
+            Constrain Y while dragging
+          </label>
+          <div className="mode-toggle">
+            <button type="button" onClick={undo} disabled={history.length === 0} title="Undo (Ctrl+Z)">
+              Undo
+            </button>
+            <button type="button" onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Shift+Z)">
+              Redo
+            </button>
+          </div>
           <button type="button" onClick={addCube}>
             + Add cube
           </button>
@@ -794,6 +885,8 @@ export default function ShankpitLevelEditor() {
               editMode={editMode}
               spawner={spawner}
               onSpawnerChange={setSpawner}
+              constrainY={constrainY}
+              onDragStart={pushHistory}
             />
             <p className="hint">
               Drag empty space to orbit, scroll to zoom.{' '}

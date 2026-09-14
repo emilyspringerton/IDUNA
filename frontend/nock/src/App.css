@@ -230,6 +230,10 @@ textarea {
   @apply border-gold bg-gold text-[#1a1509];
 }
 
+.constrain-y {
+  @apply flex items-center gap-1 text-muted text-sm;
+}
+
 .shankpit-viewport {
   @apply cursor-grab rounded border border-line;
   width: 800px;
