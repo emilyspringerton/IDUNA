@@ -40,12 +40,19 @@ type Material struct {
 
 // ShaderStandard is the one real, built-in shader VS0 ships (a real Blinn-Phong specular-
 // highlight pass, see apps/lobby's own material_shaders.h) -- the default for every material
-// unless/until more named shaders exist (founder: "vs0 are any correct real shaders" / VS1's own
-// named, deferred emissive-light material is a real future ShaderName this same registry will
-// grow to hold, not built yet).
+// unless/until more named shaders exist (founder: "vs0 are any correct real shaders").
 const ShaderStandard = "standard"
 
-var validShaderNames = map[string]bool{ShaderStandard: true}
+// ShaderIPSLight -- founder real-time, 2026-09-14: "can we design a material for an IPS light its
+// going to need a special shader build it in." The real, no-longer-deferred emissive-light
+// material this file's own comment above used to name as future work. Native side:
+// packages/render/material_shaders.h's own SHADER_IPS_LIGHT -- a real, unlit emissive pass (skips
+// the normal per-face day/night darkening entirely, draws a bright, mostly lighting-independent
+// glow) instead of the additive specular-highlight-on-top-of-lit-color treatment ShaderStandard
+// uses, since a light fixture shouldn't itself look dark on its unlit side.
+const ShaderIPSLight = "ips_light"
+
+var validShaderNames = map[string]bool{ShaderStandard: true, ShaderIPSLight: true}
 
 // DefaultMaterialName is what a Wall with an empty/unset Material field resolves to -- founder,
 // direct: "the default material is brick because thats the texture of blocks by default." Also

@@ -342,15 +342,15 @@ async function mreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
 
 export const shankpitMaterials = {
   list: () => mreq<ShankpitMaterial[]>(''),
-  create: (name: string, specular: number, shininess: number, textureId: number | null) =>
+  create: (name: string, specular: number, shininess: number, textureId: number | null, shaderName: string = 'standard') =>
     mreq<ShankpitMaterial>('', {
       method: 'POST',
-      body: JSON.stringify({ name, specular, shininess, texture_id: textureId, shader_name: 'standard' }),
+      body: JSON.stringify({ name, specular, shininess, texture_id: textureId, shader_name: shaderName }),
     }),
-  update: (id: number, specular: number, shininess: number, textureId: number | null) =>
+  update: (id: number, specular: number, shininess: number, textureId: number | null, shaderName: string = 'standard') =>
     mreq<ShankpitMaterial>(`/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ specular, shininess, texture_id: textureId, shader_name: 'standard' }),
+      body: JSON.stringify({ specular, shininess, texture_id: textureId, shader_name: shaderName }),
     }),
   delete: (id: number) => mreq<void>(`/${id}`, { method: 'DELETE' }),
 }

@@ -757,13 +757,14 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
   const [name, setName] = useState('')
   const [specular, setSpecular] = useState(0.05)
   const [shininess, setShininess] = useState(8)
+  const [shaderName, setShaderName] = useState('standard')
   const [error, setError] = useState<string | null>(null)
 
   const add = async () => {
     if (!name) return
     setError(null)
     try {
-      await shankpitMaterials.create(name, specular, shininess, null)
+      await shankpitMaterials.create(name, specular, shininess, null, shaderName)
       setName('')
       refresh()
     } catch (err) {
@@ -779,12 +780,9 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
           <li key={m.id}>
             <div className="material-panel-row">
               <span className="material-panel-title">{m.name}</span>
-              <button className="danger material-panel-delete" type="button" onClick={() => shankpitMaterials.delete(m.id).then(refresh)}>
-                Delete
-              </button>
             </div>
             <span className="hint">
-              spec {m.specular}, shin {m.shininess}
+              spec {m.specular}, shin {m.shininess}, shader {m.shader_name}
             </span>
           </li>
         ))}
@@ -797,6 +795,13 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
       <label>
         Shininess{' '}
         <input type="number" min={1} max={256} step={1} value={shininess} onChange={(e) => setShininess(Number(e.target.value))} />
+      </label>
+      <label>
+        Shader{' '}
+        <select value={shaderName} onChange={(e) => setShaderName(e.target.value)}>
+          <option value="standard">standard (Blinn-Phong)</option>
+          <option value="ips_light">ips_light (emissive panel)</option>
+        </select>
       </label>
       <button type="button" onClick={add} disabled={!name}>
         + Add material

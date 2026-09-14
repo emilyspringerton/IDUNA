@@ -105,10 +105,6 @@ header h1 {
   @apply font-semibold text-ink;
 }
 
-.material-panel-delete {
-  @apply btn-xs shrink-0;
-}
-
 .new-project-form {
   @apply mt-4 flex flex-col gap-2;
 }
