@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-14
+- fix: materials panel lost material names (over-nested flex+truncate collapsed the name span) -- flattened to a simple title-row + hint-line structure (sess-20260905-0720-ec33e7c5)
 - fix: SHANKPIT level editor toolbar alignment + contrast -- .project-header/.dims got real flex-wrap (was squeezing controls, cutting off button text), --color-muted bumped 60%->78% opacity, materials list rows restructured as real cards (sess-20260905-0720-ec33e7c5)
 - feat: NOCK now runs daisyUI (cupcake light / dracula dark, both stock+colorful, OS-aware with a manual toggle) -- existing semantic color tokens alias daisyUI's real theme variables so every page re-themes for free; new docs/NOCK_STYLE_GUIDE.md (sess-20260905-0720-ec33e7c5)
 - feat: SHANKPIT sprays -- real registry (shankpit_sprays), Export to Spray button on the Projects tab, a Sprays tab to set the one real global default; native menu + T-key wall decals deliberately deferred (sess-20260905-0720-ec33e7c5)
