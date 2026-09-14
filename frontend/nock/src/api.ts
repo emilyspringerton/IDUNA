@@ -303,6 +303,56 @@ export interface ShankpitWall {
   g: number
   b: number
   friction: number
+  // material (S459-16, founder real-time: "i think it makes sense to abstract into material
+  // first so it cleanly translates into papercraft ... the default material is brick") -- empty
+  // resolves to "brick" server-side (see internal/shankpit.DefaultMaterialName), matching every
+  // pre-S459-16 wall's own real, existing data (no "material" key at all).
+  material?: string
+}
+
+// ShankpitMaterial mirrors IDUNA/internal/shankpit.Material exactly (S459-16, founder real-time:
+// "we will need the ability to add new materials and set their textures" / "registries for
+// everything"). shader_name is a real, named reference into SHANKPIT's own compiled-in shader
+// registry (packages/render/material_shaders.h) -- NEVER GLSL source stored here (founder: "build
+// the shaders in to the native and then refer to the shaders from NOCK directly ... for now it
+// will just be like the ffi names").
+export interface ShankpitMaterial {
+  id: number
+  name: string
+  shader_name: string
+  texture_id?: number
+  specular: number
+  shininess: number
+  created_at: string
+  updated_at: string
+}
+
+const SHANKPIT_MATERIALS_BASE = '/admin/nock/api/shankpit-materials'
+
+async function mreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${SHANKPIT_MATERIALS_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const shankpitMaterials = {
+  list: () => mreq<ShankpitMaterial[]>(''),
+  create: (name: string, specular: number, shininess: number, textureId: number | null) =>
+    mreq<ShankpitMaterial>('', {
+      method: 'POST',
+      body: JSON.stringify({ name, specular, shininess, texture_id: textureId, shader_name: 'standard' }),
+    }),
+  update: (id: number, specular: number, shininess: number, textureId: number | null) =>
+    mreq<ShankpitMaterial>(`/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ specular, shininess, texture_id: textureId, shader_name: 'standard' }),
+    }),
+  delete: (id: number) => mreq<void>(`/${id}`, { method: 'DELETE' }),
 }
 
 // SHANKPIT_GRID_CELL_SIZE is the real, fixed, constant world-unit size of one ground-plane grid

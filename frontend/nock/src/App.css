@@ -67,6 +67,14 @@ header h1 {
   @apply bg-gold text-[#1a1509];
 }
 
+.material-panel {
+  @apply flex flex-col gap-2;
+}
+
+.material-panel li {
+  @apply flex items-center justify-between gap-2;
+}
+
 .new-project-form {
   @apply mt-4 flex flex-col gap-2;
 }

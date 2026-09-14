@@ -40,6 +40,13 @@ type Wall struct {
 	G        float64 `json:"g"`
 	B        float64 `json:"b"`
 	Friction float64 `json:"friction"`
+	// Material (S459-16, founder real-time: "i would get a lot of value from being able to change
+	// their texture - i think it makes sense to abstract into material first" / "the default
+	// material is brick"). A plain name resolved against shankpit_materials at export time (see
+	// materialsForExport) -- empty means DefaultMaterialName ("brick"), matching every pre-
+	// S459-16 level's own real, existing walls_json rows (which have no "material" key at all)
+	// without needing a migration to backfill them.
+	Material string `json:"material,omitempty"`
 }
 
 // LevelObject is a level placed as a child object inside another level -- the "map" primitive,
@@ -143,6 +150,25 @@ type ExportDoc struct {
 	GroundPlaneEnabled bool    `json:"ground_plane_enabled"`
 	GroundPlaneSquares int     `json:"ground_plane_squares"`
 	Walls              []Wall  `json:"walls"`
+	// Materials (S459-16) -- every real, currently-defined material's own shading parameters,
+	// embedded directly so the native loader gets everything it needs from ONE fetch (no second
+	// round-trip to a separate materials endpoint just to render a level). See
+	// materialsForExport's own doc comment for exactly what "TextureURL" means here.
+	Materials []MaterialExport `json:"materials,omitempty"`
+}
+
+// MaterialExport is the real, native-loader-facing shape of a material -- narrower than Material
+// (no id/timestamps), matching every other ExportDoc field's own "narrower than the DB row"
+// convention. TextureURL is a real, absolute URL into NOCK's own texture image endpoint when the
+// material has a texture_id set, but see this package's own doc comment: the native client does
+// not fetch/decode it yet (no image codec) -- it is real, present data for the day that lands,
+// not dead weight kept "just in case."
+type MaterialExport struct {
+	Name       string  `json:"name"`
+	ShaderName string  `json:"shader_name"`
+	Specular   float64 `json:"specular"`
+	Shininess  float64 `json:"shininess"`
+	TextureURL string  `json:"texture_url,omitempty"`
 }
 
 var validLevelName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,63}$`)
@@ -198,6 +224,11 @@ func validateWalls(walls []Wall) error {
 // LevelStore is the real SQLite-backed CRUD layer.
 type LevelStore struct {
 	DB *sql.DB
+	// Materials resolves each exported wall's own Material name into real shading parameters
+	// (S459-16) -- nil is a real, valid, "materials feature not wired up" state (e.g. an older
+	// caller/test that doesn't need it): Export falls back to embedding no Materials array at all
+	// rather than panicking, and the native client's own DefaultMaterialName fallback covers it.
+	Materials *MaterialStore
 }
 
 // CreateLevel inserts a new, real, independent level row. A level may start with zero walls (v0's
@@ -512,9 +543,41 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	for i := range walls {
 		walls[i].ID = i + 1 // renumbered sequentially -- see flattenObjects' own doc comment on why wall IDs are safe to reassign
 	}
+	materials, err := s.materialsForExport(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares,
-		Walls: walls,
+		Walls: walls, Materials: materials,
 	}, nil
+}
+
+// materialsForExport embeds every real, currently-defined material (S459-16) directly into the
+// export document -- every material, not just the ones this particular level's own walls
+// reference, since the real set stays small (a handful, not hundreds) and this way the native
+// client always has the FULL real registry from one fetch, matching the founder's own "registries
+// for everything" direction, without needing a second round-trip to a separate materials endpoint
+// (also real and live, see shankpit_materials.go's own public handler, for a caller that wants
+// just the registry on its own). s.Materials == nil (an older test/caller that never wired a
+// MaterialStore in) is a real, valid state -- returns an empty slice, not an error; the native
+// loader's own DefaultMaterialName fallback covers a level exported without any materials array.
+func (s *LevelStore) materialsForExport(ctx context.Context) ([]MaterialExport, error) {
+	if s.Materials == nil {
+		return nil, nil
+	}
+	mats, err := s.Materials.ListMaterials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: list materials for export: %w", err)
+	}
+	out := make([]MaterialExport, 0, len(mats))
+	for _, m := range mats {
+		me := MaterialExport{Name: m.Name, ShaderName: m.ShaderName, Specular: m.Specular, Shininess: m.Shininess}
+		if m.TextureID != nil {
+			me.TextureURL = fmt.Sprintf("/admin/nock/api/textures/%d/image", *m.TextureID)
+		}
+		out = append(out, me)
+	}
+	return out, nil
 }

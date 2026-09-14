@@ -653,7 +653,8 @@ func main() {
 	// level editor immediately above (admin-gated CRUD + a separate public read-only mirror), one
 	// game later. Own real package/table (internal/shankpit), not folded into internal/nock,
 	// same design principle that already keeps NOCK un-coupled from any one specific game.
-	shankpitLevelStore := &shankpit.LevelStore{DB: db}
+	shankpitMaterialStore := &shankpit.MaterialStore{DB: db}
+	shankpitLevelStore := &shankpit.LevelStore{DB: db, Materials: shankpitMaterialStore}
 	shankpitLevelsH := &handlers.ShankpitLevelsHandler{Store: shankpitLevelStore}
 	shankpitLevelsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitLevelsH))
 	mux.Handle("/admin/nock/api/shankpit-levels", shankpitLevelsProtected)
@@ -662,6 +663,17 @@ func main() {
 	shankpitLevelsPublicH := &handlers.ShankpitLevelsPublicHandler{Store: shankpitLevelStore}
 	mux.Handle("/api/v1/shankpit-levels", shankpitLevelsPublicH)
 	mux.Handle("/api/v1/shankpit-levels/", shankpitLevelsPublicH)
+
+	// S459-16, founder real-time: "we will need the ability to add new materials and set their
+	// textures" / "registries for everything" -- same real admin-CRUD-plus-public-registry split
+	// as levels immediately above.
+	shankpitMaterialsH := &handlers.ShankpitMaterialsHandler{Store: shankpitMaterialStore}
+	shankpitMaterialsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitMaterialsH))
+	mux.Handle("/admin/nock/api/shankpit-materials", shankpitMaterialsProtected)
+	mux.Handle("/admin/nock/api/shankpit-materials/", shankpitMaterialsProtected)
+
+	shankpitMaterialsPublicH := &handlers.ShankpitMaterialsPublicHandler{Store: shankpitMaterialStore}
+	mux.Handle("/api/v1/shankpit-materials", shankpitMaterialsPublicH)
 
 	// S420, founder real-time: "lets make a checkpoint registry so we can train from multiple
 	// locations and then we can add checkpoints from colab?" -- a real, remote, shared RL

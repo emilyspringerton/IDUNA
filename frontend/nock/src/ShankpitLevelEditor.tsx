@@ -3,8 +3,10 @@ import * as THREE from 'three'
 import {
   SHANKPIT_GRID_CELL_SIZE,
   shankpitLevels,
+  shankpitMaterials,
   type ShankpitLevelObject,
   type ShankpitLevelSummary,
+  type ShankpitMaterial,
   type ShankpitWall,
 } from './api'
 
@@ -164,6 +166,19 @@ function useLevelList() {
     refresh()
   }, [refresh])
   return { list, refresh }
+}
+
+// useMaterialList -- S459-16, founder real-time: "we will need the ability to add new materials
+// and set their textures" / "registries for everything". Same real shape as useLevelList above.
+function useMaterialList() {
+  const [materials, setMaterials] = useState<ShankpitMaterial[]>([])
+  const refresh = useCallback(() => {
+    shankpitMaterials.list().then(setMaterials).catch(() => setMaterials([]))
+  }, [])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+  return { materials, refresh }
 }
 
 interface CameraState {
@@ -589,7 +604,17 @@ function Viewport3D({
   return <div ref={containerRef} className="shankpit-viewport" />
 }
 
-function WallInspector({ wall, onChange, onDelete }: { wall: ShankpitWall; onChange: (w: ShankpitWall) => void; onDelete: () => void }) {
+function WallInspector({
+  wall,
+  onChange,
+  onDelete,
+  materials,
+}: {
+  wall: ShankpitWall
+  onChange: (w: ShankpitWall) => void
+  onDelete: () => void
+  materials: ShankpitMaterial[]
+}) {
   const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
   const field = (label: string, key: keyof ShankpitWall, opts: { min?: number; step?: number } = {}) => (
     <label>
@@ -606,6 +631,17 @@ function WallInspector({ wall, onChange, onDelete }: { wall: ShankpitWall; onCha
   return (
     <div className="platform-inspector">
       <h3>Selected cube</h3>
+      <label>
+        Material{' '}
+        <select value={wall.material || 'brick'} onChange={(e) => onChange({ ...wall, material: e.target.value })}>
+          {materials.length === 0 && <option value="brick">brick</option>}
+          {materials.map((m) => (
+            <option key={m.id} value={m.name}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+      </label>
       {field('X', 'x')}
       {field('Y', 'y')}
       {field('Z', 'z')}
@@ -672,8 +708,65 @@ function ObjectInspector({
   )
 }
 
+// MaterialsPanel -- S459-16, founder real-time: "we will need the ability to add new materials
+// and set their textures" / "we will be able to add materials via Nock and set the texture of
+// the material from the texture library." Texture-override picking from NOCK's own texture
+// library is real, deliberate follow-up (this panel edits specular/shininess -- the real, working
+// VS0 shading parameters -- and leaves texture_id null, meaning "use the native procedural
+// default for this name"); named here, not silently promised.
+function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[]; refresh: () => void }) {
+  const [name, setName] = useState('')
+  const [specular, setSpecular] = useState(0.05)
+  const [shininess, setShininess] = useState(8)
+  const [error, setError] = useState<string | null>(null)
+
+  const add = async () => {
+    if (!name) return
+    setError(null)
+    try {
+      await shankpitMaterials.create(name, specular, shininess, null)
+      setName('')
+      refresh()
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
+  return (
+    <aside className="project-list material-panel">
+      <h2>Materials</h2>
+      <ul>
+        {materials.map((m) => (
+          <li key={m.id}>
+            <span>
+              {m.name} <span className="hint">(spec {m.specular}, shin {m.shininess})</span>
+            </span>
+            <button className="danger" type="button" onClick={() => shankpitMaterials.delete(m.id).then(refresh)}>
+              x
+            </button>
+          </li>
+        ))}
+      </ul>
+      <input placeholder="new material name" value={name} onChange={(e) => setName(e.target.value)} />
+      <label>
+        Specular{' '}
+        <input type="number" min={0} max={1} step={0.05} value={specular} onChange={(e) => setSpecular(Number(e.target.value))} />
+      </label>
+      <label>
+        Shininess{' '}
+        <input type="number" min={1} max={256} step={1} value={shininess} onChange={(e) => setShininess(Number(e.target.value))} />
+      </label>
+      <button type="button" onClick={add} disabled={!name}>
+        + Add material
+      </button>
+      {error && <span className="error">{error}</span>}
+    </aside>
+  )
+}
+
 export default function ShankpitLevelEditor() {
   const { list, refresh } = useLevelList()
+  const { materials, refresh: refreshMaterials } = useMaterialList()
   const [activeId, setActiveId] = useState<number | null>(null)
   const [draft, setDraft] = useState(newDefaultLevel())
   const [selected, setSelected] = useState<number | null>(null)
@@ -902,6 +995,8 @@ export default function ShankpitLevelEditor() {
         </button>
       </aside>
 
+      <MaterialsPanel materials={materials} refresh={refreshMaterials} />
+
       <main>
         <div className="project-header">
           <input
@@ -1079,6 +1174,7 @@ export default function ShankpitLevelEditor() {
                   setWalls(next)
                 }}
                 onDelete={deleteSelected}
+                materials={materials}
               />
             ) : (
               <p className="hint">Select a cube to edit its exact position/size, or add a new one.</p>
