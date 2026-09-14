@@ -27,6 +27,7 @@ func newTestStore(t *testing.T) *shankpit.LevelStore {
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			objects_json TEXT NOT NULL DEFAULT '[]',
+			is_default_queue BOOLEAN NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
@@ -209,6 +210,49 @@ func TestDeleteLevel(t *testing.T) {
 	}
 	if _, err := s.GetLevel(context.Background(), created.ID); err == nil {
 		t.Fatal("expected level to be gone after delete")
+	}
+}
+
+func TestSetDefaultQueueLevel_ExactlyOneDefault(t *testing.T) {
+	s := newTestStore(t)
+	a, err := s.CreateLevel(context.Background(), "A", 100, 50, 100, true, 2, nil, nil)
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	b, err := s.CreateLevel(context.Background(), "B", 100, 50, 100, true, 2, nil, nil)
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if _, err := s.SetDefaultQueueLevel(context.Background(), a.ID); err != nil {
+		t.Fatalf("set default a: %v", err)
+	}
+	aAfter, _ := s.GetLevel(context.Background(), a.ID)
+	if !aAfter.IsDefaultQueue {
+		t.Fatal("expected level A to be the default queue level")
+	}
+	if _, err := s.SetDefaultQueueLevel(context.Background(), b.ID); err != nil {
+		t.Fatalf("set default b: %v", err)
+	}
+	aAfter2, _ := s.GetLevel(context.Background(), a.ID)
+	bAfter, _ := s.GetLevel(context.Background(), b.ID)
+	if aAfter2.IsDefaultQueue {
+		t.Fatal("expected level A to no longer be the default queue level after B was set")
+	}
+	if !bAfter.IsDefaultQueue {
+		t.Fatal("expected level B to be the default queue level")
+	}
+	list, err := s.ListLevels(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	defaultCount := 0
+	for _, l := range list {
+		if l.IsDefaultQueue {
+			defaultCount++
+		}
+	}
+	if defaultCount != 1 {
+		t.Fatalf("expected exactly 1 default queue level in list, got %d", defaultCount)
 	}
 }
 

@@ -52,6 +52,8 @@ func (h *ShankpitLevelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.clone(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "export" && r.Method == http.MethodGet:
 		h.export(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "default-queue" && r.Method == http.MethodPatch:
+		h.setDefaultQueue(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -159,6 +161,23 @@ func (h *ShankpitLevelsHandler) rename(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	lvl, err := h.Store.RenameLevel(r.Context(), id, req.Name)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, lvl)
+}
+
+// setDefaultQueue is the real S459-41 endpoint (founder: "need to add an option to shankpit
+// levels to set a level as default for queue") -- mirrors ShankpitSpraysHandler's own
+// setDefault exactly.
+func (h *ShankpitLevelsHandler) setDefaultQueue(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseShankpitLevelID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	lvl, err := h.Store.SetDefaultQueueLevel(r.Context(), id)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return

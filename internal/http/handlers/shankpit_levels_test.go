@@ -32,6 +32,7 @@ func newShankpitLevelsTestStore(t *testing.T) *shankpit.LevelStore {
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			objects_json TEXT NOT NULL DEFAULT '[]',
+			is_default_queue BOOLEAN NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)

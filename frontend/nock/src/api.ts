@@ -408,6 +408,10 @@ export interface ShankpitLevel {
   ground_plane_squares: number
   walls: ShankpitWall[]
   objects: ShankpitLevelObject[]
+  // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
+  // set a level as default for queue") -- exactly one level is the real, global QUEUE default at
+  // a time, same real shape ShankpitSpray's own is_default already uses.
+  is_default_queue: boolean
   created_at: string
   updated_at: string
 }
@@ -422,6 +426,7 @@ export interface ShankpitLevelSummary {
   ground_plane_squares: number
   wall_count: number
   object_count: number
+  is_default_queue: boolean
   created_at: string
   updated_at: string
 }
@@ -491,6 +496,7 @@ export const shankpitLevels = {
   delete: (id: number) => sreq<void>(`/${id}`, { method: 'DELETE' }),
   clone: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
   exportUrl: (id: number) => `${SHANKPIT_LEVELS_BASE}/${id}/export?_=${Date.now()}`,
+  setDefaultQueue: (id: number) => sreq<ShankpitLevel>(`/${id}/default-queue`, { method: 'PATCH' }),
 }
 
 // ---- SHANKPIT sprays (S459-19, founder real-time: "can we implement sprays? ... export to spray

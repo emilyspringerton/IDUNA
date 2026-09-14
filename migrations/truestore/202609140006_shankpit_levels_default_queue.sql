@@ -1,0 +1,14 @@
+-- SHANKPIT levels: real "default for QUEUE" flag (S459-41, founder real-time: "change default
+-- queue map to NEWPIT ... need to add an option to shankpit levels to set a level as default for
+-- queue"). Exactly one level may be the real, global QUEUE default at a time -- same real
+-- "exactly one row flagged, enforced in Go inside one transaction" shape
+-- 202609140005_shankpit_sprays.sql already established for is_default (SQLite has no real
+-- partial-unique-index equivalent this codebase already leans on elsewhere).
+--
+-- Real, deliberate scope match to S459-38/39's own current QUEUE integration: this replaces the
+-- hardcoded QUEUE_DEFAULT_LEVEL_NAME="44" name-lookup on both the SHANKPIT server
+-- (queue_activate_match) and client (client_load_queue_level) with a real, admin-settable flag,
+-- discoverable through the existing real, public GET /api/v1/shankpit-levels list endpoint (no
+-- new endpoint needed for the native game binary to find it -- it already fetches that same list
+-- to resolve a level by name).
+ALTER TABLE shankpit_levels ADD COLUMN is_default_queue BOOLEAN NOT NULL DEFAULT 0;

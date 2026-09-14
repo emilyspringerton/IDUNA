@@ -133,8 +133,15 @@ type Level struct {
 	GroundPlaneSquares int           `json:"ground_plane_squares"`
 	Walls              []Wall        `json:"walls"`
 	Objects            []LevelObject `json:"objects"`
-	CreatedAt          string        `json:"created_at"`
-	UpdatedAt          string        `json:"updated_at"`
+	// IsDefaultQueue (S459-41, founder real-time: "need to add an option to shankpit levels to
+	// set a level as default for queue") -- exactly one level may be the real, global QUEUE
+	// default at a time, same real shape shankpit_sprays.IsDefault already established. The
+	// native SHANKPIT game server/client both discover this through the ordinary, already-public
+	// level LIST endpoint (no name-lookup, no new endpoint) -- see SetDefaultQueueLevel's own doc
+	// comment for the real enforcement.
+	IsDefaultQueue bool   `json:"is_default_queue"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 // ExportDoc is the real, native-loader-facing shape (SHANKPIT's own real physics.h `Box`/
@@ -278,7 +285,7 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
@@ -286,7 +293,7 @@ func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
 	var wallsJSON, objectsJSON string
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
@@ -313,6 +320,7 @@ type LevelSummary struct {
 	GroundPlaneSquares int     `json:"ground_plane_squares"`
 	WallCount          int     `json:"wall_count"`
 	ObjectCount        int     `json:"object_count"`
+	IsDefaultQueue     bool    `json:"is_default_queue"`
 	CreatedAt          string  `json:"created_at"`
 	UpdatedAt          string  `json:"updated_at"`
 }
@@ -321,7 +329,7 @@ type LevelSummary struct {
 // level-select registry primitive this section exists to build.
 func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: list levels: %w", err)
@@ -332,7 +340,7 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	for rows.Next() {
 		var sum LevelSummary
 		var wallsJSON, objectsJSON string
-		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
+		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &sum.IsDefaultQueue, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("shankpit: list levels: %w", err)
 		}
 		var walls []Wall
@@ -404,6 +412,32 @@ func (s *LevelStore) RenameLevel(ctx context.Context, id int64, newName string) 
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, fmt.Errorf("shankpit: level %d not found", id)
+	}
+	return s.GetLevel(ctx, id)
+}
+
+// SetDefaultQueueLevel marks id as the one real, global QUEUE default level, clearing every other
+// row's own flag inside one transaction -- founder: "need to add an option to shankpit levels to
+// set a level as default for queue." Same real "exactly one default, enforced in Go, no SQL
+// partial-unique-index" pattern SetDefaultSpray already established.
+func (s *LevelStore) SetDefaultQueueLevel(ctx context.Context, id int64) (*Level, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: set default queue level: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE shankpit_levels SET is_default_queue = 0`); err != nil {
+		return nil, fmt.Errorf("shankpit: set default queue level: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE shankpit_levels SET is_default_queue = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: set default queue level: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("shankpit: level %d not found", id)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("shankpit: set default queue level: %w", err)
 	}
 	return s.GetLevel(ctx, id)
 }

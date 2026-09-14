@@ -1035,6 +1035,23 @@ export default function ShankpitLevelEditor() {
               <button onClick={() => load(l.id)}>
                 {l.name} <span className="hint">({l.wall_count} cubes)</span>
               </button>
+              {/* S459-41, founder real-time: "need to add an option to shankpit levels to set a
+                  level as default for queue" -- exactly one level is the real, global QUEUE
+                  default at a time, same real shape Sprays.tsx's own "Set as default" already
+                  uses. */}
+              {l.is_default_queue ? (
+                <span className="hint">QUEUE default</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await shankpitLevels.setDefaultQueue(l.id)
+                    refresh()
+                  }}
+                >
+                  Set as QUEUE default
+                </button>
+              )}
             </li>
           ))}
         </ul>
