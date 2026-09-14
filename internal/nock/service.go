@@ -382,11 +382,14 @@ func (s *Service) ClearMask(projectName, layerName string) (*Project, error) {
 	return p, nil
 }
 
-// AdjustHueSaturation applies a destructive brightness/saturation/hue adjustment to a layer's
-// own stored image (percentages, ImageMagick -modulate semantics: 100 = unchanged on each
-// axis). Destructive (unlike opacity) because, unlike opacity, there's no cheap way to keep it
-// non-destructive without a second stored "adjustment layer" concept — real, honest, named
-// future work in docs/NOCK_NORTHSTAR.md, not silently pretended away.
+// AdjustHueSaturation sets a layer's own real brightness/saturation/hue adjustment (percentages,
+// ImageMagick -modulate semantics: 100 = unchanged on each axis) as METADATA, not a destructive
+// bake (S416-04, "a real adjustment-layer concept instead of baking hue/saturation/sharpen
+// destructively into the stored file" -- v0's own real, honest, previously-named future work).
+// The layer's own stored PNG is never touched here; Export applies the real, current values to a
+// disposable working copy at composite time, so calling this again with different numbers always
+// starts from the same real original, not an already-adjusted image, and there's no cumulative
+// quality loss from repeated re-tuning.
 func (s *Service) AdjustHueSaturation(projectName, layerName string, brightnessPct, saturationPct, huePct int) (*Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -398,18 +401,21 @@ func (s *Service) AdjustHueSaturation(projectName, layerName string, brightnessP
 	if err != nil {
 		return nil, err
 	}
-	abs, err := s.layerAbsPath(projectName, p.Layers[idx].File)
-	if err != nil {
-		return nil, err
-	}
-	if err := imModulate(abs, abs, brightnessPct, saturationPct, huePct); err != nil {
+	p.Layers[idx].Brightness = brightnessPct
+	p.Layers[idx].Saturation = saturationPct
+	p.Layers[idx].Hue = huePct
+	if err := s.saveManifest(p); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-// Sharpen applies a destructive unsharp-mask sharpen to a layer's own stored image.
+// Sharpen sets a layer's own real unsharp-mask parameters as METADATA, same real non-destructive
+// shape AdjustHueSaturation above just established -- see that method's own doc comment.
 func (s *Service) Sharpen(projectName, layerName string, radius, sigma, amount float64) (*Project, error) {
+	if radius < 0 || sigma < 0 || amount < 0 {
+		return nil, fmt.Errorf("nock: sharpen radius/sigma/amount must be >= 0")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, err := s.loadManifest(projectName)
@@ -420,11 +426,10 @@ func (s *Service) Sharpen(projectName, layerName string, radius, sigma, amount f
 	if err != nil {
 		return nil, err
 	}
-	abs, err := s.layerAbsPath(projectName, p.Layers[idx].File)
-	if err != nil {
-		return nil, err
-	}
-	if err := imSharpen(abs, abs, radius, sigma, amount); err != nil {
+	p.Layers[idx].SharpenRadius = radius
+	p.Layers[idx].SharpenSigma = sigma
+	p.Layers[idx].SharpenAmount = amount
+	if err := s.saveManifest(p); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -501,6 +506,24 @@ func (s *Service) Export(projectName, outPath, backgroundHex string) error {
 			return err
 		}
 		working := abs
+		// Real, non-destructive hue/saturation/sharpen (S416-04) -- applied to a disposable
+		// working copy here, every export, never baked back into the layer's own stored file
+		// (l.File / abs above). Skips the extra convert invocations entirely for the very common
+		// "never adjusted" case (EffectiveBrightness/Saturation/Hue all 100, HasSharpen false).
+		if l.EffectiveBrightness() != 100 || l.EffectiveSaturation() != 100 || l.EffectiveHue() != 100 {
+			modOut := filepath.Join(tmpDir, fmt.Sprintf("layer-%d-modulate.png", i))
+			if err := imModulate(working, modOut, l.EffectiveBrightness(), l.EffectiveSaturation(), l.EffectiveHue()); err != nil {
+				return err
+			}
+			working = modOut
+		}
+		if l.HasSharpen() {
+			sharpOut := filepath.Join(tmpDir, fmt.Sprintf("layer-%d-sharpen.png", i))
+			if err := imSharpen(working, sharpOut, l.SharpenRadius, l.SharpenSigma, l.SharpenAmount); err != nil {
+				return err
+			}
+			working = sharpOut
+		}
 		if l.Opacity < 100 {
 			opacityOut := filepath.Join(tmpDir, fmt.Sprintf("layer-%d-opacity.png", i))
 			if err := imApplyOpacity(working, opacityOut, l.Opacity); err != nil {

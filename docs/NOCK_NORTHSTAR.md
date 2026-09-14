@@ -37,12 +37,14 @@ either shape is reachable from what's built without a rewrite.
   need to change to swap backends later (a real, named future phase, not built now).
 - Real, working operations: create/list/delete project; add layer (from an uploaded/local image,
   or a generated gradient — vertical/horizontal only, arbitrary angle is real future work);
-  remove/reorder/toggle-visibility/opacity a layer; attach/clear a grayscale mask; destructive
-  hue/saturation/brightness adjust; destructive unsharp-mask sharpen; whole-canvas resize
+  remove/reorder/toggle-visibility/opacity a layer; attach/clear a grayscale mask; real, NON-
+  destructive position/scale/rotation (S416-02) and hue/saturation/brightness/unsharp-sharpen
+  adjustment (S416-04) — both stored as manifest metadata, applied fresh to a disposable working
+  copy on every export, never baked into the layer's own stored file; whole-canvas resize
   (stretches every layer + mask); export — flattens every visible layer bottom-to-top, honoring
-  opacity and mask, to PNG (keeps transparency) or JPEG (flattens onto a background color first,
-  since JPEG has no alpha channel).
-- 10 real tests in `internal/nock/service_test.go`, run against the real, installed ImageMagick
+  opacity, transform, adjustments, and mask, to PNG (keeps transparency) or JPEG (flattens onto a
+  background color first, since JPEG has no alpha channel).
+- 10+ real tests in `internal/nock/service_test.go`, run against the real, installed ImageMagick
   binary (not mocked) — including a real, found-live footgun documented in the test file itself:
   `convert -crop WxH+X+Y` retains the original image's "virtual canvas" page offset unless
   `+repage` is given, so a naive crop-then-flatten silently samples the wrong region.
@@ -86,9 +88,6 @@ real, named future follow-up, not built in this pass.
   this box is a live, shared service ("the central trust authority") that this pass deliberately
   did not stop/restart to test against. Deploying this (restarting the live service to pick up
   the new binary) is a real, separate step for whoever runs that process, not done here.
-- Layer transforms (move/scale/rotate a layer within the canvas) — every layer is full-canvas
-  only in v0.
-- Non-destructive hue/sat/sharpen (both bake directly into the stored layer file today).
 - Arbitrary-angle gradients (vertical/horizontal only).
 - Additional blend modes beyond normal "over" compositing.
 - Drag-and-drop layer reordering (up/down buttons only).
@@ -273,16 +272,23 @@ dracula dark, both stock, both colorful) and the one rule every new NOCK compone
 ## Real, phased next steps
 
 1. Live-deploy and browser-verify `/admin/nock` against a real running IDUNA instance (the one
-   real gap named above).
-2. Layer position/scale/rotate — the real, biggest gap between v0 and an actual Photoshop-shaped
-   tool (every layer being forced full-canvas is a genuine, felt limitation the moment someone
-   wants to place a small decal, not just stack full-size tiles).
+   real gap named above). Partial (2026-09-14): the real, currently-running IDUNA process was
+   confirmed to serve and correctly auth-gate `/admin/nock/` and its own built static assets
+   (401 without a session, not a 500 or an accidental public leak) — server-side plumbing is
+   real and verified. A full logged-in browser walkthrough still needs the founder's own real
+   admin cookie session (deliberately not bypassed or self-granted); left open.
+2. ~~Layer position/scale/rotate~~ — done (S416-02, 2026-09-14). `Layer.X/Y/Scale/Rotation`,
+   `imCompositeTransformed` (resize→rotate→position order), `Service.SetTransform` +
+   `PATCH .../layers/:name/transform`, frontend `LayerTransformPanel`. Backward-compatible: an
+   untransformed layer composites pixel-identical to before.
 3. NOCK project-switcher: today "one `DataDir`, flat list of named projects" — a real per-game
    namespace (matching the founder's own "like you can switch a repo on github integrations")
    is the natural next data-model change, sequenced whenever a second real game project (GFD)
    actually needs its own NOCK space.
-4. Non-destructive adjustments (a real adjustment-layer concept, not baking hue/sat/sharpen into
-   the stored file).
+4. ~~Non-destructive adjustments~~ — done (S416-04, 2026-09-14). `Layer.Brightness/Saturation/
+   Hue/SharpenRadius/SharpenSigma/SharpenAmount` are now real manifest metadata, applied to a
+   disposable working copy on every export — the layer's own stored file is never touched, and
+   re-tuning always starts from the same real original (no cumulative quality loss).
 5. PARENA backend migration (see "explicitly out of scope" #1) — sequenced after PARENA's own
    image/raster stdlib support exists, which it does not today (checked: no `stdlib/image` or
    equivalent anywhere in `PARENA/stdlib/`).

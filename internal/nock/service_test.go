@@ -205,7 +205,14 @@ func TestMaskHidesPartOfLayer(t *testing.T) {
 	}
 }
 
-func TestAdjustHueSaturationChangesPixels(t *testing.T) {
+// TestAdjustHueSaturationIsNonDestructive -- S416-04, "a real adjustment-layer concept instead of
+// baking hue/saturation/sharpen destructively into the stored file." Real, end-to-end
+// verification of the NEW contract (v0's old contract -- the stored file itself changes --
+// verified the opposite on purpose; see this test's own git history for that prior version): the
+// layer's own stored PNG never changes, the EXPORTED output reflects the current adjustment, and
+// re-tuning to a different value always starts fresh from the same real original (no cumulative
+// drift from repeated adjustment, the real problem non-destructive editing exists to solve).
+func TestAdjustHueSaturationIsNonDestructive(t *testing.T) {
 	requireConvert(t)
 	dir := t.TempDir()
 	svc, _ := NewService(dir)
@@ -214,20 +221,49 @@ func TestAdjustHueSaturationChangesPixels(t *testing.T) {
 	makeSolidPNG(t, src, "gray", 8, 8)
 	svc.AddLayer("p1", "a", src)
 
-	// Desaturating gray does nothing visible, so instead crank brightness way down and confirm
-	// the stored layer file itself actually changed (destructive adjustment, per this method's
-	// own doc comment).
-	before := samplePixel(t, filepath.Join(dir, "p1", "layers", "a.png"))
+	storedPath := filepath.Join(dir, "p1", "layers", "a.png")
+	beforeStored := samplePixel(t, storedPath)
+
 	if _, err := svc.AdjustHueSaturation("p1", "a", 20, 100, 100); err != nil {
 		t.Fatalf("AdjustHueSaturation: %v", err)
 	}
-	after := samplePixel(t, filepath.Join(dir, "p1", "layers", "a.png"))
-	if isCloseTo(after, before, 5) {
-		t.Errorf("expected brightness=20 to visibly darken the layer, got before=%v after=%v", before, after)
+
+	// The STORED layer file must be untouched -- that's the whole real point of this being
+	// non-destructive now.
+	afterStored := samplePixel(t, storedPath)
+	if !isCloseTo(afterStored, beforeStored, 2) {
+		t.Errorf("stored layer file changed after AdjustHueSaturation (should be non-destructive): before=%v after=%v", beforeStored, afterStored)
+	}
+
+	// The EXPORTED output, on the other hand, must actually reflect the adjustment.
+	out := filepath.Join(dir, "out1.png")
+	if err := svc.Export("p1", out, ""); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	exported := samplePixel(t, out)
+	if isCloseTo(exported, beforeStored, 5) {
+		t.Errorf("expected brightness=20 to visibly darken the EXPORTED output, got original=%v exported=%v", beforeStored, exported)
+	}
+
+	// Re-tuning back to brightness=100 (unchanged) must start fresh from the real original --
+	// not compound on top of the previous darkened export, the real "no cumulative quality loss"
+	// property destructive baking doesn't have.
+	if _, err := svc.AdjustHueSaturation("p1", "a", 100, 100, 100); err != nil {
+		t.Fatalf("AdjustHueSaturation (reset): %v", err)
+	}
+	out2 := filepath.Join(dir, "out2.png")
+	if err := svc.Export("p1", out2, ""); err != nil {
+		t.Fatalf("Export (reset): %v", err)
+	}
+	resetExported := samplePixel(t, out2)
+	if !isCloseTo(resetExported, beforeStored, 5) {
+		t.Errorf("expected brightness=100 (reset) to match the real original: original=%v got=%v", beforeStored, resetExported)
 	}
 }
 
-func TestSharpenRunsWithoutError(t *testing.T) {
+// TestSharpenIsNonDestructive -- same real S416-04 contract TestAdjustHueSaturationIsNonDestructive
+// verifies for hue/saturation: Sharpen must never touch the layer's own stored file.
+func TestSharpenIsNonDestructive(t *testing.T) {
 	requireConvert(t)
 	dir := t.TempDir()
 	svc, _ := NewService(dir)
@@ -235,8 +271,21 @@ func TestSharpenRunsWithoutError(t *testing.T) {
 	src := filepath.Join(dir, "a.png")
 	makeSolidPNG(t, src, "gray", 16, 16)
 	svc.AddLayer("p1", "a", src)
-	if _, err := svc.Sharpen("p1", "a", 0, 1, 1); err != nil {
+
+	storedPath := filepath.Join(dir, "p1", "layers", "a.png")
+	beforeStored := samplePixel(t, storedPath)
+
+	if _, err := svc.Sharpen("p1", "a", 2, 1, 3); err != nil {
 		t.Fatalf("Sharpen: %v", err)
+	}
+	afterStored := samplePixel(t, storedPath)
+	if !isCloseTo(afterStored, beforeStored, 2) {
+		t.Errorf("stored layer file changed after Sharpen (should be non-destructive): before=%v after=%v", beforeStored, afterStored)
+	}
+
+	out := filepath.Join(dir, "out.png")
+	if err := svc.Export("p1", out, ""); err != nil {
+		t.Fatalf("Export: %v", err)
 	}
 }
 

@@ -365,7 +365,7 @@ function LayerEffectsPanel({
           Apply sharpen
         </button>
       </div>
-      <p className="hint">Both adjustments are destructive (baked into the layer immediately) — undo isn't real yet.</p>
+      <p className="hint">Non-destructive (S416-04) — re-tuning always starts from the original layer, never from an already-adjusted one.</p>
     </div>
   )
 }

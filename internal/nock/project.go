@@ -45,6 +45,23 @@ type Layer struct {
 	Y        int     `json:"y,omitempty"`        // pixels from canvas top
 	Scale    float64 `json:"scale,omitempty"`    // percent, 100 = unchanged; 0 (omitted/legacy) also means unchanged, see effectiveScale
 	Rotation float64 `json:"rotation,omitempty"` // degrees, clockwise, 0 = unchanged
+	// Brightness/Saturation/Hue/SharpenRadius/SharpenSigma/SharpenAmount (S416-04, "a real
+	// adjustment-layer concept instead of baking hue/saturation/sharpen destructively into the
+	// stored file"). Real, deliberate shape change from v0: AdjustHueSaturation/Sharpen used to
+	// overwrite the layer's own stored PNG in place, permanently -- re-tuning meant starting from
+	// an already-altered image (real, cumulative quality loss on repeated adjustment, and no way
+	// back to the original once applied). These fields now hold the adjustment as real, editable
+	// METADATA instead; Export applies them to a disposable working COPY at composite time, every
+	// time, so the stored layer file itself never changes and re-tuning always starts from the
+	// same real original. Same "0/omitted means unchanged" convention Scale above already
+	// established: Brightness/Saturation/Hue default to 100 (imModulate's own real "unchanged"
+	// value) via EffectiveBrightness/EffectiveSaturation/EffectiveHue, not their Go zero value.
+	Brightness     int     `json:"brightness,omitempty"`
+	Saturation     int     `json:"saturation,omitempty"`
+	Hue            int     `json:"hue,omitempty"`
+	SharpenRadius  float64 `json:"sharpen_radius,omitempty"`
+	SharpenSigma   float64 `json:"sharpen_sigma,omitempty"`
+	SharpenAmount  float64 `json:"sharpen_amount,omitempty"`
 	// Source is the real PARENA program that generated this layer's own File, when the layer
 	// was created by AddProceduralLayer rather than imported from an image -- "think GENERA OS,"
 	// the founder's own framing for keeping a generated asset's real source alongside its
@@ -60,6 +77,39 @@ func (l Layer) EffectiveScale() float64 {
 		return 100
 	}
 	return l.Scale
+}
+
+// EffectiveBrightness/EffectiveSaturation/EffectiveHue are l.Brightness/Saturation/Hue with the
+// same real "0/omitted means unchanged" convention EffectiveScale already established -- a fresh
+// layer that's never had hue/saturation adjusted composites at real, unchanged 100 for each,
+// matching imModulate's own real "100 = no-op" semantics, not a bare zero value's literal "all
+// channels crushed to black" meaning.
+func (l Layer) EffectiveBrightness() int {
+	if l.Brightness <= 0 {
+		return 100
+	}
+	return l.Brightness
+}
+
+func (l Layer) EffectiveSaturation() int {
+	if l.Saturation <= 0 {
+		return 100
+	}
+	return l.Saturation
+}
+
+func (l Layer) EffectiveHue() int {
+	if l.Hue <= 0 {
+		return 100
+	}
+	return l.Hue
+}
+
+// HasSharpen answers whether this layer has a real, non-no-op sharpen adjustment set -- radius=0
+// is imSharpen's own real no-op ("0 = no-op" per its own doc comment), so Export can skip the
+// extra convert invocation entirely for the very common "never sharpened" case.
+func (l Layer) HasSharpen() bool {
+	return l.SharpenRadius > 0
 }
 
 // Project is one NOCK document: a fixed canvas size and an ordered layer stack.
