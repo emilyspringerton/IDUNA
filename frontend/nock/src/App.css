@@ -18,12 +18,20 @@ header {
   @apply border-b border-line px-6 py-4;
 }
 
+.header-top {
+  @apply flex items-center justify-between;
+}
+
 header h1 {
   @apply m-0 tracking-wider text-gold;
 }
 
+.theme-toggle {
+  @apply btn-outline btn-primary btn-xs;
+}
+
 .tagline {
-  @apply m-0 mt-1 text-sm text-muted;
+  @apply m-0 mt-1 text-sm opacity-70;
 }
 
 .tabs {
@@ -31,11 +39,11 @@ header h1 {
 }
 
 .tabs button {
-  @apply border border-line bg-transparent text-muted;
+  @apply btn-outline btn-primary btn-sm;
 }
 
 .tabs button.active {
-  @apply border-gold bg-gold text-[#1a1509];
+  @apply btn-primary;
 }
 
 .layout {
@@ -64,7 +72,7 @@ header h1 {
 }
 
 .project-list li.active button {
-  @apply bg-gold text-[#1a1509];
+  @apply bg-gold text-gold-content;
 }
 
 .material-panel {
@@ -266,7 +274,7 @@ textarea {
   @apply border border-line bg-transparent text-muted;
 }
 .mode-toggle button.active {
-  @apply border-gold bg-gold text-[#1a1509];
+  @apply border-gold bg-gold text-gold-content;
 }
 
 .constrain-y {

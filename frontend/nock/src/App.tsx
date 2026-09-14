@@ -675,10 +675,41 @@ function tabFromHash(): Tab {
   return (VALID_TABS as string[]).includes(h) ? (h as Tab) : 'textures'
 }
 
+// useTheme -- S459-20, founder real-time: "have a light mode and a dark mode both colorful."
+// daisyUI's own two real, stock themes (cupcake/dracula, wired in index.css's own @plugin
+// config) already auto-follow the OS's prefers-color-scheme with no JS at all -- this hook adds
+// the real, explicit manual override on top (persisted in localStorage), the same real "OS
+// default, explicit override wins" contract most theme toggles use. null means "no override yet,
+// follow the OS," matching daisyUI's own --default/--prefersdark behavior exactly.
+type ThemeOverride = 'cupcake' | 'dracula' | null
+function useTheme() {
+  const [theme, setThemeState] = useState<ThemeOverride>(() => {
+    const stored = localStorage.getItem('nock-theme')
+    return stored === 'cupcake' || stored === 'dracula' ? stored : null
+  })
+  useEffect(() => {
+    if (theme) {
+      document.documentElement.dataset.theme = theme
+      localStorage.setItem('nock-theme', theme)
+    } else {
+      delete document.documentElement.dataset.theme
+      localStorage.removeItem('nock-theme')
+    }
+  }, [theme])
+  const toggle = useCallback(() => {
+    setThemeState((t) => {
+      const current = t ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dracula' : 'cupcake')
+      return current === 'cupcake' ? 'dracula' : 'cupcake'
+    })
+  }, [])
+  return { theme, toggle }
+}
+
 export default function App() {
   const { projects, refresh } = useProjects()
   const [active, setActive] = useState<string | null>(null)
   const [tab, setTabState] = useState<Tab>(tabFromHash)
+  const { theme, toggle: toggleTheme } = useTheme()
 
   const setTab = useCallback((t: Tab) => {
     setTabState(t)
@@ -696,7 +727,12 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>NOCK</h1>
+        <div className="header-top">
+          <h1>NOCK</h1>
+          <button type="button" className="theme-toggle" onClick={toggleTheme} title="Toggle light/dark theme">
+            {theme === 'dracula' ? 'Light mode' : theme === 'cupcake' ? 'Dark mode' : 'Toggle theme'}
+          </button>
+        </div>
         <p className="tagline">texture generator &amp; manager — SHANKPIT texture tools, built on ImageMagick + PARENA</p>
         <nav className="tabs">
           <button className={tab === 'textures' ? 'active' : ''} onClick={() => setTab('textures')}>

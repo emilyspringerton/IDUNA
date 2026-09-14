@@ -264,6 +264,12 @@ that looks like if its dumb... just note it for later"), not silently dropped.
    react idioms are" — v0 has no global-state library; revisit only if `App.tsx`'s own local
    `useState` calls genuinely stop scaling, not preemptively.
 
+## Visual style
+
+See `docs/NOCK_STYLE_GUIDE.md` (S459-20) for the real daisyUI theme setup (cupcake light /
+dracula dark, both stock, both colorful) and the one rule every new NOCK component should follow
+(never hardcode a color — use the semantic tokens so it re-themes automatically).
+
 ## Real, phased next steps
 
 1. Live-deploy and browser-verify `/admin/nock` against a real running IDUNA instance (the one
