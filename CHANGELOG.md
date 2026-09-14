@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-14
+- NOCK: non-destructive hue/saturation/sharpen adjustments (S416-04). Layer.Brightness/Saturation/Hue/SharpenRadius/SharpenSigma/SharpenAmount now real metadata, applied to a working copy on every export -- stored layer file never touched, re-tuning always starts fresh. Commit b576606 (sess-20260905-0720-ec33e7c5)
 - NOCK: real layer position/scale/rotation (S416-02). New Layer.X/Y/Scale/Rotation fields, imCompositeTransformed (resize->rotate->position order, transparent background on rotate), Service.SetTransform + PATCH .../layers/:name/transform, frontend LayerTransformPanel. Pixel-sampled test verifies actual composite output. Commit e99e98f (sess-20260905-0720-ec33e7c5)
 - Added ShaderHPSLight to the shankpit materials validShaderNames registry, NOCK Materials panel shader picker gets the new option. Commit 50a7e45 (sess-20260905-0720-ec33e7c5)
 - Added ShaderIPSLight to the shankpit materials validShaderNames registry; NOCK's Materials panel gets a real shader picker (standard/ips_light) and its per-material Delete button is removed to prevent accidentally orphaning a hooked-up material from its shader. Commit 8d7f2fa (sess-20260905-0720-ec33e7c5)
