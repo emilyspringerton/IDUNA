@@ -23,12 +23,16 @@ import { shankpitLevels, type ShankpitLevelSummary, type ShankpitWall } from './
 // LevelEditor.tsx's own established "no framework beyond what's already here for a v0 this small"
 // precedent, just extended from 2D canvas math to a real three.js scene + raycasting.
 
-function aDefaultWall(id: number): ShankpitWall {
-  return { id, x: 0, y: 2, z: 0, sx: 4, sy: 4, sz: 4, r: 0.6, g: 0.6, b: 0.65, friction: 0.8 }
+function aDefaultWall(id: number, at: { x: number; y: number; z: number } = { x: 0, y: 2, z: 0 }): ShankpitWall {
+  return { id, x: at.x, y: at.y, z: at.z, sx: 4, sy: 4, sz: 4, r: 0.6, g: 0.6, b: 0.65, friction: 0.8 }
+}
+
+function defaultSpawnerPos(): { x: number; y: number; z: number } {
+  return { x: 0, y: 2, z: 0 }
 }
 
 function newDefaultLevel(): { name: string; width: number; height: number; depth: number; walls: ShankpitWall[] } {
-  return { name: '', width: 100, height: 50, depth: 100, walls: [aDefaultWall(1)] }
+  return { name: '', width: 100, height: 50, depth: 100, walls: [aDefaultWall(1, defaultSpawnerPos())] }
 }
 
 function nextWallId(walls: ShankpitWall[]): number {
@@ -38,6 +42,11 @@ function nextWallId(walls: ShankpitWall[]): number {
 // Axis + sign identify exactly one of a box's 6 faces. faceNormal is that face's outward world
 // normal -- trivial here since walls are axis-aligned (no rotation field on Wall at all), so a
 // raycast hit's local face normal IS the world normal already.
+// EditMode -- founder real-time: "introduce object vs face mode / start in object mode dragging a
+// cube draggs it / face mode does what it does now allowing us to drag a face." Object mode drags
+// the whole selected cube (or the spawner) around; Face mode is the original per-face reshape.
+type EditMode = 'object' | 'face'
+
 type Axis = 'x' | 'y' | 'z'
 interface FaceHit {
   wallIndex: number
@@ -67,16 +76,23 @@ function closestPointOnAxisLineToRay(
   linePoint: THREE.Vector3,
   axisDir: THREE.Vector3,
 ): number | null {
-  const w0 = new THREE.Vector3().subVectors(linePoint, rayOrigin)
+  // REAL, FOUND, FIXED BUG (founder real-time: "currently face dragging seems inversed i have to
+  // drag away from the direction i want the face to move"): the previous version defined
+  // w0 = linePoint - rayOrigin, the negation of the standard reference's own r = P1 - P2
+  // (Ericson, "Real-Time Collision Detection," ClosestPtSegmentSegment specialized to infinite
+  // lines: r = P1 - P2 = rayOrigin - linePoint) -- that sign flip propagates all the way through
+  // to the returned parameter, so every drag moved exactly opposite the intended direction.
+  // Rederived directly against that reference rather than re-guessing a sign to flip.
+  const r = new THREE.Vector3().subVectors(rayOrigin, linePoint) // r = P1 - P2
   const a = rayDir.dot(rayDir)
+  const e = axisDir.dot(axisDir)
   const b = rayDir.dot(axisDir)
-  const c = axisDir.dot(axisDir)
-  const d = rayDir.dot(w0)
-  const e = axisDir.dot(w0)
-  const denom = a * c - b * b
+  const c = rayDir.dot(r)
+  const f = axisDir.dot(r)
+  const denom = a * e - b * b
   if (Math.abs(denom) < 1e-6) return null // ray nearly parallel to the drag axis -- no stable solution
-  const tc = (a * e - b * d) / denom // parameter along axisDir from linePoint
-  return tc
+  const t = (a * f - b * c) / denom // parameter along axisDir from linePoint
+  return t
 }
 
 const MIN_WALL_SIZE = 0.25
@@ -133,6 +149,9 @@ function Viewport3D({
   onSelect,
   onChange,
   onCommit,
+  editMode,
+  spawner,
+  onSpawnerChange,
 }: {
   width: number
   height: number
@@ -142,14 +161,20 @@ function Viewport3D({
   onSelect: (i: number | null) => void
   onChange: (walls: ShankpitWall[]) => void
   onCommit: () => void
+  editMode: EditMode
+  spawner: { x: number; y: number; z: number }
+  onSpawnerChange: (s: { x: number; y: number; z: number }) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const meshesRef = useRef<THREE.Mesh[]>([])
+  const spawnerMeshRef = useRef<THREE.Mesh | null>(null)
   const wallsRef = useRef(walls)
   const selectedRef = useRef(selected)
+  const editModeRef = useRef(editMode)
+  const spawnerRef = useRef(spawner)
   const camStateRef = useRef<CameraState>({
     target: new THREE.Vector3(0, height / 4, 0),
     radius: Math.max(width, depth, height) * 1.1 + 5,
@@ -159,11 +184,15 @@ function Viewport3D({
   const dragRef = useRef<
     | { mode: 'orbit'; lastX: number; lastY: number }
     | { mode: 'face'; hit: FaceHit; linePoint: THREE.Vector3; axisDir: THREE.Vector3; startT: number; startWall: ShankpitWall }
+    | { mode: 'move-wall'; wallIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3; startWall: ShankpitWall }
+    | { mode: 'move-spawner'; plane: THREE.Plane; grabOffset: THREE.Vector3 }
     | null
   >(null)
 
   wallsRef.current = walls
   selectedRef.current = selected
+  editModeRef.current = editMode
+  spawnerRef.current = spawner
 
   // One-time scene/renderer/camera setup.
   useEffect(() => {
@@ -189,6 +218,19 @@ function Viewport3D({
 
     const grid = new THREE.GridHelper(Math.max(width, depth, 20) * 1.5, 24, 0x444a58, 0x2a2e38)
     scene.add(grid)
+
+    // The spawner -- founder real-time: "there should be a spawner object that you can move
+    // around... fixes the problem of cubes spawning on eachother." A real, movable marker (not
+    // level data, not saved -- purely a per-session authoring convenience, same "authoring
+    // metadata only" role BRAWLPIT's own Guides play, just not persisted at all here since v0
+    // doesn't need it to survive a reload). New cubes spawn at its current position.
+    const spawnerMesh = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.8),
+      new THREE.MeshStandardMaterial({ color: 0xffcc33, emissive: 0x554400, emissiveIntensity: 0.6, wireframe: false }),
+    )
+    spawnerMesh.position.set(spawnerRef.current.x, spawnerRef.current.y, spawnerRef.current.z)
+    scene.add(spawnerMesh)
+    spawnerMeshRef.current = spawnerMesh
 
     let raf = 0
     const render = () => {
@@ -216,24 +258,61 @@ function Viewport3D({
       ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
     }
 
+    // cameraFacingPlaneThrough builds a plane facing the camera (normal = camera's own forward
+    // direction) passing through `point` -- the standard "billboard drag" technique free 3D
+    // object translation uses: intersecting the mouse ray against this plane each frame gives an
+    // intuitive "the object follows the cursor" feel from any camera angle, unlike a
+    // ground-plane-only drag which breaks down when looking straight down.
+    const cameraFacingPlaneThrough = (point: THREE.Vector3) => {
+      const normal = new THREE.Vector3()
+      camera.getWorldDirection(normal)
+      return new THREE.Plane().setFromNormalAndCoplanarPoint(normal, point)
+    }
+
     const onPointerDown = (e: PointerEvent) => {
       container.setPointerCapture(e.pointerId)
       setNdcFromEvent(e)
       raycaster.setFromCamera(ndc, camera)
-      const hits = raycaster.intersectObjects(meshesRef.current, false)
-      if (hits.length > 0 && hits[0].face) {
-        const mesh = hits[0].object as THREE.Mesh
-        const wallIndex = meshesRef.current.indexOf(mesh)
-        const hit = faceHitFromNormal(wallIndex, hits[0].face.normal.clone())
-        const wall = wallsRef.current[wallIndex]
-        onSelect(wall.id)
-        const axisDir = new THREE.Vector3(hit.axis === 'x' ? 1 : 0, hit.axis === 'y' ? 1 : 0, hit.axis === 'z' ? 1 : 0)
-        const startT = hits[0].point.clone().dot(axisDir) // coordinate along the axis at the hit point
-        dragRef.current = { mode: 'face', hit, linePoint: hits[0].point.clone(), axisDir, startT, startWall: { ...wall } }
-      } else {
+
+      if (editModeRef.current === 'face') {
+        const hits = raycaster.intersectObjects(meshesRef.current, false)
+        if (hits.length > 0 && hits[0].face) {
+          const mesh = hits[0].object as THREE.Mesh
+          const wallIndex = meshesRef.current.indexOf(mesh)
+          const hit = faceHitFromNormal(wallIndex, hits[0].face.normal.clone())
+          const wall = wallsRef.current[wallIndex]
+          onSelect(wall.id)
+          const axisDir = new THREE.Vector3(hit.axis === 'x' ? 1 : 0, hit.axis === 'y' ? 1 : 0, hit.axis === 'z' ? 1 : 0)
+          const startT = hits[0].point.clone().dot(axisDir) // coordinate along the axis at the hit point
+          dragRef.current = { mode: 'face', hit, linePoint: hits[0].point.clone(), axisDir, startT, startWall: { ...wall } }
+          return
+        }
         onSelect(null)
         dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
+        return
       }
+
+      // object mode: whole-cube (or spawner) translation, not a face reshape
+      const candidates = spawnerMeshRef.current ? [spawnerMeshRef.current, ...meshesRef.current] : meshesRef.current
+      const hits = raycaster.intersectObjects(candidates, false)
+      if (hits.length > 0) {
+        const mesh = hits[0].object as THREE.Mesh
+        if (mesh === spawnerMeshRef.current) {
+          const plane = cameraFacingPlaneThrough(mesh.position.clone())
+          const grabOffset = new THREE.Vector3().subVectors(mesh.position, hits[0].point)
+          dragRef.current = { mode: 'move-spawner', plane, grabOffset }
+          return
+        }
+        const wallIndex = meshesRef.current.indexOf(mesh)
+        const wall = wallsRef.current[wallIndex]
+        onSelect(wall.id)
+        const plane = cameraFacingPlaneThrough(mesh.position.clone())
+        const grabOffset = new THREE.Vector3().subVectors(mesh.position, hits[0].point)
+        dragRef.current = { mode: 'move-wall', wallIndex, plane, grabOffset, startWall: { ...wall } }
+        return
+      }
+      onSelect(null)
+      dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
     }
 
     const onPointerMove = (e: PointerEvent) => {
@@ -249,23 +328,41 @@ function Viewport3D({
         cam.phi = Math.min(Math.PI - 0.05, Math.max(0.05, cam.phi - dy * 0.008))
         return
       }
-      // face drag
+      if (drag.mode === 'face') {
+        setNdcFromEvent(e)
+        raycaster.setFromCamera(ndc, camera)
+        const tc = closestPointOnAxisLineToRay(raycaster.ray.origin, raycaster.ray.direction, drag.linePoint, drag.axisDir)
+        if (tc === null) return
+        const newFaceCoord = drag.startT + tc
+        const updated = applyFaceDrag(drag.startWall, drag.hit.axis, drag.hit.sign, newFaceCoord)
+        const next = wallsRef.current.slice()
+        next[drag.hit.wallIndex] = updated
+        onChange(next)
+        return
+      }
+      // move-wall / move-spawner: intersect the current ray against the drag's own camera-facing
+      // plane, re-applying the original grab offset so the object doesn't jump to snap its own
+      // center onto the cursor the instant a drag starts.
       setNdcFromEvent(e)
       raycaster.setFromCamera(ndc, camera)
-      const tc = closestPointOnAxisLineToRay(raycaster.ray.origin, raycaster.ray.direction, drag.linePoint, drag.axisDir)
-      if (tc === null) return
-      const newFaceCoord = drag.startT + tc
-      const updated = applyFaceDrag(drag.startWall, drag.hit.axis, drag.hit.sign, newFaceCoord)
+      const hitPoint = new THREE.Vector3()
+      if (!raycaster.ray.intersectPlane(drag.plane, hitPoint)) return
+      const newPos = hitPoint.add(drag.grabOffset)
+      if (drag.mode === 'move-spawner') {
+        onSpawnerChange({ x: newPos.x, y: newPos.y, z: newPos.z })
+        return
+      }
+      const updated = { ...drag.startWall, x: newPos.x, y: newPos.y, z: newPos.z }
       const next = wallsRef.current.slice()
-      next[drag.hit.wallIndex] = updated
+      next[drag.wallIndex] = updated
       onChange(next)
     }
 
     const onPointerUp = (e: PointerEvent) => {
       container.releasePointerCapture(e.pointerId)
-      const wasFaceDrag = dragRef.current?.mode === 'face'
+      const wasWallDrag = dragRef.current?.mode === 'face' || dragRef.current?.mode === 'move-wall'
       dragRef.current = null
-      if (wasFaceDrag) onCommit()
+      if (wasWallDrag) onCommit()
     }
 
     const onWheel = (e: WheelEvent) => {
@@ -331,6 +428,11 @@ function Viewport3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walls, selected])
 
+  // Sync the spawner mesh's own visual position whenever it moves (drag, or a fresh level load).
+  useEffect(() => {
+    spawnerMeshRef.current?.position.set(spawner.x, spawner.y, spawner.z)
+  }, [spawner])
+
   function applySelectionOutline() {
     walls.forEach((w, i) => {
       const mesh = meshesRef.current[i]
@@ -386,6 +488,11 @@ export default function ShankpitLevelEditor() {
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
+  const [editMode, setEditMode] = useState<EditMode>('object')
+  // The spawner is deliberately NOT level data -- a per-session authoring convenience only (see
+  // Viewport3D's own doc comment on the spawner mesh), so it isn't part of `draft`/persisted with
+  // the level; it just resets to a sensible default on new/load.
+  const [spawner, setSpawner] = useState(defaultSpawnerPos())
 
   const load = useCallback(async (id: number) => {
     const lvl = await shankpitLevels.get(id)
@@ -394,6 +501,7 @@ export default function ShankpitLevelEditor() {
     setSelected(null)
     setDirty(false)
     setError(null)
+    setSpawner(defaultSpawnerPos())
   }, [])
 
   const startNew = () => {
@@ -402,6 +510,7 @@ export default function ShankpitLevelEditor() {
     setSelected(1)
     setDirty(true)
     setError(null)
+    setSpawner(defaultSpawnerPos())
   }
 
   const setWalls = (walls: ShankpitWall[]) => {
@@ -411,7 +520,10 @@ export default function ShankpitLevelEditor() {
 
   const addCube = () => {
     const id = nextWallId(draft.walls)
-    setWalls([...draft.walls, aDefaultWall(id)])
+    // Spawns at the spawner's own current position, not a fixed default -- founder real-time:
+    // "fixes the problem of cubes spawning on eachother you can move the cube spawner if you are
+    // building right in the middle."
+    setWalls([...draft.walls, aDefaultWall(id, spawner)])
     setSelected(id)
   }
 
@@ -533,6 +645,14 @@ export default function ShankpitLevelEditor() {
               />
             </label>
           </div>
+          <div className="mode-toggle">
+            <button type="button" className={editMode === 'object' ? 'active' : ''} onClick={() => setEditMode('object')}>
+              Object mode
+            </button>
+            <button type="button" className={editMode === 'face' ? 'active' : ''} onClick={() => setEditMode('face')}>
+              Face mode
+            </button>
+          </div>
           <button type="button" onClick={addCube}>
             + Add cube
           </button>
@@ -567,9 +687,16 @@ export default function ShankpitLevelEditor() {
               onSelect={setSelected}
               onChange={setWalls}
               onCommit={() => setDirty(true)}
+              editMode={editMode}
+              spawner={spawner}
+              onSpawnerChange={setSpawner}
             />
             <p className="hint">
-              Drag empty space to orbit, scroll to zoom. Drag a cube's face to reshape it. Click a cube to select it.
+              Drag empty space to orbit, scroll to zoom.{' '}
+              {editMode === 'object'
+                ? "Object mode: drag a cube to move it, drag the yellow spawner marker to reposition it. New cubes spawn at the marker."
+                : "Face mode: drag a cube's face to reshape it."}{' '}
+              Click a cube to select it.
             </p>
           </div>
           <div className="side-pane">

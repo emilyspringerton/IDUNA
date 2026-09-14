@@ -220,6 +220,16 @@ textarea {
   touch-action: none; /* pointer drag must not trigger scroll/zoom gestures on the canvas */
 }
 
+.mode-toggle {
+  @apply flex gap-1;
+}
+.mode-toggle button {
+  @apply border border-line bg-transparent text-muted;
+}
+.mode-toggle button.active {
+  @apply border-gold bg-gold text-[#1a1509];
+}
+
 .shankpit-viewport {
   @apply cursor-grab rounded border border-line;
   width: 800px;
