@@ -2,11 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import {
   SHANKPIT_GRID_CELL_SIZE,
+  SPAWNER_TEAM_BLUE,
+  SPAWNER_TEAM_FFA,
+  SPAWNER_TEAM_RED,
   shankpitLevels,
   shankpitMaterials,
   type ShankpitLevelObject,
   type ShankpitLevelSummary,
   type ShankpitMaterial,
+  type ShankpitSpawner,
+  type ShankpitSpawnerTeam,
   type ShankpitWall,
 } from './api'
 
@@ -54,6 +59,7 @@ function newDefaultLevel(): {
   groundPlaneSquares: number
   walls: ShankpitWall[]
   objects: ShankpitLevelObject[]
+  spawners: ShankpitSpawner[]
 } {
   return {
     name: '',
@@ -64,6 +70,7 @@ function newDefaultLevel(): {
     groundPlaneSquares: DEFAULT_GROUND_PLANE_SQUARES,
     walls: [aDefaultWall(1, defaultSpawnerPos())],
     objects: [],
+    spawners: [],
   }
 }
 
@@ -73,6 +80,24 @@ function nextWallId(walls: ShankpitWall[]): number {
 
 function nextObjectId(objects: ShankpitLevelObject[]): number {
   return objects.reduce((m, o) => Math.max(m, o.id), 0) + 1
+}
+
+function nextSpawnerId(spawners: ShankpitSpawner[]): number {
+  return spawners.reduce((m, sp) => Math.max(m, sp.id), 0) + 1
+}
+
+// SPAWNER_TEAM_LABELS/SPAWNER_TEAM_COLORS -- founder real-time: "call it red team and blue team".
+// SHANKPIT's own real TDMB_RED_TEAM=0/TDMB_BLUE_TEAM=1 convention (packages/simulation/
+// local_game.h) is the real source of truth for these numbers, not invented here.
+const SPAWNER_TEAM_LABELS: Record<number, string> = {
+  [SPAWNER_TEAM_FFA]: 'FFA (any team)',
+  [SPAWNER_TEAM_RED]: 'Red Team',
+  [SPAWNER_TEAM_BLUE]: 'Blue Team',
+}
+const SPAWNER_TEAM_COLORS: Record<number, number> = {
+  [SPAWNER_TEAM_FFA]: 0xdddddd,
+  [SPAWNER_TEAM_RED]: 0xff4444,
+  [SPAWNER_TEAM_BLUE]: 0x4488ff,
 }
 
 // ROT_Y_STEPS -- "snap rotate 90 degree turns is good for now" (founder, real-time, S459-15).
@@ -215,6 +240,10 @@ function Viewport3D({
   onDragStart,
   objects,
   levelSummaries,
+  spawnPoints,
+  selectedSpawnPoint,
+  onSelectSpawnPoint,
+  onSpawnPointsChange,
 }: {
   width: number
   height: number
@@ -233,6 +262,10 @@ function Viewport3D({
   onDragStart: () => void
   objects: ShankpitLevelObject[]
   levelSummaries: ShankpitLevelSummary[]
+  spawnPoints: ShankpitSpawner[]
+  selectedSpawnPoint: number | null
+  onSelectSpawnPoint: (id: number | null) => void
+  onSpawnPointsChange: (spawners: ShankpitSpawner[]) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -241,6 +274,7 @@ function Viewport3D({
   const meshesRef = useRef<THREE.Mesh[]>([])
   const objectMeshesRef = useRef<THREE.Group[]>([])
   const spawnerMeshRef = useRef<THREE.Mesh | null>(null)
+  const spawnPointMeshesRef = useRef<THREE.Mesh[]>([])
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const wallsRef = useRef(walls)
   const selectedRef = useRef(selected)
@@ -249,6 +283,9 @@ function Viewport3D({
   const onSpawnerChangeRef = useRef(onSpawnerChange)
   const constrainYRef = useRef(constrainY)
   const onDragStartRef = useRef(onDragStart)
+  const spawnPointsRef = useRef(spawnPoints)
+  const onSpawnPointsChangeRef = useRef(onSpawnPointsChange)
+  const onSelectSpawnPointRef = useRef(onSelectSpawnPoint)
   const camStateRef = useRef<CameraState>({
     target: new THREE.Vector3(0, height / 4, 0),
     radius: Math.max(width, depth, height) * 1.1 + 5,
@@ -260,6 +297,7 @@ function Viewport3D({
     | { mode: 'face'; hit: FaceHit; linePoint: THREE.Vector3; axisDir: THREE.Vector3; startT: number; startWall: ShankpitWall }
     | { mode: 'move-wall'; wallIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3; startWall: ShankpitWall }
     | { mode: 'move-spawner'; plane: THREE.Plane; grabOffset: THREE.Vector3 }
+    | { mode: 'move-spawn-point'; spawnIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3 }
     | null
   >(null)
 
@@ -270,6 +308,9 @@ function Viewport3D({
   onSpawnerChangeRef.current = onSpawnerChange
   constrainYRef.current = constrainY
   onDragStartRef.current = onDragStart
+  spawnPointsRef.current = spawnPoints
+  onSpawnPointsChangeRef.current = onSpawnPointsChange
+  onSelectSpawnPointRef.current = onSelectSpawnPoint
 
   // One-time scene/renderer/camera setup.
   useEffect(() => {
@@ -381,8 +422,10 @@ function Viewport3D({
         return
       }
 
-      // object mode: whole-cube (or spawner) translation, not a face reshape
-      const candidates = spawnerMeshRef.current ? [spawnerMeshRef.current, ...meshesRef.current] : meshesRef.current
+      // object mode: whole-cube (or spawner marker, or a real spawn point) translation, not a face reshape
+      const candidates = spawnerMeshRef.current
+        ? [spawnerMeshRef.current, ...spawnPointMeshesRef.current, ...meshesRef.current]
+        : [...spawnPointMeshesRef.current, ...meshesRef.current]
       const hits = raycaster.intersectObjects(candidates, false)
       if (hits.length > 0) {
         const mesh = hits[0].object as THREE.Mesh
@@ -392,9 +435,21 @@ function Viewport3D({
           dragRef.current = { mode: 'move-spawner', plane, grabOffset }
           return
         }
+        const spawnIndex = spawnPointMeshesRef.current.indexOf(mesh)
+        if (spawnIndex !== -1) {
+          const sp = spawnPointsRef.current[spawnIndex]
+          onSelectSpawnPointRef.current(sp.id)
+          onSelect(null)
+          const plane = dragPlaneThrough(mesh.position.clone())
+          const grabOffset = new THREE.Vector3().subVectors(mesh.position, hits[0].point)
+          onDragStartRef.current()
+          dragRef.current = { mode: 'move-spawn-point', spawnIndex, plane, grabOffset }
+          return
+        }
         const wallIndex = meshesRef.current.indexOf(mesh)
         const wall = wallsRef.current[wallIndex]
         onSelect(wall.id)
+        onSelectSpawnPointRef.current(null)
         const plane = dragPlaneThrough(mesh.position.clone())
         const grabOffset = new THREE.Vector3().subVectors(mesh.position, hits[0].point)
         onDragStartRef.current()
@@ -402,6 +457,7 @@ function Viewport3D({
         return
       }
       onSelect(null)
+      onSelectSpawnPointRef.current(null)
       dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
     }
 
@@ -442,6 +498,12 @@ function Viewport3D({
         onSpawnerChange({ x: newPos.x, y: newPos.y, z: newPos.z })
         return
       }
+      if (drag.mode === 'move-spawn-point') {
+        const nextSpawns = spawnPointsRef.current.slice()
+        nextSpawns[drag.spawnIndex] = { ...nextSpawns[drag.spawnIndex], x: newPos.x, y: newPos.y, z: newPos.z }
+        onSpawnPointsChangeRef.current(nextSpawns)
+        return
+      }
       const updated = { ...drag.startWall, x: newPos.x, y: newPos.y, z: newPos.z }
       const next = wallsRef.current.slice()
       next[drag.wallIndex] = updated
@@ -450,7 +512,7 @@ function Viewport3D({
 
     const onPointerUp = (e: PointerEvent) => {
       container.releasePointerCapture(e.pointerId)
-      const wasWallDrag = dragRef.current?.mode === 'face' || dragRef.current?.mode === 'move-wall'
+      const wasWallDrag = dragRef.current?.mode === 'face' || dragRef.current?.mode === 'move-wall' || dragRef.current?.mode === 'move-spawn-point'
       dragRef.current = null
       if (wasWallDrag) onCommit()
     }
@@ -606,6 +668,43 @@ function Viewport3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [objects, levelSummaries])
 
+  // Real, persisted spawn points (S459-58) -- rendered as team-colored cone markers (pointing
+  // along yaw), distinct from spawnerMeshRef's own yellow octahedron (that one is the unsaved,
+  // per-session "new cubes appear here" convenience, not game data). Rebuilt on count change,
+  // synced on every edit -- same real "rebuild on count, sync in place otherwise" split every
+  // other mesh list on this page already uses.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    for (const m of spawnPointMeshesRef.current) {
+      scene.remove(m)
+      m.geometry.dispose()
+      ;(m.material as THREE.Material).dispose()
+    }
+    spawnPointMeshesRef.current = spawnPoints.map((sp) => {
+      const geo = new THREE.ConeGeometry(1.2, 3, 12)
+      const mat = new THREE.MeshStandardMaterial({ color: SPAWNER_TEAM_COLORS[sp.team] })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.position.set(sp.x, sp.y, sp.z)
+      mesh.rotation.y = -(sp.yaw * Math.PI) / 180
+      scene.add(mesh)
+      return mesh
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spawnPoints.length])
+
+  useEffect(() => {
+    spawnPoints.forEach((sp, i) => {
+      const mesh = spawnPointMeshesRef.current[i]
+      if (!mesh) return
+      mesh.position.set(sp.x, sp.y, sp.z)
+      mesh.rotation.y = -(sp.yaw * Math.PI) / 180
+      ;(mesh.material as THREE.MeshStandardMaterial).color.setHex(SPAWNER_TEAM_COLORS[sp.team])
+      ;(mesh.material as THREE.MeshStandardMaterial).emissive = new THREE.Color(sp.id === selectedSpawnPoint ? 0x333333 : 0x000000)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spawnPoints, selectedSpawnPoint])
+
   // The real ground plane (S459-08, founder real-time: "i want there to be a plane by default
   // that the player collides with - the checkerboard in the level editor - that should
   // constitute the plane for that level... configurable in terms of size... turn on able and off
@@ -747,6 +846,52 @@ function ObjectInspector({
   )
 }
 
+// SpawnerInspector -- S459-58, founder real-time: "add spawners to nock so we can add spawners
+// for ffa" / "actual make them team based but fall back to ffa" / "call it red team and blue
+// team". Position edited numerically (drag also works, see Viewport3D's own move-spawn-point drag
+// mode) plus a team select -- FFA is the real, honest default for a brand new spawner (matches
+// the founder's own "fall back to ffa" framing: FFA spawners are the default/fallback case, team
+// spawners are the deliberate opt-in).
+function SpawnerInspector({
+  spawner,
+  onChange,
+  onDelete,
+}: {
+  spawner: ShankpitSpawner
+  onChange: (s: ShankpitSpawner) => void
+  onDelete: () => void
+}) {
+  const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
+  return (
+    <div className="platform-inspector">
+      <h3>Selected spawner</h3>
+      <label>
+        Team{' '}
+        <select value={spawner.team} onChange={(e) => onChange({ ...spawner, team: Number(e.target.value) as ShankpitSpawnerTeam })}>
+          <option value={SPAWNER_TEAM_FFA}>{SPAWNER_TEAM_LABELS[SPAWNER_TEAM_FFA]}</option>
+          <option value={SPAWNER_TEAM_RED}>{SPAWNER_TEAM_LABELS[SPAWNER_TEAM_RED]}</option>
+          <option value={SPAWNER_TEAM_BLUE}>{SPAWNER_TEAM_LABELS[SPAWNER_TEAM_BLUE]}</option>
+        </select>
+      </label>
+      <label>
+        X <input type="number" step={0.5} value={spawner.x} onChange={(e) => onChange({ ...spawner, x: num(e.target.value) })} />
+      </label>
+      <label>
+        Y <input type="number" step={0.5} value={spawner.y} onChange={(e) => onChange({ ...spawner, y: num(e.target.value) })} />
+      </label>
+      <label>
+        Z <input type="number" step={0.5} value={spawner.z} onChange={(e) => onChange({ ...spawner, z: num(e.target.value) })} />
+      </label>
+      <label>
+        Yaw <input type="number" step={15} value={spawner.yaw} onChange={(e) => onChange({ ...spawner, yaw: num(e.target.value) })} />
+      </label>
+      <button className="danger" type="button" onClick={onDelete}>
+        Delete spawner
+      </button>
+    </div>
+  )
+}
+
 // MaterialsPanel -- S459-16, founder real-time: "we will need the ability to add new materials
 // and set their textures" / "we will be able to add materials via Nock and set the texture of
 // the material from the texture library." Texture-override picking from NOCK's own texture
@@ -822,6 +967,7 @@ export default function ShankpitLevelEditor() {
   const [error, setError] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
   const [objectPickLevelId, setObjectPickLevelId] = useState<number | ''>('')
+  const [selectedSpawnPoint, setSelectedSpawnPoint] = useState<number | null>(null)
   const [editMode, setEditMode] = useState<EditMode>('object')
   // Constrain Y while dragging in object mode -- founder real-time: "i need the blocks to notfly
   // up and down when i drag them around unless i uncheck the constrain z or y or whatever box" /
@@ -896,9 +1042,11 @@ export default function ShankpitLevelEditor() {
       groundPlaneSquares: lvl.ground_plane_squares,
       walls: lvl.walls,
       objects: lvl.objects,
+      spawners: lvl.spawners ?? [],
     })
     setActiveId(id)
     setSelected(null)
+    setSelectedSpawnPoint(null)
     setDirty(false)
     setError(null)
     setSpawner(defaultSpawnerPos())
@@ -908,6 +1056,7 @@ export default function ShankpitLevelEditor() {
     setDraft(newDefaultLevel())
     setActiveId(null)
     setSelected(1)
+    setSelectedSpawnPoint(null)
     setDirty(true)
     setError(null)
     setSpawner(defaultSpawnerPos())
@@ -962,6 +1111,37 @@ export default function ShankpitLevelEditor() {
     setObjects(draft.objects.filter((o) => o.id !== id))
   }
 
+  const setSpawners = (spawners: ShankpitSpawner[]) => {
+    setDraft((d) => ({ ...d, spawners }))
+    setDirty(true)
+  }
+
+  // addSpawner -- S459-58, founder real-time: "add spawners to nock so we can add spawners for
+  // ffa" / "actual make them team based but fall back to ffa" / "call it red team and blue team".
+  // Placed at the (unsaved, per-session) spawner marker's own current position -- same "no
+  // accidental overlap" convenience addCube/addObject already give, defaulted to FFA (the real
+  // fallback team, matching "fall back to ffa" -- a level author opts INTO Red/Blue via the
+  // inspector, not the other way around).
+  const addSpawner = () => {
+    pushHistory()
+    const id = nextSpawnerId(draft.spawners)
+    const created: ShankpitSpawner = { id, x: spawner.x, y: spawner.y, z: spawner.z, yaw: 0, team: SPAWNER_TEAM_FFA }
+    setSpawners([...draft.spawners, created])
+    setSelectedSpawnPoint(id)
+    setSelected(null)
+  }
+
+  const updateSpawner = (updated: ShankpitSpawner) => {
+    setSpawners(draft.spawners.map((s) => (s.id === updated.id ? updated : s)))
+  }
+
+  const deleteSelectedSpawner = () => {
+    if (selectedSpawnPoint === null) return
+    pushHistory()
+    setSpawners(draft.spawners.filter((s) => s.id !== selectedSpawnPoint))
+    setSelectedSpawnPoint(null)
+  }
+
   const save = async () => {
     setError(null)
     try {
@@ -980,6 +1160,7 @@ export default function ShankpitLevelEditor() {
           draft.groundPlaneSquares,
           draft.walls,
           draft.objects,
+          draft.spawners,
         )
         id = created.id
         setActiveId(id)
@@ -993,6 +1174,7 @@ export default function ShankpitLevelEditor() {
           draft.groundPlaneSquares,
           draft.walls,
           draft.objects,
+          draft.spawners,
         )
       }
       setDirty(false)
@@ -1024,6 +1206,7 @@ export default function ShankpitLevelEditor() {
   }
 
   const selectedWall = selected !== null ? draft.walls.find((w) => w.id === selected) ?? null : null
+  const selectedSpawner = selectedSpawnPoint !== null ? draft.spawners.find((s) => s.id === selectedSpawnPoint) ?? null : null
 
   return (
     <div className="layout">
@@ -1159,6 +1342,9 @@ export default function ShankpitLevelEditor() {
           <button type="button" onClick={addCube}>
             + Add cube
           </button>
+          <button type="button" onClick={addSpawner}>
+            + Add spawner
+          </button>
           <div className="mode-toggle">
             <select value={objectPickLevelId} onChange={(e) => setObjectPickLevelId(e.target.value === '' ? '' : Number(e.target.value))}>
               <option value="">Add level as object...</option>
@@ -1220,6 +1406,10 @@ export default function ShankpitLevelEditor() {
               onDragStart={pushHistory}
               objects={draft.objects}
               levelSummaries={list}
+              spawnPoints={draft.spawners}
+              selectedSpawnPoint={selectedSpawnPoint}
+              onSelectSpawnPoint={setSelectedSpawnPoint}
+              onSpawnPointsChange={setSpawners}
             />
             <p className="hint">
               Drag empty space to orbit, scroll to zoom.{' '}
@@ -1240,8 +1430,28 @@ export default function ShankpitLevelEditor() {
                 onDelete={deleteSelected}
                 materials={materials}
               />
+            ) : selectedSpawner ? (
+              <SpawnerInspector spawner={selectedSpawner} onChange={updateSpawner} onDelete={deleteSelectedSpawner} />
             ) : (
-              <p className="hint">Select a cube to edit its exact position/size, or add a new one.</p>
+              <p className="hint">Select a cube or spawner to edit it, or add a new one.</p>
+            )}
+            {draft.spawners.length > 0 && (
+              <div className="object-list">
+                <h3>Spawners</h3>
+                {draft.spawners.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={s.id === selectedSpawnPoint ? 'active' : ''}
+                    onClick={() => {
+                      setSelectedSpawnPoint(s.id)
+                      setSelected(null)
+                    }}
+                  >
+                    {SPAWNER_TEAM_LABELS[s.team]}
+                  </button>
+                ))}
+              </div>
             )}
             {draft.objects.length > 0 && (
               <div className="object-list">

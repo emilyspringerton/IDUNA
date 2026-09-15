@@ -1,6 +1,9 @@
 # IDUNA Changelog
 
 ## 2026-09-15
+- S459-58: real, author-placed spawner points for SHANKPIT NOCK levels -- team-tagged (Red Team/Blue Team, matching SHANKPIT's own TDMB_RED_TEAM=0/TDMB_BLUE_TEAM=1) with FFA as the real fallback team. New Spawner type + spawners_json column, wired through the full LevelStore CRUD/export path and a new NOCK editor UI (place/drag/edit/delete spawner markers, team select) (sess-20260905-0720-ec33e7c5)
+
+
 - S459-50: provisioned the SHANKPIT-RL M2M agent (shankpit.checkpoints.write) for the new checkpoint registry -- verified via cmd/bootstrap --dry-run first, then used immediately to push a real checkpoint (sess-20260905-0720-ec33e7c5)
 
 - S459-49: real SHANKPIT bot registry on NOCK -- shankpit_rl_checkpoints table, checkpoint_store.go, handlers, and a new 'SHANKPIT AI Opponents' NOCK tab (Disable + Hide Disabled fully wired; Set as opponent deliberately deferred behind a DaisyUI 'not implemented' alert per founder instruction) (sess-20260905-0720-ec33e7c5)

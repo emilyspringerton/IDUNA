@@ -1,0 +1,11 @@
+-- SHANKPIT NOCK level editor: real, author-placed spawn points (EMILY/BACKLOG.md S459-58,
+-- founder real-time: "add spawners to nock so we can add spawners for ffa" / "actual make them
+-- team based but fall back to ffa" / "call it red team and blue team").
+--
+-- spawners_json stores an array of {id,x,y,z,yaw,team} objects. team is SHANKPIT's own real,
+-- live TDMB_RED_TEAM=0 / TDMB_BLUE_TEAM=1 convention (packages/simulation/local_game.h), with -1
+-- as the real "FFA / no team" sentinel -- an FFA-tagged spawner is the real fallback for FFA
+-- matches and for any team match with no spawner defined for the spawning player's own team.
+-- Same real JSON-blob-column pattern as walls_json/objects_json (not a separate normalized
+-- table), matching this table's own established convention exactly.
+ALTER TABLE shankpit_levels ADD COLUMN spawners_json TEXT NOT NULL DEFAULT '[]';

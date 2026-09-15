@@ -398,6 +398,27 @@ export interface ShankpitLevelObject {
   plane_solid: boolean
 }
 
+// ShankpitSpawner mirrors IDUNA/internal/shankpit.Spawner exactly -- a real, author-placed spawn
+// point (S459-58, founder real-time: "add spawners to nock so we can add spawners for ffa" /
+// "actual make them team based but fall back to ffa" / "call it red team and blue team"). team
+// uses SHANKPIT's own real, live TDMB_RED_TEAM=0/TDMB_BLUE_TEAM=1 convention
+// (packages/simulation/local_game.h) -- -1 is the real FFA/"any team" sentinel. Deliberately
+// distinct from Viewport3D's own pre-existing "spawner" marker (a per-session, unsaved authoring
+// convenience for where new cubes appear) -- these are real, persisted, game-facing spawn points.
+export type ShankpitSpawnerTeam = -1 | 0 | 1
+export const SPAWNER_TEAM_FFA: ShankpitSpawnerTeam = -1
+export const SPAWNER_TEAM_RED: ShankpitSpawnerTeam = 0
+export const SPAWNER_TEAM_BLUE: ShankpitSpawnerTeam = 1
+
+export interface ShankpitSpawner {
+  id: number
+  x: number
+  y: number
+  z: number
+  yaw: number
+  team: ShankpitSpawnerTeam
+}
+
 export interface ShankpitLevel {
   id: number
   name: string
@@ -408,6 +429,7 @@ export interface ShankpitLevel {
   ground_plane_squares: number
   walls: ShankpitWall[]
   objects: ShankpitLevelObject[]
+  spawners: ShankpitSpawner[]
   // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
   // set a level as default for queue") -- exactly one level is the real, global QUEUE default at
   // a time, same real shape ShankpitSpray's own is_default already uses.
@@ -426,6 +448,7 @@ export interface ShankpitLevelSummary {
   ground_plane_squares: number
   wall_count: number
   object_count: number
+  spawner_count: number
   is_default_queue: boolean
   created_at: string
   updated_at: string
@@ -456,6 +479,7 @@ export const shankpitLevels = {
     groundPlaneSquares: number,
     walls: ShankpitWall[],
     objects: ShankpitLevelObject[],
+    spawners: ShankpitSpawner[],
   ) =>
     sreq<ShankpitLevel>('', {
       method: 'POST',
@@ -468,6 +492,7 @@ export const shankpitLevels = {
         ground_plane_squares: groundPlaneSquares,
         walls,
         objects,
+        spawners,
       }),
     }),
   save: (
@@ -479,6 +504,7 @@ export const shankpitLevels = {
     groundPlaneSquares: number,
     walls: ShankpitWall[],
     objects: ShankpitLevelObject[],
+    spawners: ShankpitSpawner[],
   ) =>
     sreq<ShankpitLevel>(`/${id}`, {
       method: 'PUT',
@@ -490,6 +516,7 @@ export const shankpitLevels = {
         ground_plane_squares: groundPlaneSquares,
         walls,
         objects,
+        spawners,
       }),
     }),
   rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),

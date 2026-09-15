@@ -81,6 +81,7 @@ type createShankpitLevelReq struct {
 	GroundPlaneSquares int                    `json:"ground_plane_squares"`
 	Walls              []shankpit.Wall        `json:"walls"`
 	Objects            []shankpit.LevelObject `json:"objects"`
+	Spawners           []shankpit.Spawner     `json:"spawners"`
 }
 
 func (h *ShankpitLevelsHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +90,7 @@ func (h *ShankpitLevelsHandler) create(w http.ResponseWriter, r *http.Request) {
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	lvl, err := h.Store.CreateLevel(r.Context(), req.Name, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects)
+	lvl, err := h.Store.CreateLevel(r.Context(), req.Name, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -119,6 +120,7 @@ type updateShankpitLevelReq struct {
 	GroundPlaneSquares int                    `json:"ground_plane_squares"`
 	Walls              []shankpit.Wall        `json:"walls"`
 	Objects            []shankpit.LevelObject `json:"objects"`
+	Spawners           []shankpit.Spawner     `json:"spawners"`
 }
 
 // update is the real editor "save" action -- dimensions + the full wall layout replace the
@@ -137,7 +139,7 @@ func (h *ShankpitLevelsHandler) update(w http.ResponseWriter, r *http.Request, i
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	lvl, err := h.Store.UpdateLevel(r.Context(), id, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects)
+	lvl, err := h.Store.UpdateLevel(r.Context(), id, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
