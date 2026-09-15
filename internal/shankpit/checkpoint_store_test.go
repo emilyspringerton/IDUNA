@@ -29,6 +29,7 @@ func newCheckpointTestDB(t *testing.T) *sql.DB {
 			blob_path          TEXT NOT NULL,
 			is_active_opponent INTEGER NOT NULL DEFAULT 0,
 			is_disabled        INTEGER NOT NULL DEFAULT 0,
+			eval_note          TEXT NOT NULL DEFAULT '',
 			created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
@@ -46,7 +47,7 @@ func TestCheckpointStore_CreateAndGet(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	ctx := context.Background()
 
-	c, err := store.Create(ctx, "main", 1, 1500, "colab", "main_gen1.zip", []byte("fake ppo checkpoint bytes"))
+	c, err := store.Create(ctx, "main", 1, 1500, "colab", "main_gen1.zip", []byte("fake ppo checkpoint bytes"), "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -74,14 +75,14 @@ func TestCheckpointStore_CreateAndGet(t *testing.T) {
 
 func TestCheckpointStore_Create_InvalidRole(t *testing.T) {
 	store := newCheckpointTestStore(t)
-	if _, err := store.Create(context.Background(), "not_a_real_role", 1, 1500, "colab", "f.zip", []byte("x")); err == nil {
+	if _, err := store.Create(context.Background(), "not_a_real_role", 1, 1500, "colab", "f.zip", []byte("x"), ""); err == nil {
 		t.Fatalf("expected an error for an invalid role")
 	}
 }
 
 func TestCheckpointStore_Create_EmptyFile(t *testing.T) {
 	store := newCheckpointTestStore(t)
-	if _, err := store.Create(context.Background(), "main", 1, 1500, "colab", "f.zip", []byte{}); err == nil {
+	if _, err := store.Create(context.Background(), "main", 1, 1500, "colab", "f.zip", []byte{}, ""); err == nil {
 		t.Fatalf("expected an error for an empty checkpoint file")
 	}
 }
@@ -90,7 +91,7 @@ func TestCheckpointStore_List_RoleFilter(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	ctx := context.Background()
 	mustCreate := func(role string) {
-		if _, err := store.Create(ctx, role, 1, 1500, "colab", role+".zip", []byte("data")); err != nil {
+		if _, err := store.Create(ctx, role, 1, 1500, "colab", role+".zip", []byte("data"), ""); err != nil {
 			t.Fatalf("Create(%s): %v", role, err)
 		}
 	}
@@ -118,8 +119,8 @@ func TestCheckpointStore_List_RoleFilter(t *testing.T) {
 func TestCheckpointStore_SetActiveOpponent_SingleSelectionInvariant(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	ctx := context.Background()
-	a, _ := store.Create(ctx, "main", 1, 1500, "colab", "a.zip", []byte("data"))
-	b, _ := store.Create(ctx, "main", 2, 1500, "colab", "b.zip", []byte("data"))
+	a, _ := store.Create(ctx, "main", 1, 1500, "colab", "a.zip", []byte("data"), "")
+	b, _ := store.Create(ctx, "main", 2, 1500, "colab", "b.zip", []byte("data"), "")
 
 	if _, err := store.SetActiveOpponent(ctx, a.ID); err != nil {
 		t.Fatalf("SetActiveOpponent(a): %v", err)
@@ -157,7 +158,7 @@ func TestCheckpointStore_GetActiveOpponent_NoneSetYet(t *testing.T) {
 func TestCheckpointStore_SetDisabled_ReversibleFlag(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	ctx := context.Background()
-	c, _ := store.Create(ctx, "main", 1, 1500, "colab", "c.zip", []byte("data"))
+	c, _ := store.Create(ctx, "main", 1, 1500, "colab", "c.zip", []byte("data"), "")
 
 	disabled, err := store.SetDisabled(ctx, c.ID, true)
 	if err != nil || !disabled.IsDisabled {
@@ -180,7 +181,7 @@ func TestCheckpointStore_ReadBlob_RoundTrips(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	ctx := context.Background()
 	original := []byte("real ppo checkpoint bytes, not a placeholder")
-	c, err := store.Create(ctx, "main", 1, 1500, "colab", "real.zip", original)
+	c, err := store.Create(ctx, "main", 1, 1500, "colab", "real.zip", original, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

@@ -98,6 +98,7 @@ func (h *ShankpitCheckpointsHandler) upload(w http.ResponseWriter, r *http.Reque
 
 	role := r.FormValue("role")
 	sourceLocation := r.FormValue("source_location")
+	evalNote := r.FormValue("eval_note") // S459-63, real, optional diagnostic text -- see Checkpoint.EvalNote's own doc comment
 	generation, err := strconv.Atoi(r.FormValue("generation"))
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, "generation must be a real integer")
@@ -121,7 +122,7 @@ func (h *ShankpitCheckpointsHandler) upload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	c, err := h.Store.Create(r.Context(), role, generation, elo, sourceLocation, header.Filename, data)
+	c, err := h.Store.Create(r.Context(), role, generation, elo, sourceLocation, header.Filename, data, evalNote)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return

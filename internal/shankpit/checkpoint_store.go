@@ -55,12 +55,20 @@ type Checkpoint struct {
 	// IsDisabled marks this checkpoint as excluded from the league -- a real, per-checkpoint,
 	// reversible flag, distinct from IsActiveOpponent (one global in-game selection). The row and
 	// its blob stay intact so it can be re-enabled or inspected later.
-	IsDisabled bool   `json:"is_disabled"`
-	CreatedAt  string `json:"created_at"`
+	IsDisabled bool `json:"is_disabled"`
+	// EvalNote (S459-63, founder real-time: "how the fuck is my colab log gonna help it just says
+	// training") -- a real, plain-text summary of this generation's own per-role evaluation match
+	// against its prior generation (real kill counts, or a captured crash/report-failure reason),
+	// pushed alongside the checkpoint itself so it's visible through this SAME registry API
+	// without needing any access to the training process's own stdout. Empty is a real, honest
+	// "nothing evaluated" state (generation 0 has no prior to compare against; every pre-S459-63
+	// row has none either) -- purely diagnostic, never fed back into Elo or any other behavior.
+	EvalNote  string `json:"eval_note"`
+	CreatedAt string `json:"created_at"`
 }
 
 const checkpointColumns = `id, name, role, generation, elo, source_location, filename, sha256, size_bytes,
-	is_active_opponent, is_disabled, created_at`
+	is_active_opponent, is_disabled, eval_note, created_at`
 
 // scanCheckpointRow reads one real row matching checkpointColumns' own exact column order --
 // shared by every query below so the column list and the Scan() call can never silently drift
@@ -68,7 +76,7 @@ const checkpointColumns = `id, name, role, generation, elo, source_location, fil
 func scanCheckpointRow(scan func(...any) error) (*Checkpoint, error) {
 	var c Checkpoint
 	if err := scan(&c.ID, &c.Name, &c.Role, &c.Generation, &c.Elo, &c.SourceLocation, &c.Filename, &c.SHA256, &c.SizeBytes,
-		&c.IsActiveOpponent, &c.IsDisabled, &c.CreatedAt); err != nil {
+		&c.IsActiveOpponent, &c.IsDisabled, &c.EvalNote, &c.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -104,7 +112,7 @@ func validateCheckpointInput(role, sourceLocation, filename string, data []byte)
 
 // Create validates, hashes, writes the real blob to disk, and inserts the metadata row -- in
 // that order, so a failed DB insert never leaves an orphaned blob file with no matching row.
-func (s *CheckpointStore) Create(ctx context.Context, role string, generation int, elo float64, sourceLocation, filename string, data []byte) (*Checkpoint, error) {
+func (s *CheckpointStore) Create(ctx context.Context, role string, generation int, elo float64, sourceLocation, filename string, data []byte, evalNote string) (*Checkpoint, error) {
 	if err := validateCheckpointInput(role, sourceLocation, filename, data); err != nil {
 		return nil, err
 	}
@@ -117,10 +125,17 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 
 	name := fmt.Sprintf("%s_%s", role, time.Now().UTC().Format("20060102_150405"))
 
+	// evalNote is real, optional, purely diagnostic text (S459-63) -- clamped to the column's own
+	// real 500-char bound rather than trusting the uploader.
+	const maxEvalNoteLen = 500
+	if len(evalNote) > maxEvalNoteLen {
+		evalNote = evalNote[:maxEvalNoteLen]
+	}
+
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO shankpit_rl_checkpoints (name, role, generation, elo, source_location, filename, sha256, size_bytes, blob_path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
-		name, role, generation, elo, sourceLocation, filename, sha, len(data))
+		`INSERT INTO shankpit_rl_checkpoints (name, role, generation, elo, source_location, filename, sha256, size_bytes, blob_path, eval_note)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
+		name, role, generation, elo, sourceLocation, filename, sha, len(data), evalNote)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: create checkpoint row: %w", err)
 	}
