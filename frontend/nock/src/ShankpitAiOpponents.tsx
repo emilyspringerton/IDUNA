@@ -7,15 +7,16 @@ import { shankpitCheckpoints, type ShankpitCheckpoint } from './api'
 // AiOpponents.tsx's own real "list on the left, act on the right" shape and behavior, applied to
 // the new SHANKPIT checkpoint registry (internal/shankpit/checkpoint_store.go, S459-49).
 //
-// Real, deliberate scope per the founder's own explicit instruction: Disable and Hide Disabled
-// are REAL and fully wired (identical backend contract to BRAWLPIT's own). "Set as opponent" is
-// NOT wired yet — the button exists (so the affordance is visibly present, matching "put the
-// button"), but clicking it shows a DaisyUI alert saying so instead of calling
-// shankpitCheckpoints.activate (which is itself a real, working endpoint server-side already —
-// see api.ts's own doc comment on shankpitCheckpoints.activate). This is deliberately NOT the
-// same status as BRAWLPIT's AiOpponents.tsx (whose "Set as opponent" is real and wired) — SHANKPIT
-// has no native-inference weight export yet (no has_weights concept at all here), so there is
-// nothing downstream that would actually consume an activated SHANKPIT checkpoint today.
+// S459-62, founder real-time: "can we update the QUEUE to use the active opponent until we have
+// a league to queue against?" -- "Set as opponent" is now REAL and wired (calls
+// shankpitCheckpoints.activate, the same real endpoint that was already live server-side).
+// Real, honest scope of what activating a checkpoint here now does: `ops/shankpit-bot-pool.sh`
+// polls this same GET /api/v1/shankpit-checkpoints/active endpoint and, when one is set, spawns
+// scripts/frozen_policy_bot.py (real PPO inference over a real UDP connection -- the same
+// self-play primitive training already uses) into QUEUE instead of the heuristic emily-bot pool
+// -- a real, deliberate STOPGAP ("until we have a league to queue against"), distinct from
+// BRAWLPIT's own native in-game C inference (SHANKPIT still has no has_weights/native-export
+// concept at all -- that stays real, separate, future work, not silently promised here).
 
 const ROLE_LABELS: Record<string, string> = {
   main: 'Main',
@@ -26,13 +27,13 @@ const ROLE_LABELS: Record<string, string> = {
 function CheckpointRow({
   c,
   isActive,
-  onActivateAttempt,
+  onActivate,
   onToggleDisabled,
   busy,
 }: {
   c: ShankpitCheckpoint
   isActive: boolean
-  onActivateAttempt: () => void
+  onActivate: () => void
   onToggleDisabled: () => void
   busy: boolean
 }) {
@@ -54,8 +55,8 @@ function CheckpointRow({
         {isActive ? (
           <span className="active-badge">★ current opponent</span>
         ) : (
-          <button type="button" disabled={busy} onClick={onActivateAttempt}
-                  title="Not implemented yet -- see the note above the table.">
+          <button type="button" disabled={busy} onClick={onActivate}
+                  title="Spawns this checkpoint into QUEUE via a real frozen_policy_bot.py process, replacing the heuristic bot pool.">
             Set as opponent
           </button>
         )}
@@ -74,10 +75,6 @@ export default function ShankpitAiOpponents() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  // showNotImplemented -- the real, deferred "Set default" affordance (see this file's own
-  // module doc comment). A DaisyUI alert, not a bare browser alert() -- matches the founder's own
-  // explicit "put like a daisy ui alert" instruction.
-  const [showNotImplemented, setShowNotImplemented] = useState(false)
 
   // Same real, per-viewer localStorage display-preference convention AiOpponents.tsx's own
   // hideDisabled already establishes (see that file's own doc comment for the full rationale) --
@@ -113,6 +110,19 @@ export default function ShankpitAiOpponents() {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  const activate = async (c: ShankpitCheckpoint) => {
+    setBusyId(c.id)
+    setError(null)
+    try {
+      await shankpitCheckpoints.activate(c.id)
+      refresh()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   const toggleDisabled = async (c: ShankpitCheckpoint) => {
     setBusyId(c.id)
@@ -159,21 +169,10 @@ export default function ShankpitAiOpponents() {
         <h2>SHANKPIT AI Opponents</h2>
         <p className="hint">
           Real checkpoints pushed from any training location to the shared registry (S459-48/49).
-          Selecting an opponent is not wired up yet -- see below.
+          "Set as opponent" spawns that checkpoint into QUEUE (real PPO inference over UDP,
+          replacing the heuristic bot pool) as a real stopgap until a full league can be queued
+          against (S459-62).
         </p>
-
-        {showNotImplemented && (
-          <div role="alert" className="alert alert-warning" style={{ marginBottom: '0.75rem' }}>
-            <span>
-              Setting the active SHANKPIT opponent isn't implemented yet -- the registry backend is real
-              (checkpoints can be listed, disabled, and re-enabled), but nothing downstream consumes an
-              "active opponent" selection for SHANKPIT the way BRAWLPIT's own does yet.
-            </span>
-            <button type="button" onClick={() => setShowNotImplemented(false)} aria-label="Dismiss">
-              ✕
-            </button>
-          </div>
-        )}
 
         <label>
           Role{' '}
@@ -234,7 +233,7 @@ export default function ShankpitAiOpponents() {
                 c={c}
                 isActive={active?.id === c.id}
                 busy={busyId === c.id || bulkBusy}
-                onActivateAttempt={() => setShowNotImplemented(true)}
+                onActivate={() => activate(c)}
                 onToggleDisabled={() => toggleDisabled(c)}
               />
             ))}

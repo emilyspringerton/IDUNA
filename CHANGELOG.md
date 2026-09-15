@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-15
+- S459-62: wired the real "Set as opponent" button in ShankpitAiOpponents.tsx -- founder real-time: "can we update the QUEUE to use the active opponent until we have a league to queue against?" Now calls the already-real shankpitCheckpoints.activate endpoint (previously showed a DaisyUI "not implemented" alert). Real downstream consumer lives in SHANKPIT's ops/shankpit-bot-pool.sh (see that repo's own CHANGELOG). Live-verified via a real, contained test: activated a low-stakes disabled test checkpoint via the actual Go store logic, confirmed GET /api/v1/shankpit-checkpoints/active reflects it, reverted to null afterward -- production ends in the exact same "no active opponent" state it started in. go test/tsc+vite build clean, new identifier confirmed in dist/ (sess-20260905-0720-ec33e7c5)
 - S459-58: real, author-placed spawner points for SHANKPIT NOCK levels -- team-tagged (Red Team/Blue Team, matching SHANKPIT's own TDMB_RED_TEAM=0/TDMB_BLUE_TEAM=1) with FFA as the real fallback team. New Spawner type + spawners_json column, wired through the full LevelStore CRUD/export path and a new NOCK editor UI (place/drag/edit/delete spawner markers, team select) (sess-20260905-0720-ec33e7c5)
 
 
