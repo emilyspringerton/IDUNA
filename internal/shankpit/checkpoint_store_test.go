@@ -170,6 +170,44 @@ func TestCheckpointStore_SetDisabled_ReversibleFlag(t *testing.T) {
 	}
 }
 
+func TestCheckpointStore_UpdateElo_MovesAnAlreadyPushedCheckpoint(t *testing.T) {
+	// S459-76: a checkpoint's own real elo keeps moving every time a later generation evaluates
+	// against it -- this real, direct regression guard confirms the registry can actually reflect
+	// that after the fact, not just at the moment of its own initial push.
+	store := newCheckpointTestStore(t)
+	ctx := context.Background()
+	c, err := store.Create(ctx, "main", 0, 1500, "colab", "gen0.zip", []byte("data"), "no prior generation to evaluate against yet")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	updated, err := store.UpdateElo(ctx, c.ID, 1484, "vs prior gen: kills 9-13")
+	if err != nil {
+		t.Fatalf("UpdateElo: %v", err)
+	}
+	if updated.Elo != 1484 {
+		t.Fatalf("expected elo=1484 after update, got %v", updated.Elo)
+	}
+	if updated.EvalNote != "vs prior gen: kills 9-13" {
+		t.Fatalf("expected the new eval_note to stick, got %q", updated.EvalNote)
+	}
+
+	reread, err := store.Get(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if reread.Elo != 1484 {
+		t.Fatalf("expected the updated elo to persist across a fresh Get, got %v", reread.Elo)
+	}
+}
+
+func TestCheckpointStore_UpdateElo_UnknownID(t *testing.T) {
+	store := newCheckpointTestStore(t)
+	if _, err := store.UpdateElo(context.Background(), 99999, 1500, ""); err == nil {
+		t.Fatalf("expected an error for a nonexistent checkpoint id")
+	}
+}
+
 func TestCheckpointStore_SetDisabled_UnknownID(t *testing.T) {
 	store := newCheckpointTestStore(t)
 	if _, err := store.SetDisabled(context.Background(), 99999, true); err == nil {

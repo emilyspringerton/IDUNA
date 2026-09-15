@@ -236,6 +236,35 @@ func (s *CheckpointStore) GetActiveOpponent(ctx context.Context) (*Checkpoint, e
 	return c, nil
 }
 
+// UpdateElo overwrites checkpoint `id`'s own real elo/eval_note fields in place -- S459-76, real,
+// found-live gap: founder real-time "im a little concerned that the elos of the generation 0
+// bots arent going up and down... can we make sure the elos are set up to go up and down not
+// just whatever the first elo into the registry is?" Checked directly: it wasn't a match-
+// scheduling gap (gen 0 genuinely does get evaluated once, by generation 1's own real
+// vs-prior-gen match, per rl_train_packet.py's own real league orchestrator) -- the real gap was
+// that this registry had NO way to update an already-pushed checkpoint's own real elo at all.
+// push_checkpoint (Create) is correctly a one-shot POST for the checkpoint FILE itself (the real
+// PPO weights never change after training), but a checkpoint's own real skill rating keeps
+// moving every time a LATER generation evaluates against it -- elo is a real, live, mutable
+// property of an immutable artifact, and until this method existed there was no way to keep the
+// two in sync. Same real, minimal "UPDATE one column, return the fresh row" shape as
+// SetDisabled below.
+func (s *CheckpointStore) UpdateElo(ctx context.Context, id int64, elo float64, evalNote string) (*Checkpoint, error) {
+	const maxEvalNoteLen = 500
+	if len(evalNote) > maxEvalNoteLen {
+		evalNote = evalNote[:maxEvalNoteLen]
+	}
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE shankpit_rl_checkpoints SET elo = ?, eval_note = ? WHERE id = ?`, elo, evalNote, id)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: update checkpoint elo: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("shankpit: checkpoint %d not found", id)
+	}
+	return s.Get(ctx, id)
+}
+
 // SetDisabled marks checkpoint `id` as excluded from the league (or re-enables it).
 func (s *CheckpointStore) SetDisabled(ctx context.Context, id int64, disabled bool) (*Checkpoint, error) {
 	res, err := s.DB.ExecContext(ctx, `UPDATE shankpit_rl_checkpoints SET is_disabled = ? WHERE id = ?`, disabled, id)

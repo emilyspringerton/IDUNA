@@ -773,7 +773,15 @@ func main() {
 		}
 		shankpitCheckpointsPublicH.ServeHTTP(w, r)
 	}))
-	mux.Handle("/api/v1/shankpit-checkpoints/", shankpitCheckpointsPublicH)
+	mux.Handle("/api/v1/shankpit-checkpoints/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// S459-76: PATCH .../:id (real elo-update route) needs the SAME agent-auth gate as
+		// POST above -- everything else under this prefix (download, active) stays public.
+		if r.Method == http.MethodPatch {
+			shankpitCheckpointsH.ServeHTTP(w, r)
+			return
+		}
+		shankpitCheckpointsPublicH.ServeHTTP(w, r)
+	}))
 
 	shankpitCheckpointActivateHInner := &handlers.ShankpitCheckpointActivateHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints"}}
 	shankpitCheckpointDisableHInner := &handlers.ShankpitCheckpointDisableHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints"}}

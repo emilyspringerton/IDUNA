@@ -56,6 +56,8 @@ func (h *ShankpitCheckpointsHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		h.getActive(w, r)
 	case len(parts) == 2 && parts[1] == "download" && r.Method == http.MethodGet:
 		h.download(w, r, parts[0])
+	case len(parts) == 1 && r.Method == http.MethodPatch:
+		h.updateElo(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -134,6 +136,37 @@ func (h *ShankpitCheckpointsHandler) upload(w http.ResponseWriter, r *http.Reque
 	})
 
 	writeJSON(w, http.StatusCreated, c)
+}
+
+// updateElo is PATCH /api/v1/shankpit-checkpoints/:id -- S459-76, real fix for a checkpoint's own
+// Elo never moving after its initial push. Gated the same way upload is (agent-auth,
+// shankpit.checkpoints.write) since this is called by the SAME training pipeline that already
+// authenticates that way -- not the admin-cookie-gated activate/disable routes below, which are
+// real human NOCK actions, not automated training-pipeline writes. Body: {"elo": float,
+// "eval_note": string (optional)}.
+func (h *ShankpitCheckpointsHandler) updateElo(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Elo      float64 `json:"elo"`
+		EvalNote string  `json:"eval_note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	c, err := h.Store.UpdateElo(r.Context(), id, req.Elo, req.EvalNote)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:shankpit.checkpoint.elo_update", "shankpit-checkpoints", map[string]any{
+		"id": c.ID, "role": c.Role, "generation": c.Generation, "elo": c.Elo,
+	})
+	writeJSON(w, http.StatusOK, c)
 }
 
 func (h *ShankpitCheckpointsHandler) download(w http.ResponseWriter, r *http.Request, idStr string) {
