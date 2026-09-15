@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-15
+- S459-50: provisioned the SHANKPIT-RL M2M agent (shankpit.checkpoints.write) for the new checkpoint registry -- verified via cmd/bootstrap --dry-run first, then used immediately to push a real checkpoint (sess-20260905-0720-ec33e7c5)
 
 - S459-49: real SHANKPIT bot registry on NOCK -- shankpit_rl_checkpoints table, checkpoint_store.go, handlers, and a new 'SHANKPIT AI Opponents' NOCK tab (Disable + Hide Disabled fully wired; Set as opponent deliberately deferred behind a DaisyUI 'not implemented' alert per founder instruction) (sess-20260905-0720-ec33e7c5)
 
