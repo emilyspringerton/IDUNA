@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-15
+
+- S459-49: real SHANKPIT bot registry on NOCK -- shankpit_rl_checkpoints table, checkpoint_store.go, handlers, and a new 'SHANKPIT AI Opponents' NOCK tab (Disable + Hide Disabled fully wired; Set as opponent deliberately deferred behind a DaisyUI 'not implemented' alert per founder instruction) (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-14
 - docs(nock): correct PE macro recording cross-reference — belongs to DUNG, not internal/nock (sess-20260905-0720-ec33e7c5)
 - NOCK: non-destructive hue/saturation/sharpen adjustments (S416-04). Layer.Brightness/Saturation/Hue/SharpenRadius/SharpenSigma/SharpenAmount now real metadata, applied to a working copy on every export -- stored layer file never touched, re-tuning always starts fresh. Commit b576606 (sess-20260905-0720-ec33e7c5)
