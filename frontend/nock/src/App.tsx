@@ -3,6 +3,7 @@ import { api, generateProcedural, shankpitSprays, textures, type Layer, type Pro
 import LevelEditor from './LevelEditor'
 import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
+import ShankpitAiOpponents from './ShankpitAiOpponents'
 import Sprays from './Sprays'
 import './App.css'
 
@@ -736,8 +737,8 @@ function TextureLibrary() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'sprays'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'brawlpit', 'ai-opponents', 'shankpit', 'sprays']
+type Tab = 'projects' | 'textures' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'sprays'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'sprays']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -824,6 +825,9 @@ export default function App() {
           <button className={tab === 'shankpit' ? 'active' : ''} onClick={() => setTab('shankpit')}>
             SHANKPIT Levels
           </button>
+          <button className={tab === 'shankpit-ai-opponents' ? 'active' : ''} onClick={() => setTab('shankpit-ai-opponents')}>
+            SHANKPIT AI Opponents
+          </button>
           <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
             Sprays
           </button>
@@ -841,6 +845,10 @@ export default function App() {
       ) : tab === 'ai-opponents' ? (
         <div className="layout-single">
           <AiOpponents />
+        </div>
+      ) : tab === 'shankpit-ai-opponents' ? (
+        <div className="layout-single">
+          <ShankpitAiOpponents />
         </div>
       ) : tab === 'sprays' ? (
         <Sprays />

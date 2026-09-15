@@ -630,3 +630,63 @@ export const checkpoints = {
       return (await res.json()) as Checkpoint
     }),
 }
+
+// --- SHANKPIT RL checkpoint registry (S459-49) ---
+//
+// Founder real-time: "bring in the bot registry affordances on NOCK all the same - ability to
+// disable - hide disabled - set default (defer this...) - for shankpit". Mirrors the Checkpoint/
+// checkpoints shape immediately above field-for-field, scoped down to match
+// internal/shankpit/checkpoint_store.go's own real, deliberate scope-down (no weights/has_weights
+// -- no SHANKPIT native-inference export exists yet).
+export interface ShankpitCheckpoint {
+  id: number
+  name: string
+  role: string
+  generation: number
+  elo: number
+  source_location: string
+  filename: string
+  sha256: string
+  size_bytes: number
+  is_active_opponent: boolean
+  is_disabled: boolean
+  created_at: string
+}
+
+const SHANKPIT_CHECKPOINTS_BASE = '/api/v1/shankpit-checkpoints'
+const SHANKPIT_CHECKPOINTS_ADMIN_BASE = '/admin/nock/api/shankpit-checkpoints'
+
+async function screq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${SHANKPIT_CHECKPOINTS_BASE}${path}`, { credentials: 'include', ...opts })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  return (await res.json()) as T
+}
+
+export const shankpitCheckpoints = {
+  list: (role?: string) => screq<ShankpitCheckpoint[]>(role ? `?role=${enc(role)}` : ''),
+  getActive: () => screq<ShankpitCheckpoint | null>('/active'),
+  // activate: real endpoint, wired server-side -- but per the founder's own explicit "set default
+  // (defer this...)" instruction, ShankpitAiOpponents.tsx does NOT call this yet; the button shows
+  // a DaisyUI "not implemented" alert instead. Exported here so flipping that stub to a real call
+  // later needs no new API-client code.
+  activate: (id: number) =>
+    fetch(`${SHANKPIT_CHECKPOINTS_ADMIN_BASE}/${id}/activate`, { method: 'PATCH', credentials: 'include' }).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+      return (await res.json()) as ShankpitCheckpoint
+    }),
+  // setDisabled is real and wired into the UI now (the founder's own instruction only deferred
+  // "set default", not disable/hide-disabled).
+  setDisabled: (id: number, disabled: boolean) =>
+    fetch(`${SHANKPIT_CHECKPOINTS_ADMIN_BASE}/${id}/disable`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled }),
+    }).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+      return (await res.json()) as ShankpitCheckpoint
+    }),
+}

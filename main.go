@@ -753,6 +753,43 @@ func main() {
 	)
 	mux.Handle("/admin/nock/api/brawlpit-checkpoints/", brawlpitCheckpointActivateH)
 
+	// S459-49, founder real-time: "bring in the bot registry affordances on NOCK all the same -
+	// ability to disable - hide disabled - set default (defer this put the button then put like a
+	// daisy ui alert not implemented) - for shankpit" -- the real SHANKPIT checkpoint registry,
+	// same routing shape as the BRAWLPIT block immediately above (see that block's own comments
+	// for the full public-vs-gated split rationale; internal/shankpit/checkpoint_store.go's own
+	// doc comment for what's deliberately scoped down from BRAWLPIT's final registry).
+	shankpitCheckpointsHInner := &handlers.ShankpitCheckpointsHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints"}}
+	shankpitCheckpointsH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("shankpit.checkpoints.write")(
+			shankpitCheckpointsHInner,
+		),
+	)
+	shankpitCheckpointsPublicH := &handlers.ShankpitCheckpointsHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints"}}
+	mux.Handle("/api/v1/shankpit-checkpoints", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			shankpitCheckpointsH.ServeHTTP(w, r)
+			return
+		}
+		shankpitCheckpointsPublicH.ServeHTTP(w, r)
+	}))
+	mux.Handle("/api/v1/shankpit-checkpoints/", shankpitCheckpointsPublicH)
+
+	shankpitCheckpointActivateHInner := &handlers.ShankpitCheckpointActivateHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints"}}
+	shankpitCheckpointDisableHInner := &handlers.ShankpitCheckpointDisableHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints"}}
+	shankpitCheckpointActivateH := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(
+		middleware.RequirePermission("iduna.admin")(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/disable") {
+					shankpitCheckpointDisableHInner.ServeHTTP(w, r)
+					return
+				}
+				shankpitCheckpointActivateHInner.ServeHTTP(w, r)
+			}),
+		),
+	)
+	mux.Handle("/admin/nock/api/shankpit-checkpoints/", shankpitCheckpointActivateH)
+
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.
 	gfdMobDropsJSONPath := getenv("GFD_MOB_DROPS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/mob_drops.json")
@@ -893,6 +930,9 @@ func main() {
 	brawlpitCheckpointsHInner.EventLog = unifiedLog
 	brawlpitCheckpointActivateHInner.EventLog = unifiedLog
 	brawlpitCheckpointDisableHInner.EventLog = unifiedLog
+	shankpitCheckpointsHInner.EventLog = unifiedLog
+	shankpitCheckpointActivateHInner.EventLog = unifiedLog
+	shankpitCheckpointDisableHInner.EventLog = unifiedLog
 
 	// Wire the developer portal's real IDUNA login now that userProj exists
 	// (see the portalH declaration above, in the /portal route block, for
