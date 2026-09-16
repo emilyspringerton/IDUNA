@@ -205,6 +205,13 @@ export const textures = {
   regenerate: (id: number, source: string) =>
     treq<Texture>(`/${id}/regenerate`, { method: 'PATCH', body: JSON.stringify({ source }) }),
 
+  // createFromSource is the blank-slate PARENA path: no Vertex AI call, hand-written source
+  // compiled+rendered server-side the exact same way regenerate() re-runs an edited one. A 400
+  // here means a real compile/validation failure (validateProcTextureSource or a parena/javac
+  // error) -- treq already turns a non-ok response into a thrown Error carrying that message.
+  createFromSource: (name: string, width: number, height: number, source: string) =>
+    treq<Texture>('', { method: 'POST', body: JSON.stringify({ name, width, height, source }) }),
+
   async generate(name: string, prompt: string, width: number, height: number): Promise<TextureGenerateResult> {
     const res = await fetch(`${TEXTURES_BASE}/generate`, {
       method: 'POST',

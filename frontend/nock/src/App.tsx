@@ -632,6 +632,70 @@ function TextureLibraryGenerateForm({ onChanged }: { onChanged: (newId?: number)
   )
 }
 
+// PARENA_STARTER_SOURCE is the blank-slate default dropped into TextureFromSourceForm's own
+// textarea -- the exact real contract procgen.go's own validateProcTextureSource enforces
+// (module gentexture / import math / pixel-r,g,b taking x,y,w,h), filled in with a trivial but
+// real, non-degenerate gradient so "Create" works immediately without editing anything first.
+const PARENA_STARTER_SOURCE = `(module gentexture)
+(import math)
+
+(defn pixel-r [(x : F64) (y : F64) (w : F64) (h : F64)] : F64 (/ x w))
+(defn pixel-g [(x : F64) (y : F64) (w : F64) (h : F64)] : F64 (/ y h))
+(defn pixel-b [(x : F64) (y : F64) (w : F64) (h : F64)] : F64 0.5)
+`
+
+// TextureFromSourceForm is the blank-slate PARENA editor (founder real-time, 2026-09-16: "add a
+// parena frontend to nock texture generator" -> "blank-slate PARENA editor") -- no Vertex AI
+// prompt involved, hits textures.createFromSource directly against the same real
+// CreateProceduralTexture/procgen.go compile pipeline TextureLibraryRow's own "Edit source" ->
+// "Re-run" flow already uses for AI-generated textures. That existing flow only ever starts from
+// AI output; this is the missing "start from nothing" counterpart, same real backend either way.
+function TextureFromSourceForm({ onChanged }: { onChanged: (newId?: number) => void }) {
+  const [name, setName] = useState('')
+  const [width, setWidth] = useState(256)
+  const [height, setHeight] = useState(256)
+  const [source, setSource] = useState(PARENA_STARTER_SOURCE)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const t = await textures.createFromSource(name, width, height, source)
+      setName('')
+      setSource(PARENA_STARTER_SOURCE)
+      onChanged(t.id)
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="procedural-form" onSubmit={submit}>
+      <h3>Write a texture in PARENA</h3>
+      <p className="hint">
+        No AI involved -- hand-write the <code>pixel-r</code>/<code>pixel-g</code>/<code>pixel-b</code> functions directly. Compiled
+        and rendered server-side, same sandboxed Java target the AI-generated textures use.
+      </p>
+      <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+      <div className="new-project-form">
+        <input type="number" value={width} min={1} onChange={(e) => setWidth(Number(e.target.value))} aria-label="width" />
+        <span>×</span>
+        <input type="number" value={height} min={1} onChange={(e) => setHeight(Number(e.target.value))} aria-label="height" />
+      </div>
+      <textarea className="source-textarea" value={source} onChange={(e) => setSource(e.target.value)} rows={10} spellCheck={false} />
+      <button type="submit" disabled={!name || !source || busy}>
+        {busy ? 'Compiling…' : 'Create'}
+      </button>
+      {error && <p className="error">{error}</p>}
+    </form>
+  )
+}
+
 function TextureLibraryRow({ t, onChanged }: { t: TextureSummary; onChanged: () => void }) {
   const [expanded, setExpanded] = useState(false)
   const [source, setSource] = useState<string | null>(null)
@@ -727,6 +791,7 @@ function TextureLibrary() {
   return (
     <div className="texture-library">
       <TextureLibraryGenerateForm onChanged={refresh} />
+      <TextureFromSourceForm onChanged={refresh} />
       <div className="texture-grid">
         {list.map((t) => (
           <TextureLibraryRow key={t.id} t={t} onChanged={refresh} />
