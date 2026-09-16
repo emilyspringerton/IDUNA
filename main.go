@@ -634,6 +634,22 @@ func main() {
 	mux.Handle("/admin/nock/api/animations", nockAnimationsProtected)
 	mux.Handle("/admin/nock/api/animations/", nockAnimationsProtected)
 
+	// NOCK door script repository (SHANKPIT Story System Phase 1, S459-81 -- founder real-time:
+	// "you know what we are tryna do fill in the gaps", closing the "via the nock tools" gap
+	// named at the very start of that whole design thread). Same real shape as the texture/
+	// animation stores above; see internal/nock/door_script_store.go and
+	// door_script_compile.go's own header comments. The download route is a SEPARATE, public,
+	// unauthenticated handler (nock_door_scripts_public.go) -- SHANKPIT's own game server is the
+	// real consumer and has no IDUNA login of its own, same posture shankpit-levels' own public
+	// export route already established.
+	doorScriptStore := &nock.DoorScriptStore{DB: db}
+	nockDoorScriptsH := &handlers.NockDoorScriptsHandler{Store: doorScriptStore}
+	nockDoorScriptsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockDoorScriptsH))
+	mux.Handle("/admin/nock/api/door-scripts", nockDoorScriptsProtected)
+	mux.Handle("/admin/nock/api/door-scripts/", nockDoorScriptsProtected)
+	nockDoorScriptsPublicH := &handlers.NockDoorScriptsPublicHandler{Store: doorScriptStore}
+	mux.Handle("/api/v1/nock-door-scripts/", nockDoorScriptsPublicH)
+
 	// BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
 	// editor online - web technologies - we already started building nock - can we finish
 	// building out some of that interface so we can kind of parlay it into an online brawlpit
