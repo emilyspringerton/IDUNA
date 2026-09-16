@@ -226,6 +226,71 @@ export const textures = {
   },
 }
 
+// ---- NOCK animation repository (founder real-time, 2026-09-16: "need animation repository" /
+// "ok I need to import quaternion assets nock tools drag and drop") -- real storage/browse layer
+// for GOLDENBAND's own .gband/.gskel/.gmesh assets. See IDUNA/internal/nock/anim_store.go and
+// gltf_convert.go for the real backend (server-side glTF conversion, no local gbtool needed for
+// the drag-and-drop path). ----
+
+export interface Animation {
+  id: number
+  name: string
+  tick_rate: number
+  duration_ticks: number
+  num_channels: number
+  content_hash: string
+  manifest_json: string
+  source_location?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AnimationSummary {
+  id: number
+  name: string
+  tick_rate: number
+  duration_ticks: number
+  num_channels: number
+  has_skel: boolean
+  has_mesh: boolean
+  source_location?: string
+  created_at: string
+  updated_at: string
+}
+
+const ANIMATIONS_BASE = '/admin/nock/api/animations'
+
+async function animReq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${ANIMATIONS_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const animations = {
+  list: () => animReq<AnimationSummary[]>(''),
+  get: (id: number) => animReq<Animation>(`/${id}`),
+  rename: (id: number, name: string) => animReq<Animation>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  delete: (id: number) => animReq<void>(`/${id}`, { method: 'DELETE' }),
+  clone: (id: number, name: string) => animReq<Animation>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
+  downloadUrl: (id: number, kind: 'gband' | 'gskel' | 'gmesh') => `${ANIMATIONS_BASE}/${id}/${kind}`,
+
+  // importGLTF is the real drag-and-drop path: one raw .glb (or embedded-buffer .gltf) file,
+  // converted server-side -- no local gbtool run required first.
+  importGLTF: (file: File, name: string, tickRate?: number) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('name', name)
+    form.append('source_location', 'nock drag-and-drop')
+    if (tickRate) form.append('tick_rate', String(tickRate))
+    return animReq<Animation>('/import-gltf', { method: 'POST', body: form })
+  },
+}
+
 // ---- BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
 // editor online - web technologies - we already started building nock - can we finish building
 // out some of that interface so we can kind of parlay it into an online brawlpit level editor?")

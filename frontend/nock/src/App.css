@@ -291,6 +291,45 @@ textarea {
   @apply px-2 py-1 text-xs;
 }
 
+/* NOCK animation repository (2026-09-16) */
+
+.animation-repository {
+  @apply flex max-w-5xl flex-col gap-4;
+}
+
+.dropzone {
+  @apply flex cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-line bg-panel p-8 text-center text-sm text-muted transition-colors;
+}
+
+.dropzone.drag-over {
+  @apply border-gold text-ink;
+}
+
+.dropzone.busy {
+  @apply cursor-wait opacity-60;
+}
+
+.animation-list {
+  @apply grid gap-4;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.animation-card {
+  @apply flex flex-col gap-1 rounded-lg border border-line bg-panel p-3;
+}
+
+.animation-actions {
+  @apply mt-1 flex flex-wrap gap-2 text-xs;
+}
+
+.animation-actions a {
+  @apply rounded border border-line px-2 py-1 no-underline;
+}
+
+.animation-actions button {
+  @apply px-2 py-1 text-xs;
+}
+
 /* BRAWLPIT level editor (S415-02/03) -- reuses .layout/.project-list/.project-header/
    .editor-body/.canvas-pane/.side-pane from the Project (layer) editor above; these rules add
    only what's genuinely new for this tab. */

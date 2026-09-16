@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, generateProcedural, shankpitSprays, textures, type Layer, type Project, type TextureSummary } from './api'
+import { animations, api, generateProcedural, shankpitSprays, textures, type AnimationSummary, type Layer, type Project, type TextureSummary } from './api'
 import LevelEditor from './LevelEditor'
 import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
@@ -802,8 +802,138 @@ function TextureLibrary() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'sprays'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'sprays']
+// Animations is the real NOCK animation repository (founder real-time, 2026-09-16: "need
+// animation repository" -> "ok I need to import quaternion assets nock tools drag and drop").
+// A drag-and-drop zone for a raw .glb/.gltf file straight from Blender's own glTF export --
+// converted to real GOLDENBAND .gband/.gskel/.gmesh assets server-side (see
+// IDUNA/internal/nock/gltf_convert.go), no local gbtool run required. Uploading via gbtool's own
+// CLI first (for a .gltf+external .bin pair, which can't be converted from one dropped file) is
+// still real and still works -- POST /admin/nock/api/animations itself, not built as a form here
+// yet since drag-and-drop covers Blender's own default "glTF Binary (.glb)" export already.
+function Animations() {
+  const [list, setList] = useState<AnimationSummary[]>([])
+  const [dragOver, setDragOver] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [pendingName, setPendingName] = useState('')
+
+  const refresh = useCallback(() => {
+    animations.list().then(setList)
+  }, [])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const doImport = async (file: File) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const name = pendingName.trim() || file.name.replace(/\.(glb|gltf)$/i, '')
+      await animations.importGLTF(file, name)
+      setPendingName('')
+      refresh()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="animation-repository">
+      <h3>Import a quaternion animation (glTF)</h3>
+      <p className="hint">
+        Drag a <code>.glb</code> straight from Blender's "glTF Binary" export -- converted server-side into real{' '}
+        <code>.gband</code>/<code>.gskel</code>/<code>.gmesh</code> assets with real quaternion rotation channels. No local tooling needed.
+      </p>
+      <input
+        placeholder="name (defaults to the file name)"
+        value={pendingName}
+        onChange={(e) => setPendingName(e.target.value)}
+      />
+      <label
+        className={`dropzone${dragOver ? ' drag-over' : ''}${busy ? ' busy' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragOver(true)
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragOver(false)
+          const file = e.dataTransfer.files[0]
+          if (file) doImport(file)
+        }}
+      >
+        {busy ? 'Importing…' : 'Drop a .glb/.gltf file here, or click to browse'}
+        <input
+          type="file"
+          accept=".glb,.gltf"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) doImport(file)
+            e.target.value = ''
+          }}
+        />
+      </label>
+      {error && <p className="error">{error}</p>}
+
+      <div className="animation-list">
+        {list.map((a) => (
+          <div key={a.id} className="animation-card">
+            <strong>{a.name}</strong>
+            <span className="hint">
+              {a.num_channels} channels · {a.duration_ticks} ticks @ {a.tick_rate}/s
+              {a.has_skel && ' · skeleton'}
+              {a.has_mesh && ' · mesh'}
+            </span>
+            {a.source_location && <span className="hint">{a.source_location}</span>}
+            <div className="animation-actions">
+              <a href={animations.downloadUrl(a.id, 'gband')}>.gband</a>
+              {a.has_skel && <a href={animations.downloadUrl(a.id, 'gskel')}>.gskel</a>}
+              {a.has_mesh && <a href={animations.downloadUrl(a.id, 'gmesh')}>.gmesh</a>}
+              <button
+                onClick={async () => {
+                  const name = window.prompt('Rename to:', a.name)
+                  if (!name) return
+                  await animations.rename(a.id, name)
+                  refresh()
+                }}
+              >
+                Rename
+              </button>
+              <button
+                onClick={async () => {
+                  const name = window.prompt('New, independent name for the clone:', `${a.name}-copy`)
+                  if (!name) return
+                  await animations.clone(a.id, name)
+                  refresh()
+                }}
+              >
+                Clone
+              </button>
+              <button
+                className="danger"
+                onClick={async () => {
+                  if (!confirm(`Delete animation "${a.name}"? This can't be undone.`)) return
+                  await animations.delete(a.id)
+                  refresh()
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+        {list.length === 0 && <p className="hint">No animations yet — drop a .glb above.</p>}
+      </div>
+    </div>
+  )
+}
+
+type Tab = 'projects' | 'textures' | 'animations' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'sprays'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'sprays']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -878,6 +1008,9 @@ export default function App() {
           <button className={tab === 'textures' ? 'active' : ''} onClick={() => setTab('textures')}>
             Texture Library
           </button>
+          <button className={tab === 'animations' ? 'active' : ''} onClick={() => setTab('animations')}>
+            Animations
+          </button>
           <button className={tab === 'projects' ? 'active' : ''} onClick={() => setTab('projects')}>
             Projects (layer editor)
           </button>
@@ -902,6 +1035,10 @@ export default function App() {
       {tab === 'textures' ? (
         <div className="layout-single">
           <TextureLibrary />
+        </div>
+      ) : tab === 'animations' ? (
+        <div className="layout-single">
+          <Animations />
         </div>
       ) : tab === 'brawlpit' ? (
         <LevelEditor />

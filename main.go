@@ -624,6 +624,16 @@ func main() {
 	mux.Handle("/admin/nock/api/textures", nockTexturesProtected)
 	mux.Handle("/admin/nock/api/textures/", nockTexturesProtected)
 
+	// NOCK animation repository (founder real-time, 2026-09-16: "need animation repository" /
+	// "ok I need to import quaternion assets nock tools drag and drop" -- the storage/browse
+	// half of "let's start iterating towards nock tools modeler (blender) and golden band").
+	// Same real shape as the texture library above; see internal/nock/anim_store.go and
+	// gltf_convert.go's own header comments.
+	nockAnimationsH := &handlers.NockAnimationsHandler{Store: &nock.AnimStore{DB: db}}
+	nockAnimationsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockAnimationsH))
+	mux.Handle("/admin/nock/api/animations", nockAnimationsProtected)
+	mux.Handle("/admin/nock/api/animations/", nockAnimationsProtected)
+
 	// BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
 	// editor online - web technologies - we already started building nock - can we finish
 	// building out some of that interface so we can kind of parlay it into an online brawlpit
