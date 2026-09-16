@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-16
+- Add NOCK UI page for writing SHANKPIT door scripts (PARENA textarea, compile, script_url) -- closes the designer-can't-write-scripts gap (sess-20260905-0720-ec33e7c5)
 - Add real PARENA-to-C compile pipeline + storage for SHANKPIT door scripts (nock_door_scripts) -- closes the 'via the nock tools' gap (sess-20260905-0720-ec33e7c5)
 - Add NOCK animation repository + server-side glTF drag-and-drop import (real .gband/.gskel/.gmesh conversion, quaternion channels) -- S144-09 (sess-20260905-0720-ec33e7c5)
 
