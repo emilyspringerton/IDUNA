@@ -291,6 +291,53 @@ export const animations = {
   },
 }
 
+// ---- NOCK door script repository (SHANKPIT Story System Phase 1, S459-81/82 -- founder
+// real-time: "fill the gap in the designer can't write scripts"). Real PARENA source -> C ->
+// .so, compiled server-side (IDUNA/internal/nock/door_script_compile.go). A compiled script is
+// referenced from a level's own "doors" array via script_url, pointing at this same repository's
+// public download route (packages/world/story_doors.h on the SHANKPIT side downloads+caches it
+// at level load). ----
+
+export interface DoorScript {
+  id: number
+  name: string
+  parena_source: string
+  created_at: string
+  updated_at: string
+}
+
+export interface DoorScriptSummary {
+  id: number
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+const DOOR_SCRIPTS_BASE = '/admin/nock/api/door-scripts'
+
+async function doorScriptReq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${DOOR_SCRIPTS_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const doorScripts = {
+  list: () => doorScriptReq<DoorScriptSummary[]>(''),
+  get: (id: number) => doorScriptReq<DoorScript>(`/${id}`),
+  create: (name: string, source: string) => doorScriptReq<DoorScript>('', { method: 'POST', body: JSON.stringify({ name, source }) }),
+  regenerate: (id: number, source: string) => doorScriptReq<DoorScript>(`/${id}/regenerate`, { method: 'PATCH', body: JSON.stringify({ source }) }),
+  delete: (id: number) => doorScriptReq<void>(`/${id}`, { method: 'DELETE' }),
+  // downloadUrl is the real, PUBLIC route (nock_door_scripts_public.go) -- what a level's own
+  // "doors" array script_url should actually point at; not gated behind admin auth since
+  // SHANKPIT's own game server has no IDUNA login to present.
+  downloadUrl: (id: number) => `/api/v1/nock-door-scripts/${id}/download`,
+}
+
 // ---- BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
 // editor online - web technologies - we already started building nock - can we finish building
 // out some of that interface so we can kind of parlay it into an online brawlpit level editor?")

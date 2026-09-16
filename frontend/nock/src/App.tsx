@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { animations, api, generateProcedural, shankpitSprays, textures, type AnimationSummary, type Layer, type Project, type TextureSummary } from './api'
+import { animations, api, doorScripts, generateProcedural, shankpitSprays, textures, type AnimationSummary, type DoorScriptSummary, type Layer, type Project, type TextureSummary } from './api'
 import LevelEditor from './LevelEditor'
 import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
@@ -802,6 +802,150 @@ function TextureLibrary() {
   )
 }
 
+// DOOR_SCRIPT_STARTER_SOURCE is the real, working starter template dropped into DoorScripts' own
+// blank-slate textarea -- the exact real door-tick contract (SHANKPIT/docs/
+// STORY_SYSTEM_NORTHSTAR.md Part 2) IDUNA's own compile pipeline (internal/nock/
+// door_script_compile.go) validates against, filled in with a real, non-trivial hysteresis
+// pattern (same shape examples/story-doors/door_tick.prn already uses) so "Create" compiles
+// unedited.
+const DOOR_SCRIPT_STARTER_SOURCE = `(module doorscript)
+(import math)
+
+(defn door-tick [(dist-to-player : F64) (state : F64)] : F64
+  (if (< dist-to-player 3.0)
+    1.0
+    (if (> dist-to-player 5.0)
+      0.0
+      state)))
+`
+
+// DoorScripts is the real NOCK authoring surface for SHANKPIT Story System door scripts
+// (S459-81/82, founder real-time: "fill the gap in the designer can't write scripts"). Write
+// real PARENA source, IDUNA compiles it server-side (parena build + gcc -shared, internal/nock/
+// door_script_compile.go) into a real, downloadable .so -- no local toolchain needed. Copy the
+// shown Script URL straight into a level's own "doors" array (`script_url` field,
+// packages/world/level_boxes.h) and SHANKPIT's server downloads + caches it automatically at
+// level load (packages/world/story_doors.h).
+function DoorScripts() {
+  const [list, setList] = useState<DoorScriptSummary[]>([])
+  const [name, setName] = useState('')
+  const [source, setSource] = useState(DOOR_SCRIPT_STARTER_SOURCE)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(() => {
+    doorScripts.list().then(setList)
+  }, [])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await doorScripts.create(name, source)
+      setName('')
+      setSource(DOOR_SCRIPT_STARTER_SOURCE)
+      refresh()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="animation-repository">
+      <h3>Write a door script (PARENA)</h3>
+      <p className="hint">
+        Real PARENA source, compiled server-side into a real, downloadable <code>.so</code> -- no local <code>parena</code>/<code>gcc</code>{' '}
+        needed. The one real contract: <code>(defn door-tick [(dist-to-player : F64) (state : F64)] : F64 ...)</code>, returning the
+        door's own new state (0.0 = closed, 1.0 = open).
+      </p>
+      <form className="procedural-form" onSubmit={submit}>
+        <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+        <textarea className="source-textarea" value={source} onChange={(e) => setSource(e.target.value)} rows={10} spellCheck={false} />
+        <button type="submit" disabled={!name || !source || busy}>
+          {busy ? 'Compiling…' : 'Create'}
+        </button>
+        {error && <p className="error">{error}</p>}
+      </form>
+
+      <div className="animation-list">
+        {list.map((d) => (
+          <DoorScriptRow key={d.id} d={d} onChanged={refresh} />
+        ))}
+        {list.length === 0 && <p className="hint">No door scripts yet — write one above.</p>}
+      </div>
+    </div>
+  )
+}
+
+function DoorScriptRow({ d, onChanged }: { d: DoorScriptSummary; onChanged: () => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const [source, setSource] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadSource = async () => {
+    const full = await doorScripts.get(d.id)
+    setSource(full.parena_source)
+    setExpanded(true)
+  }
+
+  const rerun = async () => {
+    if (source === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await doorScripts.regenerate(d.id, source)
+      onChanged()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="animation-card">
+      <strong>{d.name}</strong>
+      <span className="hint">script_url: {doorScripts.downloadUrl(d.id)}</span>
+      <div className="animation-actions">
+        <button
+          onClick={() => {
+            navigator.clipboard?.writeText(window.location.origin + doorScripts.downloadUrl(d.id))
+          }}
+        >
+          Copy script_url
+        </button>
+        <button onClick={loadSource}>{expanded ? 'Hide source' : 'Edit source'}</button>
+        <button
+          className="danger"
+          onClick={async () => {
+            if (!confirm(`Delete door script "${d.name}"? This can't be undone.`)) return
+            await doorScripts.delete(d.id)
+            onChanged()
+          }}
+        >
+          Delete
+        </button>
+      </div>
+      {expanded && source !== null && (
+        <div className="procedural-editor">
+          <textarea className="source-textarea" value={source} onChange={(e) => setSource(e.target.value)} rows={8} spellCheck={false} />
+          <button onClick={rerun} disabled={busy}>
+            {busy ? 'Re-compiling…' : 'Re-compile'}
+          </button>
+          {error && <p className="error">{error}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Animations is the real NOCK animation repository (founder real-time, 2026-09-16: "need
 // animation repository" -> "ok I need to import quaternion assets nock tools drag and drop").
 // A drag-and-drop zone for a raw .glb/.gltf file straight from Blender's own glTF export --
@@ -932,8 +1076,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'sprays'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'sprays']
+type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'sprays'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'sprays']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1011,6 +1155,9 @@ export default function App() {
           <button className={tab === 'animations' ? 'active' : ''} onClick={() => setTab('animations')}>
             Animations
           </button>
+          <button className={tab === 'door-scripts' ? 'active' : ''} onClick={() => setTab('door-scripts')}>
+            Door Scripts
+          </button>
           <button className={tab === 'projects' ? 'active' : ''} onClick={() => setTab('projects')}>
             Projects (layer editor)
           </button>
@@ -1039,6 +1186,10 @@ export default function App() {
       ) : tab === 'animations' ? (
         <div className="layout-single">
           <Animations />
+        </div>
+      ) : tab === 'door-scripts' ? (
+        <div className="layout-single">
+          <DoorScripts />
         </div>
       ) : tab === 'brawlpit' ? (
         <LevelEditor />
