@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-16
+
+- Add blank-slate PARENA texture editor to NOCK (write pixel-r/g/b source directly, no AI prompt required) -- S459-77 (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-15
 - S459-76: new PATCH /api/v1/shankpit-checkpoints/:id (CheckpointStore.UpdateElo) -- founder real-time: "im a little concerned that the elos of the generation 0 bots arent going up and down... can we make sure the elos are set up to go up and down not just whatever the first elo into the registry is?" Real gap found: a checkpoint's own Elo kept moving locally every time a later generation evaluated against it (record_match_result is a real, symmetric two-sided update), but the registry had no way to push that update back onto an already-registered row -- gen 0 stayed frozen at its push-time value (1500) forever regardless of how many real matches it played afterward. Gated the same way the upload endpoint is (agent-auth, shankpit.checkpoints.write). Live-verified end to end: ran a real local training run with registry push, confirmed gen0's rows moved from elo=1500 to real, distinct values (1484/1500/1516) after gen1's own evaluation matches. go test (shankpit + handlers) green (sess-20260905-0720-ec33e7c5)
 - S459-63: new `eval_note` field on shankpit_rl_checkpoints -- founder real-time: "how the fuck is my colab log gonna help it just says training". Real, optional, plain-text summary of each generation's own evaluation-match outcome (real kill counts, or a captured crash/report-failure reason), pushed alongside the checkpoint via the existing upload endpoint's new `eval_note` form field, visible directly through GET /api/v1/shankpit-checkpoints -- no training-process stdout access needed to diagnose a flat-Elo run. Live-verified end to end with a real registry push (`note='vs prior gen: kills 9-13'` etc actually stored and returned). go build/test clean (sess-20260905-0720-ec33e7c5)
