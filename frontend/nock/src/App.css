@@ -350,6 +350,34 @@ textarea {
   @apply btn-secondary;
 }
 
+.animation-viewer-overlay {
+  @apply fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4;
+}
+
+.animation-viewer-panel {
+  @apply flex w-full max-w-3xl flex-col gap-2 rounded-lg border border-line bg-panel p-3;
+}
+
+.animation-viewer-header {
+  @apply flex items-center justify-between;
+}
+
+.animation-viewer-canvas {
+  @apply h-[60vh] w-full overflow-hidden rounded border border-line;
+}
+
+.animation-viewer-canvas canvas {
+  @apply h-full w-full;
+}
+
+.animation-viewer-controls {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.animation-viewer-controls input[type='range'] {
+  @apply flex-1;
+}
+
 /* BRAWLPIT level editor (S415-02/03) -- reuses .layout/.project-list/.project-header/
    .editor-body/.canvas-pane/.side-pane from the Project (layer) editor above; these rules add
    only what's genuinely new for this tab. */

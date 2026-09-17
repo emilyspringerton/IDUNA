@@ -3,6 +3,7 @@ import { animations, api, doorScripts, generateProcedural, shankpitSprays, textu
 import LevelEditor from './LevelEditor'
 import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
+import AnimationViewer from './AnimationViewer'
 import ShankpitAiOpponents from './ShankpitAiOpponents'
 import Sprays from './Sprays'
 import './App.css'
@@ -967,6 +968,9 @@ function Animations() {
   // rig") but didn't build until now.
   const [attachOpenId, setAttachOpenId] = useState<number | null>(null)
   const [attachSourceId, setAttachSourceId] = useState<number | ''>('')
+  // previewing (2026-09-17, founder real-time: "can we add a 3d scene like the shankpit level
+  // editor for the animations models viewer?") -- which row's real 3D preview is currently open.
+  const [previewing, setPreviewing] = useState<AnimationSummary | null>(null)
   // filter (2026-09-17, founder real-time: "i dont see the animations browser or rig browser or
   // anything like that") -- this one tab already covers meshes/rigs/animations together (a row
   // is really "a GOLDENBAND character asset," any real combination of the three), but nothing
@@ -1121,6 +1125,7 @@ function Animations() {
               {a.has_animation && <a href={animations.downloadUrl(a.id, 'gband')}>.gband</a>}
               {a.has_skel && <a href={animations.downloadUrl(a.id, 'gskel')}>.gskel</a>}
               {a.has_mesh && <a href={animations.downloadUrl(a.id, 'gmesh')}>.gmesh</a>}
+              {(a.has_mesh || a.has_skel) && <button onClick={() => setPreviewing(a)}>Preview</button>}
               <button
                 onClick={async () => {
                   const name = window.prompt('Rename to:', a.name)
@@ -1211,6 +1216,7 @@ function Animations() {
         {list.length === 0 && <p className="hint">No animations yet — drop a .glb above.</p>}
         {list.length > 0 && filteredList.length === 0 && <p className="hint">Nothing matches this filter yet.</p>}
       </div>
+      {previewing && <AnimationViewer animation={previewing} onClose={() => setPreviewing(null)} />}
     </div>
   )
 }
