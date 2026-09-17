@@ -466,6 +466,49 @@ func TestExport_ComposedObjectCarriesMaterial(t *testing.T) {
 	}
 }
 
+// TestExport_ComposedObjectCarriesDoor -- S479 follow-up, founder real-time: "we need an actual
+// object builder building a door as a level doesnt make any sense i need an actual door that is a
+// door." Root cause: a door could previously ONLY attach to a level's own ROOT walls, never a
+// wall contributed by a nested composed object -- so a level authored as a reusable "door room"
+// and placed as an Object anywhere (the exact same way every other reusable structure already
+// works) could never carry a working door. Verifies a door on a child level's own wall survives
+// composition into the parent's export with the correct, real final box_index.
+func TestExport_ComposedObjectCarriesDoor(t *testing.T) {
+	s := newTestStore(t)
+	doorWall := aCube()
+	doorWall.ID = 5 // deliberately non-sequential, matching TestExport_ResolvesDoorBoxIndexAndScriptURL's own real-position proof
+	child, err := s.CreateLevel(context.Background(), "Door Room", 100, 50, 100, true, 2,
+		[]shankpit.Wall{aCube(), doorWall}, nil, nil,
+		[]shankpit.Door{{WallID: 5, ScriptID: 0}}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	// Parent also has its own root wall, so the composed door's real final box_index (2) must
+	// account for it -- not just the child's own internal position (1).
+	parent, err := s.CreateLevel(context.Background(), "Parent", 100, 50, 100, true, 2,
+		[]shankpit.Wall{aCube()},
+		[]shankpit.LevelObject{{RefLevelID: child.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	doc, err := s.Export(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.Walls) != 3 {
+		t.Fatalf("expected 3 flattened walls (1 root + 2 from the child), got %d", len(doc.Walls))
+	}
+	if len(doc.Doors) != 1 {
+		t.Fatalf("expected the child's own door to survive composition, got %d doors: %+v", len(doc.Doors), doc.Doors)
+	}
+	if doc.Doors[0].BoxIndex != 2 {
+		t.Fatalf("expected box_index 2 (root wall at 0, child's first wall at 1, door wall at 2), got %d", doc.Doors[0].BoxIndex)
+	}
+	if doc.Doors[0].ScriptURL != "" {
+		t.Fatalf("expected empty script_url for a no-script door, got %q", doc.Doors[0].ScriptURL)
+	}
+}
+
 // TestExport_RotatesObjectBy90 verifies a 90-degree object rotation swaps the child's own X/Z
 // footprint correctly -- the exact "mirror the base for a 2-base fortress vs fortress map" use
 // case (founder real-time).

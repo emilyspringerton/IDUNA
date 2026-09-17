@@ -1039,18 +1039,37 @@ func rotateY90(x, z, sx, sz float64, rotY int) (rx, rz, rsx, rsz float64) {
 // something this pass silently fakes. Only the ROOT level's own plane (set on the top-level
 // Export call) ever reaches the native client -- every nested object contributes geometry only,
 // matching "DEFAULTS TO OFF" for the nested case.
-func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, originX, originY, originZ float64, originRotY int, visited map[int64]bool, depth int) ([]Wall, error) {
+//
+// composedDoorRef -- S479 follow-up, founder real-time: "we need an actual object builder
+// building a door as a level doesnt make any sense i need an actual door that is a door... we can
+// clone doors and edit the geometry etc just like objects but its too weird" (root cause found
+// directly in code: a door could previously ONLY attach to one of a level's own ROOT walls, never
+// one contributed by a nested composed object -- so the founder's own natural instinct to author
+// a reusable "door room" and place it as an Object anywhere, the exact same way every other
+// reusable structure already works, silently could never carry a working door). NOT a real Door
+// row/ID -- a door's own real ID is meaningless mid-flatten since flattenObjects doesn't know
+// where in the FINAL combined walls[] its wall will land until Export's own top-level call
+// finishes appending every object's contribution. wallIndex is relative to the []Wall this same
+// flattenObjects call returns; Export translates it into a real final BoxIndex once it knows this
+// call's own walls' starting offset within the combined list.
+type composedDoorRef struct {
+	wallIndex int
+	scriptID  int64
+}
+
+func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, originX, originY, originZ float64, originRotY int, visited map[int64]bool, depth int) ([]Wall, []composedDoorRef, error) {
 	if depth > MaxLevelObjectDepth {
-		return nil, fmt.Errorf("shankpit: object nesting too deep (max %d) -- possible runaway composition", MaxLevelObjectDepth)
+		return nil, nil, fmt.Errorf("shankpit: object nesting too deep (max %d) -- possible runaway composition", MaxLevelObjectDepth)
 	}
-	var out []Wall
+	var outWalls []Wall
+	var outDoors []composedDoorRef
 	for _, obj := range objects {
 		if visited[obj.RefLevelID] {
-			return nil, fmt.Errorf("shankpit: level object cycle detected involving level %d", obj.RefLevelID)
+			return nil, nil, fmt.Errorf("shankpit: level object cycle detected involving level %d", obj.RefLevelID)
 		}
 		child, err := s.GetLevel(ctx, obj.RefLevelID)
 		if err != nil {
-			return nil, fmt.Errorf("shankpit: object references level %d: %w", obj.RefLevelID, err)
+			return nil, nil, fmt.Errorf("shankpit: object references level %d: %w", obj.RefLevelID, err)
 		}
 		childVisited := make(map[int64]bool, len(visited)+1)
 		for k := range visited {
@@ -1067,9 +1086,12 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 		worldY := originY + obj.Y
 		worldRotY := (originRotY + obj.RotY) % 360
 
-		for _, w := range child.Walls {
+		childWallStart := len(outWalls)
+		childWallIndexByID := make(map[int]int, len(child.Walls))
+		for i, w := range child.Walls {
+			childWallIndexByID[w.ID] = i
 			rx, rz, rsx, rsz := rotateY90(w.X, w.Z, w.SX, w.SZ, worldRotY)
-			out = append(out, Wall{
+			outWalls = append(outWalls, Wall{
 				ID: 0, X: worldX + rx, Y: worldY + w.Y, Z: worldZ + rz,
 				SX: rsx, SY: w.SY, SZ: rsz,
 				R: w.R, G: w.G, B: w.B, Friction: w.Friction,
@@ -1083,13 +1105,28 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 				Material: w.Material,
 			})
 		}
-		nested, err := s.flattenObjects(ctx, child.Objects, worldX, worldY, worldZ, worldRotY, childVisited, depth+1)
-		if err != nil {
-			return nil, err
+		// Carry the child's own real, directly-authored doors through -- a wall referencing a
+		// since-deleted door target is a real, honest skip (same discipline doorsForExport
+		// already applies to root doors), not an error.
+		for _, d := range child.Doors {
+			idx, ok := childWallIndexByID[d.WallID]
+			if !ok {
+				continue
+			}
+			outDoors = append(outDoors, composedDoorRef{wallIndex: childWallStart + idx, scriptID: d.ScriptID})
 		}
-		out = append(out, nested...)
+
+		nestedWalls, nestedDoors, err := s.flattenObjects(ctx, child.Objects, worldX, worldY, worldZ, worldRotY, childVisited, depth+1)
+		if err != nil {
+			return nil, nil, err
+		}
+		nestedWallStart := len(outWalls)
+		outWalls = append(outWalls, nestedWalls...)
+		for _, nd := range nestedDoors {
+			outDoors = append(outDoors, composedDoorRef{wallIndex: nestedWallStart + nd.wallIndex, scriptID: nd.scriptID})
+		}
 	}
-	return out, nil
+	return outWalls, outDoors, nil
 }
 
 // Export returns the real, native-loader-facing document for a level -- the real end-to-end
@@ -1105,12 +1142,17 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 		return nil, err
 	}
 	walls := append([]Wall{}, lvl.Walls...)
+	var composedDoors []composedDoorRef
 	if len(lvl.Objects) > 0 {
-		flattened, err := s.flattenObjects(ctx, lvl.Objects, 0, 0, 0, 0, map[int64]bool{id: true}, 1)
+		flattenedWalls, flattenedDoors, err := s.flattenObjects(ctx, lvl.Objects, 0, 0, 0, 0, map[int64]bool{id: true}, 1)
 		if err != nil {
 			return nil, err
 		}
-		walls = append(walls, flattened...)
+		rootWallCount := len(walls)
+		walls = append(walls, flattenedWalls...)
+		for _, d := range flattenedDoors {
+			composedDoors = append(composedDoors, composedDoorRef{wallIndex: rootWallCount + d.wallIndex, scriptID: d.scriptID})
+		}
 	}
 	if len(walls) > MaxWalls {
 		return nil, fmt.Errorf("shankpit: composed level %d has too many boxes after flattening objects (%d, max %d)", id, len(walls), MaxWalls)
@@ -1122,10 +1164,21 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	if err != nil {
 		return nil, err
 	}
+	// S479 follow-up: a composed object's own doors (composedDoors, already-resolved final box
+	// indices into the combined `walls` above) alongside this level's own root doors -- see
+	// composedDoorRef's own doc comment for why doors previously could never survive being
+	// placed as a reusable object.
+	doorExports := doorsForExport(lvl.Doors, lvl.Walls)
+	for _, d := range composedDoors {
+		doorExports = append(doorExports, doorExportFor(d.wallIndex, d.scriptID))
+	}
+	if len(doorExports) > MaxDoors {
+		return nil, fmt.Errorf("shankpit: composed level %d has too many doors after flattening objects (%d, max %d)", id, len(doorExports), MaxDoors)
+	}
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares,
-		Walls: walls, Spawners: lvl.Spawners, Doors: doorsForExport(lvl.Doors, lvl.Walls),
+		Walls: walls, Spawners: lvl.Spawners, Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
 	}, nil
@@ -1154,6 +1207,26 @@ const NockDoorScriptDownloadBaseURL = "https://okemily.com/api/v1/nock-door-scri
 // deriving the same check here server-side would be real, duplicate work for no additional
 // safety. ScriptID == 0 is handled directly below now, not left to 404 -- see this function's
 // own body comment.
+// doorExportFor builds one real DoorExport for a resolved (boxIndex, scriptID) pair -- shared by
+// doorsForExport (root-level doors) and Export's own composed-door pass (S479 follow-up, doors
+// carried through flattenObjects) so the ScriptID==0 handling below can't drift between the two.
+func doorExportFor(boxIndex int, scriptID int64) DoorExport {
+	exp := DoorExport{BoxIndex: boxIndex}
+	// ScriptID == 0 is the real "no script attached" state (found live, 2026-09-17: this used to
+	// ALWAYS emit a script_url even at ScriptID 0 -- ".../nock-door-scripts/0/download", a real
+	// 404 every time, so a door placed without explicitly writing+attaching a PARENA script
+	// silently never worked, with zero visible feedback to the level author, on every platform
+	// including the dedicated server. Leaving ScriptURL empty here is what tells the native
+	// loader's own story_doors_init to use its real, working builtin proximity-open default
+	// instead of attempting a dlopen that was always going to fail). A door WITH a real script
+	// keeps behaving exactly as before -- this is additive, not a behavior change for anyone who
+	// already attached one.
+	if scriptID != 0 {
+		exp.ScriptURL = fmt.Sprintf("%s/%d/download", NockDoorScriptDownloadBaseURL, scriptID)
+	}
+	return exp
+}
+
 func doorsForExport(doors []Door, rootWalls []Wall) []DoorExport {
 	pos := make(map[int]int, len(rootWalls))
 	for i, w := range rootWalls {
@@ -1165,20 +1238,7 @@ func doorsForExport(doors []Door, rootWalls []Wall) []DoorExport {
 		if !ok {
 			continue
 		}
-		exp := DoorExport{BoxIndex: idx}
-		// ScriptID == 0 is the real "no script attached" state (found live, 2026-09-17: this
-		// used to ALWAYS emit a script_url even at ScriptID 0 -- ".../nock-door-scripts/0/
-		// download", a real 404 every time, so a door placed without explicitly writing+
-		// attaching a PARENA script silently never worked, with zero visible feedback to the
-		// level author, on every platform including the dedicated server. Leaving ScriptURL
-		// empty here is what tells the native loader's own story_doors_init to use its real,
-		// working builtin proximity-open default instead of attempting a dlopen that was always
-		// going to fail). A door WITH a real script keeps behaving exactly as before -- this is
-		// additive, not a behavior change for anyone who already attached one.
-		if d.ScriptID != 0 {
-			exp.ScriptURL = fmt.Sprintf("%s/%d/download", NockDoorScriptDownloadBaseURL, d.ScriptID)
-		}
-		out = append(out, exp)
+		out = append(out, doorExportFor(idx, d.ScriptID))
 	}
 	return out
 }
