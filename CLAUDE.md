@@ -211,6 +211,21 @@ Then commit and push EMILY:
 cd /home/fatbaby/EMILY && git add context/golden-docs-index.md && git commit -m "golden-index: add NAME" && git push
 ```
 
+## SHANKPIT Level Registry Doubles as Living Documentation (standing instruction)
+
+Founder real-time, 2026-09-17: "write into your claude files that when you verify levels write
+them into the registry and leave them there as an example designers can use to try to figure out
+how to use the feature without blowing a bunch of tokens asking for help." This registry
+(`shankpit_levels`/`shankpit_widgets` tables, served under `/admin/nock/api/shankpit-levels` etc.,
+gated by `iduna.admin`) is currently being treated as a development/staging registry — "assume
+this is the development level registry we are developing in the open." Whenever a
+SHANKPIT-level-editor feature is verified here, the verification should land as a real,
+clearly-named level/widget row in this same live registry (e.g. `TUTORIAL_DOOR`) rather than a
+disposable local JSON export, so it stays discoverable to designers via the NOCK UI afterward. See
+`SHANKPIT/CLAUDE.md`'s own copy of this instruction for the full rationale. A separate registry
+for real user-created content, and cloning this one's contents (including story levels) forward
+into it, is a real possibility the founder named for later — not something to build preemptively.
+
 ## Founder Real-Time Direction
 
 Whenever the founder gives real-time direction — a new ask, a correction, a "can we also..." —
