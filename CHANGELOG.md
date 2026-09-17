@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-17
+- feat(nock): real in-browser 3D preview for the Animations tab -- first JS/TS reader for GOLDENBAND's .gskel/.gmesh/.gband formats, real THREE.SkinnedMesh + AnimationMixer playback (not a hand-rolled skinning reimplementation), Preview button on any mesh/rig row (sess-20260905-0720-ec33e7c5)
 - feat(nock): filterable views (Meshes/Rigs/Animations/Needs-animation) in the Animations tab -- real 'browser' affordance over the same unified character-asset data, not a separate page (sess-20260905-0720-ec33e7c5)
 - feat(nock): attach an animation clip to an existing mesh/rig row -- fills the gap NOCK's own copy already promised ('upload a separate file with the same rig'). New skeleton_hash-based compatibility check (topology-only: joint name+parent, not rest pose -- fixed a real bug found while backfilling it for two real assets). New POST .../attach-animation route + UI panel on mesh/skel-only cards (sess-20260905-0720-ec33e7c5)
 - feat(nock): bullet hole decal example script (internal/nock/examples/bullet_hole.prn) -- asymmetric procgen texture with a tweakable asym-seed parameter, white-background/multiply-blend design so it composites without alpha (sess-20260905-0720-ec33e7c5)
