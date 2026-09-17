@@ -239,6 +239,43 @@ function useLevelList() {
   return { list, refresh }
 }
 
+// useReferencedLevelWalls -- S479, founder real-time: "when you embed a level currently it
+// doesnt render the level it would be nice if we could actually render the level." Object
+// placement previously only ever rendered an empty wireframe bounding box (the child level's own
+// width/height/depth footprint) -- fetches each distinct referenced level's own real wall list
+// (full ShankpitLevel.get, not the width/height/depth-only summary useLevelList already has) so
+// Viewport3D can render the real geometry inside that box. Cached by ref_level_id and never
+// re-fetched once present -- a level someone else is actively editing elsewhere won't live-update
+// here, a real, accepted v0 limit (same class of staleness levelSummaries itself already has).
+// Real, deliberate v0 scope limit, named not silently dropped: only the DIRECT child's own walls
+// render -- a child level's own further-nested objects (S459-15's own real "fractal" recursion,
+// which Export's server-side flattenObjects already handles for the actual game) are not
+// recursively resolved here, matching this feature's own preexisting real, honest "ground plane
+// not composed" precedent rather than reimplementing flattenObjects' own cycle/depth guards
+// client-side for a preview-only view.
+function useReferencedLevelWalls(objects: ShankpitLevelObject[]) {
+  const [cache, setCache] = useState<Record<number, ShankpitWall[]>>({})
+  useEffect(() => {
+    const missing = [...new Set(objects.map((o) => o.ref_level_id))].filter((id) => !(id in cache))
+    if (missing.length === 0) return
+    Promise.all(
+      missing.map((id) =>
+        shankpitLevels
+          .get(id)
+          .then((lvl) => [id, lvl.walls] as [number, ShankpitWall[]])
+          .catch(() => [id, []] as [number, ShankpitWall[]]),
+      ),
+    ).then((pairs) => {
+      setCache((prev) => {
+        const next = { ...prev }
+        for (const [id, walls] of pairs) next[id] = walls
+        return next
+      })
+    })
+  }, [objects, cache])
+  return cache
+}
+
 // useMaterialList -- S459-16, founder real-time: "we will need the ability to add new materials
 // and set their textures" / "registries for everything". Same real shape as useLevelList above.
 function useMaterialList() {
@@ -286,6 +323,7 @@ function Viewport3D({
   onDragStart,
   objects,
   levelSummaries,
+  refLevelWalls,
   spawnPoints,
   selectedSpawnPoint,
   onSelectSpawnPoint,
@@ -310,6 +348,7 @@ function Viewport3D({
   onDragStart: () => void
   objects: ShankpitLevelObject[]
   levelSummaries: ShankpitLevelSummary[]
+  refLevelWalls: Record<number, ShankpitWall[]>
   spawnPoints: ShankpitSpawner[]
   selectedSpawnPoint: number | null
   onSelectSpawnPoint: (id: number | null) => void
@@ -673,19 +712,33 @@ function Viewport3D({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Level objects (S459-15, "a map is a composition of levels"): a real, non-interactive-for-v0
-  // wireframe preview of each placed child level's own footprint (its real width/height/depth,
-  // looked up from the already-fetched level list -- no extra fetch needed) at its placed
-  // position + 90-degree Y rotation. Position/rotation are edited via the inspector panel, not
-  // 3D-dragged, matching this feature's own real v0 scope. Rebuilt whenever the object list's own
-  // shape changes; kept in sync on every edit via the effect just below.
+  // Level objects (S459-15, "a map is a composition of levels"): a wireframe preview of each
+  // placed child level's own footprint (its real width/height/depth, looked up from the
+  // already-fetched level list -- no extra fetch needed) at its placed position + 90-degree Y
+  // rotation, PLUS (S479, founder real-time: "when you embed a level currently it doesnt render
+  // the level it would be nice if we could actually render the level") the child's own real wall
+  // geometry, colored the exact same r/g/b way root-level walls already are (see the mesh-build
+  // effect just below this one -- this preview never varied color by material beyond that r/g/b
+  // literal for ROOT walls either, so this meets the same real visual bar, not a new one).
+  // Position/rotation are still edited via the inspector panel, not 3D-dragged, matching this
+  // feature's own real v0 scope. Rebuilt whenever the object list's own shape or the referenced-
+  // wall cache changes; kept in sync on every edit via the effect just below.
+  //
+  // contentGroup sits at local (0,-h/2,0) inside the outer group (which is itself positioned at
+  // o.y+h/2 so the WIREFRAME box straddles o.y..o.y+h correctly, matching the box geometry's own
+  // center-origin convention) -- shifting the real wall meshes back down by h/2 so a wall at the
+  // child level's own local y=0 (its floor) lands at world y = o.y + 0, exactly matching
+  // flattenObjects' own server-side `worldY := originY + w.Y` math. The outer group's Y rotation
+  // then pivots both the wireframe AND the real walls around the object's own placed x/z origin,
+  // the same pivot rotateY90 uses server-side -- three.js's own parent/child transform
+  // inheritance does this correctly with no manual matrix math needed here.
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
     for (const g of objectMeshesRef.current) {
       scene.remove(g)
-      g.children.forEach((c) => {
-        if (c instanceof THREE.LineSegments) {
+      g.traverse((c) => {
+        if (c instanceof THREE.LineSegments || c instanceof THREE.Mesh) {
           c.geometry.dispose()
           ;(c.material as THREE.Material).dispose()
         }
@@ -699,13 +752,25 @@ function Viewport3D({
       geo.dispose()
       const group = new THREE.Group()
       group.add(wire)
+
+      const contentGroup = new THREE.Group()
+      contentGroup.position.set(0, -h / 2, 0)
+      for (const cw of refLevelWalls[o.ref_level_id] ?? []) {
+        const cgeo = new THREE.BoxGeometry(cw.sx, cw.sy, cw.sz)
+        const cmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cw.r, cw.g, cw.b) })
+        const cmesh = new THREE.Mesh(cgeo, cmat)
+        cmesh.position.set(cw.x, cw.y, cw.z)
+        contentGroup.add(cmesh)
+      }
+      group.add(contentGroup)
+
       group.position.set(o.x, o.y + h / 2, o.z) // Y offset so the wireframe sits ON o.y (its own floor), not straddling it
       group.rotation.y = -(o.rot_y * Math.PI) / 180
       scene.add(group)
       return group
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects.length, levelSummaries.length])
+  }, [objects.length, levelSummaries.length, refLevelWalls])
 
   useEffect(() => {
     objects.forEach((o, i) => {
@@ -899,23 +964,35 @@ function WallInspector({
       {field('B', 'b', { min: 0, step: 0.05 })}
       {field('Friction', 'friction', { min: 0, step: 0.05 })}
       {/* Story System Phase 1 door authoring -- founder real-time, 2026-09-17: "how do i put
-          doors in my levels?" A wall IS a door exactly when it has a script attached; there's no
-          separate "is_door" checkbox to fall out of sync with an empty selection. */}
+          doors in my levels?" A wall IS a door exactly when it has a door row attached; there's
+          no separate "is_door" checkbox to fall out of sync with an empty selection.
+
+          S479, real, found-live gap: the founder still had no affordance for adding a door
+          ("still no affordances for me to add doors") even after the above -- this dropdown only
+          ever offered "(not a door)" or an existing real script, with no way to reach
+          script_id=0. That value is real and already fully supported end to end (native side
+          fixed the same day: doorsForExport leaves ScriptURL empty at script_id=0, which tells
+          story_doors_init to use its own real, working built-in proximity-open default instead
+          of attempting a script dlopen) -- the UI simply never exposed it. Fixed by adding an
+          explicit "door, no script" option in between; a level can now get a real, working door
+          with zero PARENA scripting required, which also unblocks anyone who hasn't written a
+          door script yet (a very real state for a level author starting from nothing). */}
       <label>
-        Door script{' '}
+        Door{' '}
         <select
           value={door?.script_id ?? ''}
           onChange={(e) => onDoorChange(e.target.value === '' ? null : Number(e.target.value))}
         >
           <option value="">(not a door)</option>
+          <option value={0}>Door, no script (built-in open/close)</option>
           {doorScriptList.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.name}
+              Door, script: {s.name}
             </option>
           ))}
         </select>
       </label>
-      {door && doorScriptList.length === 0 && (
+      {door && door.script_id !== 0 && doorScriptList.length === 0 && (
         <p className="hint">
           This cube has a door script attached, but no scripts exist in the repository yet -- add one in the Door Scripts tab.
         </p>
@@ -1185,6 +1262,7 @@ export default function ShankpitLevelEditor() {
   const { scripts: doorScriptList } = useDoorScriptList()
   const [activeId, setActiveId] = useState<number | null>(null)
   const [draft, setDraft] = useState(newDefaultLevel())
+  const refLevelWalls = useReferencedLevelWalls(draft.objects)
   const [selected, setSelected] = useState<number | null>(null)
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1780,6 +1858,7 @@ export default function ShankpitLevelEditor() {
               onDragStart={pushHistory}
               objects={draft.objects}
               levelSummaries={list}
+              refLevelWalls={refLevelWalls}
               spawnPoints={draft.spawners}
               selectedSpawnPoint={selectedSpawnPoint}
               onSelectSpawnPoint={setSelectedSpawnPoint}
