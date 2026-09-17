@@ -890,6 +890,33 @@ func TestExport_ComposedWidgetObject(t *testing.T) {
 	}
 }
 
+// TestExport_ComposedWidgetObjectCarriesMaterial -- S482 follow-up, founder real-time: "ensure
+// that embeded levels acurately carry their materials into their parent levels." Widget
+// composition already carries Material through (flattenObjects' own widget branch copies it the
+// same way the level branch does), but the earlier TestExport_ComposedWidgetObject never actually
+// asserted on it -- real, direct verification, not an assumption.
+func TestExport_ComposedWidgetObjectCarriesMaterial(t *testing.T) {
+	s := newTestStore(t)
+	metalWall := aCube()
+	metalWall.Material = "metal"
+	widget, err := s.Widgets.CreateWidget(context.Background(), "Metal Widget", []shankpit.Wall{metalWall}, nil)
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	parent, err := s.CreateLevel(context.Background(), "Parent", 100, 50, 100, true, 2, nil,
+		[]shankpit.LevelObject{{RefWidgetID: widget.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	doc, err := s.Export(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.Walls) != 1 || doc.Walls[0].Material != "metal" {
+		t.Fatalf("expected the widget's own material %q to survive composition, got %+v", "metal", doc.Walls)
+	}
+}
+
 // TestCreateLevel_RejectsObjectWithBothOrNeitherRef verifies validateObjects' own new S482 rule:
 // exactly one of ref_level_id/ref_widget_id must be set, never both, never neither.
 func TestCreateLevel_RejectsObjectWithBothOrNeitherRef(t *testing.T) {
