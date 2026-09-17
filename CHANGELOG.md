@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-17
+- feat(nock): bullet hole decal example script (internal/nock/examples/bullet_hole.prn) -- asymmetric procgen texture with a tweakable asym-seed parameter, white-background/multiply-blend design so it composites without alpha (sess-20260905-0720-ec33e7c5)
 - fix(nock): animation repository now accepts mesh/skeleton-only glTF imports (no baked animation required) -- fixes the 422 hit importing Mannequin_F.glb (sess-20260905-0720-ec33e7c5)
 
 - Raise gskelMaxJoints 64 -> 128 (mirrors GOLDENBAND fix) -- fixes 422 glTF import failure on real 65+ joint rigs (sess-20260905-0720-ec33e7c5)
