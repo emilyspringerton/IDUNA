@@ -967,6 +967,21 @@ function Animations() {
   // rig") but didn't build until now.
   const [attachOpenId, setAttachOpenId] = useState<number | null>(null)
   const [attachSourceId, setAttachSourceId] = useState<number | ''>('')
+  // filter (2026-09-17, founder real-time: "i dont see the animations browser or rig browser or
+  // anything like that") -- this one tab already covers meshes/rigs/animations together (a row
+  // is really "a GOLDENBAND character asset," any real combination of the three), but nothing
+  // let you browse just one kind. These filter views are that -- a real "rig browser"/"animation
+  // browser" as a view over the same data, not a separate page.
+  const [filter, setFilter] = useState<'all' | 'mesh' | 'rig' | 'animated' | 'needs-animation'>('all')
+  const filteredList = list.filter((a) => {
+    switch (filter) {
+      case 'mesh': return a.has_mesh
+      case 'rig': return a.has_skel
+      case 'animated': return a.has_animation
+      case 'needs-animation': return !a.has_animation
+      default: return true
+    }
+  })
 
   const refresh = useCallback(() => {
     animations.list().then(setList)
@@ -1070,8 +1085,26 @@ function Animations() {
       </label>
       {error && <p className="error">{error}</p>}
 
+      <nav className="animation-filter-tabs">
+        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
+          All ({list.length})
+        </button>
+        <button className={filter === 'mesh' ? 'active' : ''} onClick={() => setFilter('mesh')}>
+          Meshes ({list.filter((a) => a.has_mesh).length})
+        </button>
+        <button className={filter === 'rig' ? 'active' : ''} onClick={() => setFilter('rig')}>
+          Rigs ({list.filter((a) => a.has_skel).length})
+        </button>
+        <button className={filter === 'animated' ? 'active' : ''} onClick={() => setFilter('animated')}>
+          Animations ({list.filter((a) => a.has_animation).length})
+        </button>
+        <button className={filter === 'needs-animation' ? 'active' : ''} onClick={() => setFilter('needs-animation')}>
+          Needs animation ({list.filter((a) => !a.has_animation).length})
+        </button>
+      </nav>
+
       <div className="animation-list">
-        {list.map((a) => (
+        {filteredList.map((a) => (
           <div key={a.id} className="animation-card">
             <strong>{a.name}</strong>
             <span className="hint">
@@ -1176,6 +1209,7 @@ function Animations() {
           </div>
         ))}
         {list.length === 0 && <p className="hint">No animations yet — drop a .glb above.</p>}
+        {list.length > 0 && filteredList.length === 0 && <p className="hint">Nothing matches this filter yet.</p>}
       </div>
     </div>
   )

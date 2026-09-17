@@ -338,6 +338,18 @@ textarea {
   @apply flex flex-wrap items-center gap-2;
 }
 
+.animation-filter-tabs {
+  @apply mb-3 flex flex-wrap gap-2;
+}
+
+.animation-filter-tabs button {
+  @apply btn-outline btn-secondary btn-xs;
+}
+
+.animation-filter-tabs button.active {
+  @apply btn-secondary;
+}
+
 /* BRAWLPIT level editor (S415-02/03) -- reuses .layout/.project-list/.project-header/
    .editor-body/.canvas-pane/.side-pane from the Project (layer) editor above; these rules add
    only what's genuinely new for this tab. */
