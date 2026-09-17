@@ -240,6 +240,41 @@ func validateCharacters(characters []Character) error {
 	return nil
 }
 
+// LevelExit is a real, author-placed trigger volume (S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md
+// Phase 1 -- founder real-time: "we need the loading points or whatever the opposite of the
+// spawners is") -- a player entering it server-side transitions to this LEVEL's own real
+// NextLevelID (v0 is a chain, not a per-exit destination: every exit volume in a level leads to
+// the same next level, see the NORTHSTAR doc for why a general graph is deliberately deferred).
+// Same real "no cross-reference to resolve" simplicity Character already established -- Radius is
+// the only field beyond a plain position.
+type LevelExit struct {
+	ID     int     `json:"id"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Z      float64 `json:"z"`
+	Radius float64 `json:"radius"`
+}
+
+// MaxLevelExits mirrors SHANKPIT's own real LEVEL_BOXES_MAX_LEVEL_EXITS (packages/world/
+// level_boxes.h) -- a real, sane v0 cap, matching MaxCharacters/MaxNavNodes's own reasoning (a
+// level needs a handful of real exit points, not hundreds).
+const MaxLevelExits = 8
+
+// validateLevelExits checks structural bounds and that every exit's own radius is a real,
+// positive number -- a zero/negative radius would never trigger (or would trigger everywhere,
+// for a negative stored value squared downstream), caught here rather than silently authored.
+func validateLevelExits(exits []LevelExit) error {
+	if len(exits) > MaxLevelExits {
+		return fmt.Errorf("shankpit: too many level exits (%d, max %d)", len(exits), MaxLevelExits)
+	}
+	for i, e := range exits {
+		if e.Radius <= 0 {
+			return fmt.Errorf("shankpit: level exit %d has non-positive radius %v", i, e.Radius)
+		}
+	}
+	return nil
+}
+
 // MaxSpawners bounds how many spawn points one level may hold -- a real, sane v0 cap, mirroring
 // MaxLevelObjects's own reasoning (a level needs a handful of spawns per team, not hundreds).
 const MaxSpawners = 64
@@ -328,6 +363,20 @@ type Level struct {
 	NavNodes []NavNode `json:"nav_nodes"`
 	// Characters -- real, author-placed story_ai NPCs. See Character's own doc comment.
 	Characters []Character `json:"characters"`
+	// LevelExits -- real, author-placed exit trigger volumes. See LevelExit's own doc comment.
+	LevelExits []LevelExit `json:"level_exits"`
+	// NextLevelID (S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1) -- nullable: no value is a
+	// real, honest "end of the story" or "not part of a chain" state, not an error. v0 is a real
+	// CHAIN (one next level per level), not a general branching graph -- see the NORTHSTAR doc for
+	// why. Validated as "must reference a real, existing level" at save time (validateNextLevelID,
+	// a DB-backed check, not a pure structural one like the other validators in this file).
+	NextLevelID *int64 `json:"next_level_id"`
+	// IsStoryStart (S473) -- exactly one level may hold this at a time, same real
+	// "exactly one, enforced in Go, no SQL partial-unique-index" shape IsDefaultQueue already
+	// established below. MODE_STORY's own match init discovers this through the ordinary,
+	// already-public level LIST endpoint, same discovery mechanism IsDefaultQueue already uses --
+	// see SetStoryStartLevel's own doc comment for the real enforcement.
+	IsStoryStart bool `json:"is_story_start"`
 	// IsDefaultQueue (S459-41, founder real-time: "need to add an option to shankpit levels to
 	// set a level as default for queue") -- exactly one level may be the real, global QUEUE
 	// default at a time, same real shape shankpit_sprays.IsDefault already established. The
@@ -371,6 +420,17 @@ type ExportDoc struct {
 	// MODE_STORY_CAVE on the dedicated server -- server_apply_custom_level's own real game-mode
 	// gate decides whether these actually spawn, not this field's mere presence.
 	Characters []CharacterExport `json:"characters,omitempty"`
+	// LevelExits -- the real, native-loader-facing shape SHANKPIT's own new LevelExit parser
+	// expects exactly (x/y/z/radius). See levelExitsForExport.
+	LevelExits []LevelExitExport `json:"level_exits,omitempty"`
+	// NextLevelID (S473) -- carried through unchanged from the source Level (no cross-reference to
+	// resolve -- unlike Door/NavNode, a level id IS the real, final identifier the native loader
+	// needs, not an author-facing id requiring position translation). Omitted entirely (not a
+	// zeroed 0) when nil, so the native loader's own "0 = none" sentinel (see level_boxes.h's own
+	// doc comment) is never confused with a real level id -- omitempty on a *int64 that's nil
+	// serializes to nothing, matching this file's own "absent key is a real, honest empty state"
+	// convention every other omitempty field here already uses.
+	NextLevelID *int64 `json:"next_level_id,omitempty"`
 	// Materials (S459-16) -- every real, currently-defined material's own shading parameters,
 	// embedded directly so the native loader gets everything it needs from ONE fetch (no second
 	// round-trip to a separate materials endpoint just to render a level). See
@@ -420,6 +480,16 @@ type CharacterExport struct {
 	X    float64 `json:"x"`
 	Y    float64 `json:"y"`
 	Z    float64 `json:"z"`
+}
+
+// LevelExitExport is the real, native-loader-facing shape of one exit trigger volume -- narrower
+// than LevelExit (no id), matching CharacterExport's own "no cross-reference, plain field-for-
+// field map" precedent exactly.
+type LevelExitExport struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Z      float64 `json:"z"`
+	Radius float64 `json:"radius"`
 }
 
 type MaterialExport struct {
@@ -494,7 +564,7 @@ type LevelStore struct {
 // own real "create a level, then add a cube" flow, S459-01 before S459-04) -- unlike BRAWLPIT's
 // own CreateLevel, an empty wall list is not an error here, since there is no equivalent real
 // native-loader requirement forcing "at least one platform" the way BRAWLPIT's 2D format does.
-func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner, doors []Door, navNodes []NavNode, characters []Character) (*Level, error) {
+func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner, doors []Door, navNodes []NavNode, characters []Character, levelExits []LevelExit, nextLevelID *int64) (*Level, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
@@ -519,6 +589,12 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	if err := validateCharacters(characters); err != nil {
 		return nil, err
 	}
+	if err := validateLevelExits(levelExits); err != nil {
+		return nil, err
+	}
+	if err := s.validateNextLevelID(ctx, 0, nextLevelID); err != nil {
+		return nil, err
+	}
 	if walls == nil {
 		walls = []Wall{}
 	}
@@ -536,6 +612,9 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	}
 	if characters == nil {
 		characters = []Character{}
+	}
+	if levelExits == nil {
+		levelExits = []LevelExit{}
 	}
 	wallsJSON, err := json.Marshal(walls)
 	if err != nil {
@@ -561,9 +640,13 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: marshal characters: %w", err)
 	}
+	levelExitsJSON, err := json.Marshal(levelExits)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: marshal level exits: %w", err)
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO shankpit_levels (name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		name, width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON), string(doorsJSON), string(navNodesJSON), string(charactersJSON))
+		`INSERT INTO shankpit_levels (name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		name, width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON), string(doorsJSON), string(navNodesJSON), string(charactersJSON), string(levelExitsJSON), nextLevelID)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: create level: %w", err)
 	}
@@ -574,22 +657,48 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	return s.GetLevel(ctx, id)
 }
 
+// validateNextLevelID checks that nextLevelID, if set, references a real, existing level -- a DB-
+// backed check (unlike this file's other, purely structural validators) since "does this id
+// exist" can only be answered against the store itself. selfID (0 for a not-yet-created level, via
+// CreateLevel) rejects a level naming itself as its own next level -- a real, trivial one-node
+// cycle, same class of guard validateObjects already applies to LevelObject.RefLevelID.
+func (s *LevelStore) validateNextLevelID(ctx context.Context, selfID int64, nextLevelID *int64) error {
+	if nextLevelID == nil {
+		return nil
+	}
+	if *nextLevelID == selfID {
+		return fmt.Errorf("shankpit: level cannot reference itself as its own next_level_id")
+	}
+	var exists int
+	if err := s.DB.QueryRowContext(ctx, `SELECT 1 FROM shankpit_levels WHERE id = ?`, *nextLevelID).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("shankpit: next_level_id %d does not reference a real level", *nextLevelID)
+		}
+		return fmt.Errorf("shankpit: validate next_level_id: %w", err)
+	}
+	return nil
+}
+
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, is_default_queue, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
 
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
-	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON string
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON string
+	var nextLevelID sql.NullInt64
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
 		return nil, fmt.Errorf("shankpit: get level: %w", err)
+	}
+	if nextLevelID.Valid {
+		l.NextLevelID = &nextLevelID.Int64
 	}
 	if err := json.Unmarshal([]byte(wallsJSON), &l.Walls); err != nil {
 		return nil, fmt.Errorf("shankpit: decode stored walls: %w", err)
@@ -608,6 +717,9 @@ func scanLevel(row *sql.Row) (*Level, error) {
 	}
 	if err := json.Unmarshal([]byte(doorsJSON), &l.Doors); err != nil {
 		return nil, fmt.Errorf("shankpit: decode stored doors: %w", err)
+	}
+	if err := json.Unmarshal([]byte(levelExitsJSON), &l.LevelExits); err != nil {
+		return nil, fmt.Errorf("shankpit: decode stored level exits: %w", err)
 	}
 	return &l, nil
 }
@@ -628,16 +740,20 @@ type LevelSummary struct {
 	DoorCount          int     `json:"door_count"`
 	NavNodeCount       int     `json:"nav_node_count"`
 	CharacterCount     int     `json:"character_count"`
-	IsDefaultQueue     bool    `json:"is_default_queue"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
+	LevelExitCount     int     `json:"level_exit_count"`
+	// IsStoryStart (S473) -- same real discovery-via-LIST shape IsDefaultQueue already
+	// established. See Level's own doc comment for the full enforcement story.
+	IsStoryStart   bool   `json:"is_story_start"`
+	IsDefaultQueue bool   `json:"is_default_queue"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 // ListLevels returns every level as a real, lightweight summary, newest first -- the real
 // level-select registry primitive this section exists to build.
 func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, is_default_queue, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, is_story_start, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: list levels: %w", err)
@@ -647,8 +763,8 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	out := []LevelSummary{}
 	for rows.Next() {
 		var sum LevelSummary
-		var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON string
-		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &sum.IsDefaultQueue, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
+		var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON string
+		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &sum.IsStoryStart, &sum.IsDefaultQueue, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("shankpit: list levels: %w", err)
 		}
 		var walls []Wall
@@ -675,12 +791,17 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 		if err := json.Unmarshal([]byte(charactersJSON), &characters); err != nil {
 			return nil, fmt.Errorf("shankpit: decode stored characters: %w", err)
 		}
+		var levelExits []LevelExit
+		if err := json.Unmarshal([]byte(levelExitsJSON), &levelExits); err != nil {
+			return nil, fmt.Errorf("shankpit: decode stored level exits: %w", err)
+		}
 		sum.WallCount = len(walls)
 		sum.ObjectCount = len(objects)
 		sum.SpawnerCount = len(spawners)
 		sum.DoorCount = len(doors)
 		sum.NavNodeCount = len(navNodes)
 		sum.CharacterCount = len(characters)
+		sum.LevelExitCount = len(levelExits)
 		out = append(out, sum)
 	}
 	return out, rows.Err()
@@ -692,7 +813,7 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 // array, save) and S459-05 "face-drag editing" (adjust an existing wall's center/size, save) both
 // go through -- matching BRAWLPIT's own LevelStore precedent exactly: there is no separate "add
 // one platform" endpoint there either, the whole array is replaced together.
-func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner, doors []Door, navNodes []NavNode, characters []Character) (*Level, error) {
+func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner, doors []Door, navNodes []NavNode, characters []Character, levelExits []LevelExit, nextLevelID *int64) (*Level, error) {
 	if err := validateGroundPlane(groundPlaneSquares); err != nil {
 		return nil, err
 	}
@@ -714,6 +835,12 @@ func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, d
 	if err := validateCharacters(characters); err != nil {
 		return nil, err
 	}
+	if err := validateLevelExits(levelExits); err != nil {
+		return nil, err
+	}
+	if err := s.validateNextLevelID(ctx, id, nextLevelID); err != nil {
+		return nil, err
+	}
 	if walls == nil {
 		walls = []Wall{}
 	}
@@ -731,6 +858,9 @@ func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, d
 	}
 	if characters == nil {
 		characters = []Character{}
+	}
+	if levelExits == nil {
+		levelExits = []LevelExit{}
 	}
 	wallsJSON, err := json.Marshal(walls)
 	if err != nil {
@@ -756,9 +886,13 @@ func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, d
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: marshal characters: %w", err)
 	}
+	levelExitsJSON, err := json.Marshal(levelExits)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: marshal level exits: %w", err)
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, ground_plane_enabled = ?, ground_plane_squares = ?, walls_json = ?, objects_json = ?, spawners_json = ?, doors_json = ?, nav_nodes_json = ?, characters_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON), string(doorsJSON), string(navNodesJSON), string(charactersJSON), id)
+		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, ground_plane_enabled = ?, ground_plane_squares = ?, walls_json = ?, objects_json = ?, spawners_json = ?, doors_json = ?, nav_nodes_json = ?, characters_json = ?, level_exits_json = ?, next_level_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON), string(doorsJSON), string(navNodesJSON), string(charactersJSON), string(levelExitsJSON), nextLevelID, id)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: update level: %w", err)
 	}
@@ -810,14 +944,42 @@ func (s *LevelStore) SetDefaultQueueLevel(ctx context.Context, id int64) (*Level
 	return s.GetLevel(ctx, id)
 }
 
+// SetStoryStartLevel marks id as the one real, global MODE_STORY entry level, clearing every
+// other row's own flag inside one transaction -- same exact "exactly one, enforced in Go" shape
+// SetDefaultQueueLevel already established above (S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md).
+func (s *LevelStore) SetStoryStartLevel(ctx context.Context, id int64) (*Level, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: set story start level: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE shankpit_levels SET is_story_start = 0`); err != nil {
+		return nil, fmt.Errorf("shankpit: set story start level: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE shankpit_levels SET is_story_start = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: set story start level: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("shankpit: level %d not found", id)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("shankpit: set story start level: %w", err)
+	}
+	return s.GetLevel(ctx, id)
+}
+
 // CloneLevel makes a real, full, independent copy of an existing level under a new name -- same
-// real shape as internal/brawlpit.LevelStore's own CloneLevel.
+// real shape as internal/brawlpit.LevelStore's own CloneLevel. Deliberately does NOT copy
+// IsStoryStart/IsDefaultQueue (a clone is never automatically the new default/story-start, same
+// real "exactly one, explicit action required" reasoning both those flags' own setters already
+// enforce) -- NextLevelID and LevelExits DO copy, matching every other real editable field here.
 func (s *LevelStore) CloneLevel(ctx context.Context, id int64, newName string) (*Level, error) {
 	src, err := s.GetLevel(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.GroundPlaneEnabled, src.GroundPlaneSquares, src.Walls, src.Objects, src.Spawners, src.Doors, src.NavNodes, src.Characters)
+	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.GroundPlaneEnabled, src.GroundPlaneSquares, src.Walls, src.Objects, src.Spawners, src.Doors, src.NavNodes, src.Characters, src.LevelExits, src.NextLevelID)
 }
 
 // DeleteLevel permanently removes a level row.
@@ -954,6 +1116,7 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares,
 		Walls: walls, Spawners: lvl.Spawners, Doors: doorsForExport(lvl.Doors, lvl.Walls),
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
+		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
 	}, nil
 }
 
@@ -1036,6 +1199,16 @@ func charactersForExport(characters []Character) []CharacterExport {
 	out := make([]CharacterExport, 0, len(characters))
 	for _, c := range characters {
 		out = append(out, CharacterExport{Role: c.Role, X: c.X, Y: c.Y, Z: c.Z})
+	}
+	return out
+}
+
+// levelExitsForExport is a plain field-for-field map -- same real "no cross-reference to resolve"
+// simplicity charactersForExport already established.
+func levelExitsForExport(exits []LevelExit) []LevelExitExport {
+	out := make([]LevelExitExport, 0, len(exits))
+	for _, e := range exits {
+		out = append(out, LevelExitExport{X: e.X, Y: e.Y, Z: e.Z, Radius: e.Radius})
 	}
 	return out
 }

@@ -54,6 +54,8 @@ func (h *ShankpitLevelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.export(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "default-queue" && r.Method == http.MethodPatch:
 		h.setDefaultQueue(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "story-start" && r.Method == http.MethodPatch:
+		h.setStoryStart(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -85,6 +87,8 @@ type createShankpitLevelReq struct {
 	Doors              []shankpit.Door        `json:"doors"`
 	NavNodes           []shankpit.NavNode     `json:"nav_nodes"`
 	Characters         []shankpit.Character   `json:"characters"`
+	LevelExits         []shankpit.LevelExit   `json:"level_exits"`
+	NextLevelID        *int64                 `json:"next_level_id"`
 }
 
 func (h *ShankpitLevelsHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +97,7 @@ func (h *ShankpitLevelsHandler) create(w http.ResponseWriter, r *http.Request) {
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	lvl, err := h.Store.CreateLevel(r.Context(), req.Name, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors, req.NavNodes, req.Characters)
+	lvl, err := h.Store.CreateLevel(r.Context(), req.Name, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors, req.NavNodes, req.Characters, req.LevelExits, req.NextLevelID)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -127,6 +131,8 @@ type updateShankpitLevelReq struct {
 	Doors              []shankpit.Door        `json:"doors"`
 	NavNodes           []shankpit.NavNode     `json:"nav_nodes"`
 	Characters         []shankpit.Character   `json:"characters"`
+	LevelExits         []shankpit.LevelExit   `json:"level_exits"`
+	NextLevelID        *int64                 `json:"next_level_id"`
 }
 
 // update is the real editor "save" action -- dimensions + the full wall layout replace the
@@ -145,7 +151,7 @@ func (h *ShankpitLevelsHandler) update(w http.ResponseWriter, r *http.Request, i
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	lvl, err := h.Store.UpdateLevel(r.Context(), id, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors, req.NavNodes, req.Characters)
+	lvl, err := h.Store.UpdateLevel(r.Context(), id, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors, req.NavNodes, req.Characters, req.LevelExits, req.NextLevelID)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -186,6 +192,22 @@ func (h *ShankpitLevelsHandler) setDefaultQueue(w http.ResponseWriter, r *http.R
 		return
 	}
 	lvl, err := h.Store.SetDefaultQueueLevel(r.Context(), id)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, lvl)
+}
+
+// setStoryStart is the real S473 endpoint (STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1) --
+// mirrors setDefaultQueue above exactly, same "exactly one at a time" real shape.
+func (h *ShankpitLevelsHandler) setStoryStart(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseShankpitLevelID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	lvl, err := h.Store.SetStoryStartLevel(r.Context(), id)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
