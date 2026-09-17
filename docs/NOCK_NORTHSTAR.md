@@ -246,11 +246,17 @@ that looks like if its dumb... just note it for later"), not silently dropped.
    tool... start to replace the backend imagemagic stuff as you can." `imagemagick.go` is the
    one real seam this would replace — every other file (`project.go`, `service.go`, the HTTP/CLI
    layers) already only calls the functions in that one file, not `convert` directly.
-2. **A low-poly 3D modeler.** Named explicitly by the founder, not scoped or started here — a
-   genuinely separate tool (geometry, not raster images) with no real overlap with `internal/nock`
-   beyond possibly living under the same `/admin/nock`-branded umbrella later.
+2. **A low-poly 3D modeler.** Named explicitly by the founder. **Real update (2026-09-17):** the
+   mesh/rig/animation side of NOCK has since started for real (animation repository, glTF
+   import, a general N-joint runtime) — see `docs/NOCK_CHARACTER_PIPELINE_NORTHSTAR.md` for the
+   real, phased plan. The modeler itself (authoring mesh geometry from scratch) is still real,
+   deliberately unscoped future work within that doc's own Phase 3, not started.
 3. **A level editor** for SHANKPIT (placing/arranging objects in a scene) and **object builders
-   (premades)** — both named, both real, separate future tools.
+   (premades)** — both named, both real, separate future tools. **Real update (2026-09-17):**
+   scriptable object placement (attaching a script to a placed object, generalizing the Story
+   System's own door-script pattern) is now scoped as Phase 2 of
+   `docs/NOCK_CHARACTER_PIPELINE_NORTHSTAR.md`; a general map-editor placement UI itself is still
+   real, unscoped future work within that doc.
 4. **PARENA Editor (PE) macro recording** — founder: "the parena editor will even allow us to
    program macros repeatable written in parena." No macro/scripting layer exists anywhere in
    `internal/nock` yet. **Real correction (2026-09-14)**: checked directly and confirmed this was
