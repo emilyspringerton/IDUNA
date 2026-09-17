@@ -528,9 +528,80 @@ function Viewport3D({
     scene.add(spawnerMesh)
     spawnerMeshRef.current = spawnerMesh
 
+    // WASD/QE fly camera (S487, founder real-time: "i am stuck rotating around one axis and i
+    // cant even move that axis if i touch any of the objects they move so i cant actually move my
+    // camera around when i get all up inside of the geometry... maybe i can get wasd to move
+    // around and the middle mouse can adjust the camera so i dont accidentally click stuff keep
+    // left click adjust as we have it now"). Root cause of the original complaint: orbit only
+    // ever triggered as a fallback of left-click MISSING every object (see onPointerDown below)
+    // -- once the camera is inside/near geometry, almost every left-click hits a wall instead of
+    // empty space, so orbit became unreachable in exactly the situation it's needed most. Fixed
+    // two ways: (1) WASD+QE now fly the camera THROUGH the level continuously while held (moves
+    // camStateRef's own `target`, which cameraPositionFrom derives the real camera position from
+    // -- flying is just "drive the orbit rig's pivot point around"), full 3D forward direction
+    // (W/S includes pitch, so looking down a hallway and pressing W actually flies into it, not
+    // just strafes horizontally); (2) middle-mouse-drag orbits unconditionally, before any
+    // raycast/object-hit check at all (see onPointerDown's own early-return for button===1) --
+    // left-click's existing object-select/drag/face-reshape behavior is completely untouched.
+    const keysHeld = new Set<string>()
+    let shiftHeld = false
+    const FLY_SPEED = 18 // world units/sec
+    const FLY_SPEED_FAST = 54 // Shift held
+    const onFlyKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === 'Shift') { shiftHeld = true; return }
+      const key = e.key.toLowerCase()
+      if (key === 'w' || key === 'a' || key === 's' || key === 'd' || key === 'q' || key === 'e') {
+        keysHeld.add(key)
+      }
+    }
+    const onFlyKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') { shiftHeld = false; return }
+      keysHeld.delete(e.key.toLowerCase())
+    }
+    const onFlyBlur = () => { keysHeld.clear(); shiftHeld = false }
+    window.addEventListener('keydown', onFlyKeyDown)
+    window.addEventListener('keyup', onFlyKeyUp)
+    // Real, necessary safety valve: if focus leaves the window/tab entirely while a key is held
+    // (alt-tab, a browser devtools popup, etc.) the matching keyup event never fires, and without
+    // this the camera would fly forever in whatever direction was held. Same class of bug pointer
+    // capture already guards against for mouse drags (onPointerUp releases capture).
+    window.addEventListener('blur', onFlyBlur)
+
     let raf = 0
+    let lastFrameMs = performance.now()
     const render = () => {
+      const now = performance.now()
+      const dt = Math.min(0.1, (now - lastFrameMs) / 1000) // clamp so a tab-switch stall doesn't teleport the camera
+      lastFrameMs = now
       const cam = camStateRef.current
+      if (keysHeld.size > 0) {
+        // Full 3D forward (includes phi/pitch), matching cameraPositionFrom's own
+        // target+radius*(sinPhi*sinTheta, cosPhi, sinPhi*cosTheta) convention -- forward is the
+        // negation of that unit offset vector (camera-to-target direction).
+        const sinPhi = Math.sin(cam.phi), cosPhi = Math.cos(cam.phi)
+        const sinTheta = Math.sin(cam.theta), cosTheta = Math.cos(cam.theta)
+        const fx = -(sinPhi * sinTheta), fy = -cosPhi, fz = -(sinPhi * cosTheta)
+        // right = forward x worldUp (verified at theta=0,phi=90deg: forward=(0,0,-1),
+        // right=(1,0,0) -- matches the arrow-key nudge handler's own by-hand-verified convention).
+        const rx = fz, ry = 0, rz = -fx
+        const rlen = Math.hypot(rx, ry, rz) || 1
+        const speed = (shiftHeld ? FLY_SPEED_FAST : FLY_SPEED) * dt
+        let mx = 0, my = 0, mz = 0
+        if (keysHeld.has('w')) { mx += fx; my += fy; mz += fz }
+        if (keysHeld.has('s')) { mx -= fx; my -= fy; mz -= fz }
+        if (keysHeld.has('d')) { mx += rx / rlen; mz += rz / rlen }
+        if (keysHeld.has('a')) { mx -= rx / rlen; mz -= rz / rlen }
+        if (keysHeld.has('e')) { my += 1 }
+        if (keysHeld.has('q')) { my -= 1 }
+        const mlen = Math.hypot(mx, my, mz)
+        if (mlen > 0.0001) {
+          cam.target.x += (mx / mlen) * speed
+          cam.target.y += (my / mlen) * speed
+          cam.target.z += (mz / mlen) * speed
+        }
+      }
       camera.position.copy(cameraPositionFrom(cam))
       camera.lookAt(cam.target)
       const rect = container.getBoundingClientRect()
@@ -577,6 +648,21 @@ function Viewport3D({
 
     const onPointerDown = (e: PointerEvent) => {
       container.setPointerCapture(e.pointerId)
+
+      // Middle-mouse always orbits, unconditionally, BEFORE any raycast/object-hit check --
+      // founder real-time: "the middle mouse can adjust the camera so i dont accidentally click
+      // stuff keep left click adjust as we have it now." This is the real fix for "i cant even
+      // move that axis if i touch any of the objects they move" -- left-click's own orbit-on-miss
+      // fallback below is untouched and still works, but middle-click gives a way to orbit that
+      // can never accidentally grab a wall, spawner, or spawn point, even when surrounded by
+      // geometry (the exact "all up inside of the geometry" situation that made left-click orbit
+      // unreachable in practice).
+      if (e.button === 1) {
+        e.preventDefault() // suppress the browser's own middle-click autoscroll cursor
+        dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
+        return
+      }
+
       setNdcFromEvent(e)
       raycaster.setFromCamera(ndc, camera)
 
@@ -726,6 +812,9 @@ function Viewport3D({
       container.removeEventListener('pointermove', onPointerMove)
       container.removeEventListener('pointerup', onPointerUp)
       container.removeEventListener('wheel', onWheel)
+      window.removeEventListener('keydown', onFlyKeyDown)
+      window.removeEventListener('keyup', onFlyKeyUp)
+      window.removeEventListener('blur', onFlyBlur)
       renderer.dispose()
       container.removeChild(renderer.domElement)
     }
@@ -792,11 +881,16 @@ function Viewport3D({
   // inputs elsewhere on this page.
   useEffect(() => {
     const SPAWNER_MOVE_STEP = 2
+    // Arrow keys, not WASD (S487 follow-up -- founder real-time: "maybe i can get wasd to move
+    // around [the camera]"). WASD used to nudge the spawner AND was the only real candidate for
+    // camera flight -- a genuine collision, not two features that can share one set of keys.
+    // Camera navigation is the far more universally expected WASD behavior (every 3D editor/game
+    // uses it), so the spawner nudge moved to arrows instead; same math, same feel, just a
+    // different key set. See the camera-flight effect below for WASD's own new job.
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      const key = e.key.toLowerCase()
-      if (key !== 'w' && key !== 'a' && key !== 's' && key !== 'd') return
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
       e.preventDefault()
       const theta = camStateRef.current.theta
       // Derived from cameraPositionFrom's own convention (camera sits at
@@ -810,10 +904,10 @@ function Viewport3D({
       const rightZ = -Math.sin(theta)
       let dx = 0
       let dz = 0
-      if (key === 'w') { dx += forwardX; dz += forwardZ }
-      if (key === 's') { dx -= forwardX; dz -= forwardZ }
-      if (key === 'd') { dx += rightX; dz += rightZ }
-      if (key === 'a') { dx -= rightX; dz -= rightZ }
+      if (e.key === 'ArrowUp') { dx += forwardX; dz += forwardZ }
+      if (e.key === 'ArrowDown') { dx -= forwardX; dz -= forwardZ }
+      if (e.key === 'ArrowRight') { dx += rightX; dz += rightZ }
+      if (e.key === 'ArrowLeft') { dx -= rightX; dz -= rightZ }
       const s = spawnerRef.current
       onSpawnerChangeRef.current({ x: s.x + dx * SPAWNER_MOVE_STEP, y: s.y, z: s.z + dz * SPAWNER_MOVE_STEP })
     }
