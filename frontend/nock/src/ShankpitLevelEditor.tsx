@@ -290,6 +290,7 @@ function Viewport3D({
   selectedSpawnPoint,
   onSelectSpawnPoint,
   onSpawnPointsChange,
+  levelExits,
 }: {
   width: number
   height: number
@@ -312,6 +313,7 @@ function Viewport3D({
   selectedSpawnPoint: number | null
   onSelectSpawnPoint: (id: number | null) => void
   onSpawnPointsChange: (spawners: ShankpitSpawner[]) => void
+  levelExits: ShankpitLevelExit[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -321,6 +323,7 @@ function Viewport3D({
   const objectMeshesRef = useRef<THREE.Group[]>([])
   const spawnerMeshRef = useRef<THREE.Mesh | null>(null)
   const spawnPointMeshesRef = useRef<THREE.Mesh[]>([])
+  const levelExitMeshesRef = useRef<THREE.Group[]>([])
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const wallsRef = useRef(walls)
   const selectedRef = useRef(selected)
@@ -750,6 +753,48 @@ function Viewport3D({
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spawnPoints, selectedSpawnPoint])
+
+  // Real, persisted level exits (S473's own "opposite of a spawner" -- S476 follow-up, founder
+  // real-time: "can we make it so the level editor there is a visual indicator for the level
+  // exit marker? im not sure if it works because i dont know if its in the right spot"). Each
+  // real exit renders as a real, cyan center marker PLUS a wireframe sphere sized to its own
+  // actual radius -- an author can see both WHERE it is and how BIG its real trigger volume is,
+  // not just numbers in the side panel. Rebuilt on every change (position, radius, or count) --
+  // deliberately simpler than spawnPoints' own rebuild-on-count/sync-in-place split above, since
+  // v0 exits have no drag support (no per-frame updates to optimize for) and this level holds at
+  // most LEVEL_BOXES_MAX_LEVEL_EXITS (8) of them -- a full rebuild is real, negligible cost here.
+  // Read-only display for now, not yet click-to-select/drag like walls/spawn points -- a real,
+  // named v1 scope limit, not silently promised.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    for (const g of levelExitMeshesRef.current) {
+      scene.remove(g)
+      g.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose()
+          ;(obj.material as THREE.Material).dispose()
+        }
+      })
+    }
+    levelExitMeshesRef.current = levelExits.map((ex) => {
+      const group = new THREE.Group()
+      const core = new THREE.Mesh(
+        new THREE.OctahedronGeometry(1.0),
+        new THREE.MeshStandardMaterial({ color: 0x33ddff, emissive: 0x0088aa, emissiveIntensity: 0.7 }),
+      )
+      group.add(core)
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.max(ex.radius, 0.1), 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0x33ddff, wireframe: true, transparent: true, opacity: 0.35 }),
+      )
+      group.add(sphere)
+      group.position.set(ex.x, ex.y, ex.z)
+      scene.add(group)
+      return group
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [levelExits])
 
   // The real ground plane (S459-08, founder real-time: "i want there to be a plane by default
   // that the player collides with - the checkerboard in the level editor - that should
@@ -1783,6 +1828,7 @@ export default function ShankpitLevelEditor() {
               selectedSpawnPoint={selectedSpawnPoint}
               onSelectSpawnPoint={setSelectedSpawnPoint}
               onSpawnPointsChange={setSpawners}
+              levelExits={draft.levelExits}
             />
             <p className="hint">
               Drag empty space to orbit, scroll to zoom.{' '}
