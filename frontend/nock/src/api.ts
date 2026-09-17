@@ -562,6 +562,11 @@ export const SHANKPIT_GRID_CELL_SIZE = 50
 export interface ShankpitLevelObject {
   id: number
   ref_level_id: number
+  // ref_widget_id (S482, founder real-time: "make widget or something they are both objects but
+  // widgets just dont show up in the levels menu") -- exactly one of ref_level_id/ref_widget_id
+  // is ever set, never both. plane_visible/plane_solid below are meaningless for a widget
+  // reference (a widget has no ground plane at all) and are simply ignored when this is set.
+  ref_widget_id: number
   x: number
   y: number
   z: number
@@ -807,6 +812,54 @@ export const shankpitLevels = {
   setDefaultQueue: (id: number) => sreq<ShankpitLevel>(`/${id}/default-queue`, { method: 'PATCH' }),
   // setStoryStart (S473) -- mirrors setDefaultQueue above exactly.
   setStoryStart: (id: number) => sreq<ShankpitLevel>(`/${id}/story-start`, { method: 'PATCH' }),
+}
+
+// ---- SHANKPIT Widgets (S482, founder real-time: "i dont want to make doors be levels please -
+// make widget or something they are both objects but widgets just dont show up in the levels
+// menu and the geometry of the widget shows up not the geometry of the underlying level under
+// the widget - there should be no ground plane and no dimension in the widget - a level is a
+// dimension - a widget is just a widget") -- a real, separate registry from shankpit_levels:
+// walls + doors only, no dimension, no ground plane, never listed alongside levels. ----
+
+export interface ShankpitWidget {
+  id: number
+  name: string
+  walls: ShankpitWall[]
+  doors: ShankpitDoor[]
+  created_at: string
+  updated_at: string
+}
+
+export interface ShankpitWidgetSummary {
+  id: number
+  name: string
+  wall_count: number
+  door_count: number
+  created_at: string
+  updated_at: string
+}
+
+const SHANKPIT_WIDGETS_BASE = '/admin/nock/api/shankpit-widgets'
+
+async function wreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${SHANKPIT_WIDGETS_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const shankpitWidgets = {
+  list: () => wreq<ShankpitWidgetSummary[]>(''),
+  get: (id: number) => wreq<ShankpitWidget>(`/${id}`),
+  create: (name: string, walls: ShankpitWall[], doors: ShankpitDoor[]) =>
+    wreq<ShankpitWidget>('', { method: 'POST', body: JSON.stringify({ name, walls, doors }) }),
+  save: (id: number, walls: ShankpitWall[], doors: ShankpitDoor[]) =>
+    wreq<ShankpitWidget>(`/${id}`, { method: 'PUT', body: JSON.stringify({ walls, doors }) }),
+  delete: (id: number) => wreq<void>(`/${id}`, { method: 'DELETE' }),
 }
 
 // ---- SHANKPIT sprays (S459-19, founder real-time: "can we implement sprays? ... export to spray

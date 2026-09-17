@@ -6,6 +6,7 @@ import AiOpponents from './AiOpponents'
 import AnimationViewer from './AnimationViewer'
 import ShankpitAiOpponents from './ShankpitAiOpponents'
 import ShankpitMaterials from './ShankpitMaterials'
+import ShankpitWidgets from './ShankpitWidgets'
 import Sprays from './Sprays'
 import './App.css'
 
@@ -1255,8 +1256,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'sprays'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'sprays']
+type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'sprays'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'sprays']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1355,6 +1356,9 @@ export default function App() {
           <button className={tab === 'shankpit-materials' ? 'active' : ''} onClick={() => setTab('shankpit-materials')}>
             SHANKPIT Materials
           </button>
+          <button className={tab === 'shankpit-widgets' ? 'active' : ''} onClick={() => setTab('shankpit-widgets')}>
+            SHANKPIT Widgets
+          </button>
           <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
             Sprays
           </button>
@@ -1389,6 +1393,8 @@ export default function App() {
         <div className="layout-single">
           <ShankpitMaterials />
         </div>
+      ) : tab === 'shankpit-widgets' ? (
+        <ShankpitWidgets />
       ) : tab === 'sprays' ? (
         <Sprays />
       ) : (

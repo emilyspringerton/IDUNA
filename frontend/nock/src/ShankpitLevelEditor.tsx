@@ -9,6 +9,7 @@ import {
   doorScripts,
   shankpitLevels,
   shankpitMaterials,
+  shankpitWidgets,
   textures,
   type DoorScriptSummary,
   type ShankpitCharacter,
@@ -21,6 +22,7 @@ import {
   type ShankpitSpawner,
   type ShankpitSpawnerTeam,
   type ShankpitWall,
+  type ShankpitWidgetSummary,
 } from './api'
 
 // ShankpitLevelEditor.tsx — SHANKPIT NOCK level editor v0 frontend (EMILY/BACKLOG.md SECTION 459,
@@ -274,6 +276,16 @@ function useLevelList() {
   return { list, refresh }
 }
 
+// useWidgetSummaryList -- S482, real object-placement picker source, kept OUT of useLevelList's
+// own list entirely (the founder's own explicit "widgets just dont show up in the levels menu").
+function useWidgetSummaryList() {
+  const [list, setList] = useState<ShankpitWidgetSummary[]>([])
+  useEffect(() => {
+    shankpitWidgets.list().then(setList).catch(() => setList([]))
+  }, [])
+  return list
+}
+
 // useReferencedLevelWalls -- S479, founder real-time: "when you embed a level currently it
 // doesnt render the level it would be nice if we could actually render the level." Object
 // placement previously only ever rendered an empty wireframe bounding box (the child level's own
@@ -291,13 +303,44 @@ function useLevelList() {
 function useReferencedLevelWalls(objects: ShankpitLevelObject[]) {
   const [cache, setCache] = useState<Record<number, ShankpitWall[]>>({})
   useEffect(() => {
-    const missing = [...new Set(objects.map((o) => o.ref_level_id))].filter((id) => !(id in cache))
+    // S482: ref_level_id is 0 (unset) for a widget-referencing object -- skip those here
+    // entirely, useReferencedWidgetWalls below handles them.
+    const missing = [...new Set(objects.map((o) => o.ref_level_id).filter((id) => id !== 0))].filter((id) => !(id in cache))
     if (missing.length === 0) return
     Promise.all(
       missing.map((id) =>
         shankpitLevels
           .get(id)
           .then((lvl) => [id, lvl.walls] as [number, ShankpitWall[]])
+          .catch(() => [id, []] as [number, ShankpitWall[]]),
+      ),
+    ).then((pairs) => {
+      setCache((prev) => {
+        const next = { ...prev }
+        for (const [id, walls] of pairs) next[id] = walls
+        return next
+      })
+    })
+  }, [objects, cache])
+  return cache
+}
+
+// useReferencedWidgetWalls -- S482 counterpart to useReferencedLevelWalls above, same real
+// caching shape, for widget-referencing objects (ref_widget_id != 0). Returns both walls AND
+// doors -- a widget's own door(s) render is out of scope for the viewport preview (doors have no
+// distinct visual today even for root/level walls, see the Characters panel's own doc text), but
+// the walls themselves are what makes this the founder's own real "actual object viewer": "the
+// geometry of the widget shows up not the geometry of the underlying level under the widget."
+function useReferencedWidgetWalls(objects: ShankpitLevelObject[]) {
+  const [cache, setCache] = useState<Record<number, ShankpitWall[]>>({})
+  useEffect(() => {
+    const missing = [...new Set(objects.map((o) => o.ref_widget_id).filter((id) => id !== 0))].filter((id) => !(id in cache))
+    if (missing.length === 0) return
+    Promise.all(
+      missing.map((id) =>
+        shankpitWidgets
+          .get(id)
+          .then((w) => [id, w.walls] as [number, ShankpitWall[]])
           .catch(() => [id, []] as [number, ShankpitWall[]]),
       ),
     ).then((pairs) => {
@@ -324,14 +367,16 @@ function useMaterialList() {
   return { materials, refresh }
 }
 
-interface CameraState {
+// Exported (S482) so ShankpitWidgets.tsx's own, smaller viewport can reuse the same real orbit
+// camera math instead of forking it.
+export interface CameraState {
   target: THREE.Vector3
   radius: number
   theta: number // azimuth
   phi: number // polar, clamped away from the poles
 }
 
-function cameraPositionFrom(cam: CameraState): THREE.Vector3 {
+export function cameraPositionFrom(cam: CameraState): THREE.Vector3 {
   const sinPhi = Math.sin(cam.phi)
   return new THREE.Vector3(
     cam.target.x + cam.radius * sinPhi * Math.sin(cam.theta),
@@ -359,6 +404,7 @@ function Viewport3D({
   objects,
   levelSummaries,
   refLevelWalls,
+  refWidgetWalls,
   materials,
   spawnPoints,
   selectedSpawnPoint,
@@ -386,6 +432,7 @@ function Viewport3D({
   objects: ShankpitLevelObject[]
   levelSummaries: ShankpitLevelSummary[]
   refLevelWalls: Record<number, ShankpitWall[]>
+  refWidgetWalls: Record<number, ShankpitWall[]>
   materials: ShankpitMaterial[]
   spawnPoints: ShankpitSpawner[]
   selectedSpawnPoint: number | null
@@ -808,12 +855,35 @@ function Viewport3D({
       })
     }
     objectMeshesRef.current = objects.map((o) => {
+      const group = new THREE.Group()
+
+      // S482, founder real-time: "make widget or something... the geometry of the widget shows
+      // up not the geometry of the underlying level under the widget - there should be no ground
+      // plane and no dimension in the widget - a level is a dimension - a widget is just a
+      // widget." A widget-referencing object gets NO wireframe bounding box at all (it has no
+      // width/height/depth to size one from) -- just its own real wall geometry, positioned
+      // directly at the object's own placed x/y/z (no vertical half-height compensation needed,
+      // unlike the level branch below, since there's no bounding box to straddle).
+      if (o.ref_widget_id) {
+        for (const cw of refWidgetWalls[o.ref_widget_id] ?? []) {
+          const cgeo = new THREE.BoxGeometry(cw.sx, cw.sy, cw.sz)
+          const cmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cw.r, cw.g, cw.b) })
+          applyWallTexture(cmat, cw.material, cw.r, cw.g, cw.b, materials)
+          const cmesh = new THREE.Mesh(cgeo, cmat)
+          cmesh.position.set(cw.x, cw.y, cw.z)
+          group.add(cmesh)
+        }
+        group.position.set(o.x, o.y, o.z)
+        group.rotation.y = -(o.rot_y * Math.PI) / 180
+        scene.add(group)
+        return group
+      }
+
       const ref = levelSummaries.find((l) => l.id === o.ref_level_id)
       const w = ref?.width ?? SHANKPIT_GRID_CELL_SIZE, h = ref?.height ?? SHANKPIT_GRID_CELL_SIZE, d = ref?.depth ?? SHANKPIT_GRID_CELL_SIZE
       const geo = new THREE.BoxGeometry(w, h, d)
       const wire = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xffaa33 }))
       geo.dispose()
-      const group = new THREE.Group()
       group.add(wire)
 
       const contentGroup = new THREE.Group()
@@ -834,12 +904,17 @@ function Viewport3D({
       return group
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects.length, levelSummaries.length, refLevelWalls, materials])
+  }, [objects.length, levelSummaries.length, refLevelWalls, refWidgetWalls, materials])
 
   useEffect(() => {
     objects.forEach((o, i) => {
       const group = objectMeshesRef.current[i]
       if (!group) return
+      if (o.ref_widget_id) {
+        group.position.set(o.x, o.y, o.z)
+        group.rotation.y = -(o.rot_y * Math.PI) / 180
+        return
+      }
       const ref = levelSummaries.find((l) => l.id === o.ref_level_id)
       const h = ref?.height ?? SHANKPIT_GRID_CELL_SIZE
       group.position.set(o.x, o.y + h / 2, o.z)
@@ -1002,7 +1077,9 @@ function Viewport3D({
   return <div ref={containerRef} className="shankpit-viewport" />
 }
 
-function WallInspector({
+// Exported (S482) so ShankpitWidgets.tsx can reuse it directly -- a widget's own wall editing
+// (dimensions/color/friction/material/door) is identical to a level's, no reason to fork it.
+export function WallInspector({
   wall,
   onChange,
   onDelete,
@@ -1132,13 +1209,21 @@ function ObjectInspector({
           Rotate 90° (now {obj.rot_y}°)
         </button>
       </div>
-      <label>
-        <input type="checkbox" checked={obj.plane_visible} onChange={(e) => onChange({ ...obj, plane_visible: e.target.checked })} /> Plane
-        visible
-      </label>
-      <label>
-        <input type="checkbox" checked={obj.plane_solid} onChange={(e) => onChange({ ...obj, plane_solid: e.target.checked })} /> Plane solid
-      </label>
+      {/* S482: a widget has no ground plane at all (founder: "there should be no ground plane
+          and no dimension in the widget") -- these two toggles are meaningless for a widget-
+          referencing object, so they're simply not shown for one, rather than shown-but-inert. */}
+      {!obj.ref_widget_id && (
+        <>
+          <label>
+            <input type="checkbox" checked={obj.plane_visible} onChange={(e) => onChange({ ...obj, plane_visible: e.target.checked })} />{' '}
+            Plane visible
+          </label>
+          <label>
+            <input type="checkbox" checked={obj.plane_solid} onChange={(e) => onChange({ ...obj, plane_solid: e.target.checked })} /> Plane
+            solid
+          </label>
+        </>
+      )}
       <button className="danger" type="button" onClick={onDelete}>
         Remove object
       </button>
@@ -1356,11 +1441,14 @@ export default function ShankpitLevelEditor() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [draft, setDraft] = useState(newDefaultLevel())
   const refLevelWalls = useReferencedLevelWalls(draft.objects)
+  const refWidgetWalls = useReferencedWidgetWalls(draft.objects)
   const [selected, setSelected] = useState<number | null>(null)
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
   const [objectPickLevelId, setObjectPickLevelId] = useState<number | ''>('')
+  const [objectPickWidgetId, setObjectPickWidgetId] = useState<number | ''>('')
+  const widgetList = useWidgetSummaryList()
   const [selectedSpawnPoint, setSelectedSpawnPoint] = useState<number | null>(null)
   const [editMode, setEditMode] = useState<EditMode>('object')
   // Constrain Y while dragging in object mode -- founder real-time: "i need the blocks to notfly
@@ -1502,12 +1590,18 @@ export default function ShankpitLevelEditor() {
   // object - the whole level" / "a map is a composition of levels." Placed at the spawner's own
   // current position (same "no accidental overlap" convenience addCube already gives cubes),
   // unrotated -- rotate afterward via the inspector's own "Rotate 90°" button.
-  const addObject = (refLevelId: number) => {
+  // S482 -- an object now composes EITHER a level OR a widget, never both (validateObjects'
+  // own new rule). Two real, separate pickers below (level vs widget) call this with whichever
+  // one the founder actually picked.
+  const addObject = (ref: { refLevelId: number } | { refWidgetId: number }) => {
     pushHistory()
     const id = nextObjectId(draft.objects)
+    const base = { id, x: spawner.x, y: spawner.y, z: spawner.z, rot_y: 0 as const, plane_visible: false, plane_solid: false }
     setObjects([
       ...draft.objects,
-      { id, ref_level_id: refLevelId, x: spawner.x, y: spawner.y, z: spawner.z, rot_y: 0, plane_visible: false, plane_solid: false },
+      'refLevelId' in ref
+        ? { ...base, ref_level_id: ref.refLevelId, ref_widget_id: 0 }
+        : { ...base, ref_level_id: 0, ref_widget_id: ref.refWidgetId },
     ])
   }
 
@@ -1905,10 +1999,33 @@ export default function ShankpitLevelEditor() {
               type="button"
               disabled={objectPickLevelId === ''}
               onClick={() => {
-                if (objectPickLevelId !== '') addObject(objectPickLevelId)
+                if (objectPickLevelId !== '') addObject({ refLevelId: objectPickLevelId })
               }}
             >
               + Add object
+            </button>
+          </div>
+          {/* S482, founder real-time: "make widget or something" -- a real, second, separate
+              picker (not merged into the level dropdown above) since a level and a widget are
+              real, different things: a widget has no dimension/ground plane and never shows up
+              in the Levels list. */}
+          <div className="mode-toggle">
+            <select value={objectPickWidgetId} onChange={(e) => setObjectPickWidgetId(e.target.value === '' ? '' : Number(e.target.value))}>
+              <option value="">Add widget as object...</option>
+              {widgetList.map((wgt) => (
+                <option key={wgt.id} value={wgt.id}>
+                  {wgt.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={objectPickWidgetId === ''}
+              onClick={() => {
+                if (objectPickWidgetId !== '') addObject({ refWidgetId: objectPickWidgetId })
+              }}
+            >
+              + Add widget
             </button>
           </div>
           <button type="button" onClick={save} disabled={!dirty}>
@@ -1952,6 +2069,7 @@ export default function ShankpitLevelEditor() {
               objects={draft.objects}
               levelSummaries={list}
               refLevelWalls={refLevelWalls}
+              refWidgetWalls={refWidgetWalls}
               materials={materials}
               spawnPoints={draft.spawners}
               selectedSpawnPoint={selectedSpawnPoint}
@@ -2008,12 +2126,16 @@ export default function ShankpitLevelEditor() {
             )}
             {draft.objects.length > 0 && (
               <div className="object-list">
-                <h3>Objects (levels placed as objects)</h3>
+                <h3>Objects (levels/widgets placed as objects)</h3>
                 {draft.objects.map((o) => (
                   <ObjectInspector
                     key={o.id}
                     obj={o}
-                    refName={list.find((l) => l.id === o.ref_level_id)?.name ?? `level ${o.ref_level_id}`}
+                    refName={
+                      o.ref_widget_id
+                        ? `widget: ${widgetList.find((wgt) => wgt.id === o.ref_widget_id)?.name ?? o.ref_widget_id}`
+                        : (list.find((l) => l.id === o.ref_level_id)?.name ?? `level ${o.ref_level_id}`)
+                    }
                     onChange={updateObject}
                     onDelete={() => deleteObject(o.id)}
                   />
