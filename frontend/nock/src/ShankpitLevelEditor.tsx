@@ -5,8 +5,11 @@ import {
   SPAWNER_TEAM_BLUE,
   SPAWNER_TEAM_FFA,
   SPAWNER_TEAM_RED,
+  doorScripts,
   shankpitLevels,
   shankpitMaterials,
+  type DoorScriptSummary,
+  type ShankpitDoor,
   type ShankpitLevelObject,
   type ShankpitLevelSummary,
   type ShankpitMaterial,
@@ -60,6 +63,7 @@ function newDefaultLevel(): {
   walls: ShankpitWall[]
   objects: ShankpitLevelObject[]
   spawners: ShankpitSpawner[]
+  doors: ShankpitDoor[]
 } {
   return {
     name: '',
@@ -71,6 +75,7 @@ function newDefaultLevel(): {
     walls: [aDefaultWall(1, defaultSpawnerPos())],
     objects: [],
     spawners: [],
+    doors: [],
   }
 }
 
@@ -84,6 +89,23 @@ function nextObjectId(objects: ShankpitLevelObject[]): number {
 
 function nextSpawnerId(spawners: ShankpitSpawner[]): number {
   return spawners.reduce((m, sp) => Math.max(m, sp.id), 0) + 1
+}
+
+function nextDoorId(doors: ShankpitDoor[]): number {
+  return doors.reduce((m, d) => Math.max(m, d.id), 0) + 1
+}
+
+// useDoorScriptList -- same real, small "list on mount, fail-soft to empty" hook shape
+// useMaterialList already established for materials.
+function useDoorScriptList() {
+  const [scripts, setScripts] = useState<DoorScriptSummary[]>([])
+  const refresh = useCallback(() => {
+    doorScripts.list().then(setScripts).catch(() => setScripts([]))
+  }, [])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+  return { scripts, refresh }
 }
 
 // SPAWNER_TEAM_LABELS/SPAWNER_TEAM_COLORS -- founder real-time: "call it red team and blue team".
@@ -747,11 +769,17 @@ function WallInspector({
   onChange,
   onDelete,
   materials,
+  door,
+  doorScriptList,
+  onDoorChange,
 }: {
   wall: ShankpitWall
   onChange: (w: ShankpitWall) => void
   onDelete: () => void
   materials: ShankpitMaterial[]
+  door: ShankpitDoor | null
+  doorScriptList: DoorScriptSummary[]
+  onDoorChange: (scriptId: number | null) => void
 }) {
   const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
   const field = (label: string, key: keyof ShankpitWall, opts: { min?: number; step?: number } = {}) => (
@@ -790,6 +818,28 @@ function WallInspector({
       {field('G', 'g', { min: 0, step: 0.05 })}
       {field('B', 'b', { min: 0, step: 0.05 })}
       {field('Friction', 'friction', { min: 0, step: 0.05 })}
+      {/* Story System Phase 1 door authoring -- founder real-time, 2026-09-17: "how do i put
+          doors in my levels?" A wall IS a door exactly when it has a script attached; there's no
+          separate "is_door" checkbox to fall out of sync with an empty selection. */}
+      <label>
+        Door script{' '}
+        <select
+          value={door?.script_id ?? ''}
+          onChange={(e) => onDoorChange(e.target.value === '' ? null : Number(e.target.value))}
+        >
+          <option value="">(not a door)</option>
+          {doorScriptList.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {door && doorScriptList.length === 0 && (
+        <p className="hint">
+          This cube has a door script attached, but no scripts exist in the repository yet -- add one in the Door Scripts tab.
+        </p>
+      )}
       <button className="danger" type="button" onClick={onDelete}>
         Delete cube
       </button>
@@ -960,6 +1010,7 @@ function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[];
 export default function ShankpitLevelEditor() {
   const { list, refresh } = useLevelList()
   const { materials, refresh: refreshMaterials } = useMaterialList()
+  const { scripts: doorScriptList } = useDoorScriptList()
   const [activeId, setActiveId] = useState<number | null>(null)
   const [draft, setDraft] = useState(newDefaultLevel())
   const [selected, setSelected] = useState<number | null>(null)
@@ -1043,6 +1094,7 @@ export default function ShankpitLevelEditor() {
       walls: lvl.walls,
       objects: lvl.objects,
       spawners: lvl.spawners ?? [],
+      doors: lvl.doors ?? [],
     })
     setActiveId(id)
     setSelected(null)
@@ -1081,6 +1133,9 @@ export default function ShankpitLevelEditor() {
     if (selected === null) return
     pushHistory()
     setWalls(draft.walls.filter((w) => w.id !== selected))
+    // A door attached to the deleted wall is meaningless without it -- cascade the delete rather
+    // than leaving an orphaned door validateDoors would reject on the next save anyway.
+    setDoors(draft.doors.filter((d) => d.wall_id !== selected))
     setSelected(null)
   }
 
@@ -1142,6 +1197,28 @@ export default function ShankpitLevelEditor() {
     setSelectedSpawnPoint(null)
   }
 
+  const setDoors = (doors: ShankpitDoor[]) => {
+    setDraft((d) => ({ ...d, doors }))
+    setDirty(true)
+  }
+
+  // setWallDoor -- the real UI action: attach/detach/re-point a door on the currently selected
+  // wall. scriptId === null removes the door entirely (a wall is a door only while it has one
+  // attached -- there's no separate "is_door" flag to fall out of sync with an empty script).
+  const setWallDoor = (wallId: number, scriptId: number | null) => {
+    pushHistory()
+    const existing = draft.doors.find((d) => d.wall_id === wallId)
+    if (scriptId === null) {
+      if (existing) setDoors(draft.doors.filter((d) => d.wall_id !== wallId))
+      return
+    }
+    if (existing) {
+      setDoors(draft.doors.map((d) => (d.wall_id === wallId ? { ...d, script_id: scriptId } : d)))
+    } else {
+      setDoors([...draft.doors, { id: nextDoorId(draft.doors), wall_id: wallId, script_id: scriptId }])
+    }
+  }
+
   const save = async () => {
     setError(null)
     try {
@@ -1161,6 +1238,7 @@ export default function ShankpitLevelEditor() {
           draft.walls,
           draft.objects,
           draft.spawners,
+          draft.doors,
         )
         id = created.id
         setActiveId(id)
@@ -1175,6 +1253,7 @@ export default function ShankpitLevelEditor() {
           draft.walls,
           draft.objects,
           draft.spawners,
+          draft.doors,
         )
       }
       setDirty(false)
@@ -1429,6 +1508,9 @@ export default function ShankpitLevelEditor() {
                 }}
                 onDelete={deleteSelected}
                 materials={materials}
+                door={draft.doors.find((d) => d.wall_id === selectedWall.id) ?? null}
+                doorScriptList={doorScriptList}
+                onDoorChange={(scriptId) => setWallDoor(selectedWall.id, scriptId)}
               />
             ) : selectedSpawner ? (
               <SpawnerInspector spawner={selectedSpawner} onChange={updateSpawner} onDelete={deleteSelectedSpawner} />

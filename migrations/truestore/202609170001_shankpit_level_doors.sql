@@ -1,0 +1,18 @@
+-- SHANKPIT NOCK level editor: real, author-attached scriptable doors (EMILY/BACKLOG.md S461-04's
+-- own follow-up thread + founder real-time, 2026-09-17: "how do i put doors in my levels?").
+-- Closes the actual gap: SHANKPIT's native Story System Phase 1 door pipeline (dlopen+tick, see
+-- SHANKPIT/packages/world/story_doors.h) and the NOCK door-script repository (compile+store,
+-- nock_door_scripts) have both existed since S459-81/82, but nothing let a level author ATTACH a
+-- compiled script to one of their own placed walls -- checked directly, ShankpitLevel had no
+-- "doors" concept anywhere in the stack (DB, Go, frontend types, or the level editor UI) before
+-- this migration.
+--
+-- doors_json stores an array of {id,wall_id,script_id} objects. wall_id references one of THIS
+-- level's own root Walls (by their real, persisted Wall.ID -- see level_store.go's own
+-- validateDoors), never a wall contributed by a nested composed object, matching flattenObjects'
+-- own already-established "only the root level's own X reaches the native client" scope limit
+-- for ground planes. script_id references a nock_door_scripts row; resolved to that repository's
+-- real public download URL at Export time (level_store.go's own doorsForExport), never stored
+-- here directly, so editing/regenerating a script in place needs no level re-save. Same real
+-- JSON-blob-column pattern walls_json/objects_json/spawners_json already established.
+ALTER TABLE shankpit_levels ADD COLUMN doors_json TEXT NOT NULL DEFAULT '[]';

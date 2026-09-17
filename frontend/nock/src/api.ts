@@ -317,6 +317,12 @@ export const animations = {
     form.append('file', file)
     return animReq<Animation>(`/${id}/attach-animation`, { method: 'POST', body: form })
   },
+
+  // saveEditedGBand (2026-09-17, founder real-time: "lets build the animations editor - clone
+  // then edit workflow") -- persists a real, founder-edited .gband (built client-side by
+  // AnimationEditor.tsx via goldenband.ts's own encodeGBand) back onto an existing row.
+  saveEditedGBand: (id: number, gbandDataBase64: string, manifestJSON: string) =>
+    animReq<Animation>(`/${id}/gband`, { method: 'PATCH', body: JSON.stringify({ gband_data_base64: gbandDataBase64, manifest_json: manifestJSON }) }),
 }
 
 // ---- NOCK door script repository (SHANKPIT Story System Phase 1, S459-81/82 -- founder
@@ -566,6 +572,18 @@ export interface ShankpitSpawner {
   team: ShankpitSpawnerTeam
 }
 
+// ShankpitDoor mirrors IDUNA/internal/shankpit.Door exactly -- a real, author-attached
+// scriptable door (Story System Phase 1, founder real-time, 2026-09-17: "how do i put doors in
+// my levels?"). wall_id references one of THIS level's own root walls by its real ShankpitWall.id
+// -- never a wall contributed by a nested composed object. script_id references a nock door
+// script (see the `doorScripts` API above) -- resolved to that repository's real public download
+// URL only at export time, never stored here.
+export interface ShankpitDoor {
+  id: number
+  wall_id: number
+  script_id: number
+}
+
 export interface ShankpitLevel {
   id: number
   name: string
@@ -577,6 +595,7 @@ export interface ShankpitLevel {
   walls: ShankpitWall[]
   objects: ShankpitLevelObject[]
   spawners: ShankpitSpawner[]
+  doors: ShankpitDoor[]
   // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
   // set a level as default for queue") -- exactly one level is the real, global QUEUE default at
   // a time, same real shape ShankpitSpray's own is_default already uses.
@@ -596,6 +615,7 @@ export interface ShankpitLevelSummary {
   wall_count: number
   object_count: number
   spawner_count: number
+  door_count: number
   is_default_queue: boolean
   created_at: string
   updated_at: string
@@ -627,6 +647,7 @@ export const shankpitLevels = {
     walls: ShankpitWall[],
     objects: ShankpitLevelObject[],
     spawners: ShankpitSpawner[],
+    doors: ShankpitDoor[],
   ) =>
     sreq<ShankpitLevel>('', {
       method: 'POST',
@@ -640,6 +661,7 @@ export const shankpitLevels = {
         walls,
         objects,
         spawners,
+        doors,
       }),
     }),
   save: (
@@ -652,6 +674,7 @@ export const shankpitLevels = {
     walls: ShankpitWall[],
     objects: ShankpitLevelObject[],
     spawners: ShankpitSpawner[],
+    doors: ShankpitDoor[],
   ) =>
     sreq<ShankpitLevel>(`/${id}`, {
       method: 'PUT',
@@ -664,6 +687,7 @@ export const shankpitLevels = {
         walls,
         objects,
         spawners,
+        doors,
       }),
     }),
   rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),

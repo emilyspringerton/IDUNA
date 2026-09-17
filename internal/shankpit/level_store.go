@@ -94,6 +94,47 @@ const (
 	SpawnerTeamBlue = 1
 )
 
+// Door is a real, author-attached scriptable door (Story System Phase 1, SHANKPIT/docs/
+// STORY_SYSTEM_NORTHSTAR.md Part 2 -- founder real-time, 2026-09-17: "how do i put doors in my
+// levels?"). WallID references a Wall.ID from THIS SAME level's own root Walls array -- never a
+// wall contributed by a nested composed object, matching flattenObjects' own already-established
+// "only the root level's own X reaches the native client" scope limit for ground planes.
+// ScriptID references a nock_door_scripts row (internal/nock's own DoorScript repository,
+// S459-81/82) -- resolved to that repository's real public download URL at Export time (see
+// doorsForExport), never stored here directly, so a script can be edited/regenerated in place
+// without needing every level that uses it to be re-saved.
+type Door struct {
+	ID       int   `json:"id"`
+	WallID   int   `json:"wall_id"`
+	ScriptID int64 `json:"script_id"`
+}
+
+// MaxDoors mirrors SHANKPIT's own real LEVEL_BOXES_MAX_DOORS (packages/world/level_boxes.h) --
+// kept in exact sync so a level saved here can never exceed what the native LevelDoor array can
+// actually hold, same real reason MaxWalls/MaxSpawners exist.
+const MaxDoors = 16
+
+// validateDoors checks structural bounds and that every door's own wall_id is real -- a door
+// referencing a wall that was since deleted (or never existed) is rejected at save time here
+// rather than silently dropped later at Export, matching validateObjects' own "self-reference
+// caught immediately" discipline (deeper/derived issues, like a since-deleted script_id, are a
+// real, separate, deliberately deferred check -- see doorsForExport's own doc comment).
+func validateDoors(doors []Door, walls []Wall) error {
+	if len(doors) > MaxDoors {
+		return fmt.Errorf("shankpit: too many doors (%d, max %d -- SHANKPIT's own native LevelDoor array can't hold more)", len(doors), MaxDoors)
+	}
+	wallIDs := make(map[int]bool, len(walls))
+	for _, w := range walls {
+		wallIDs[w.ID] = true
+	}
+	for i, d := range doors {
+		if !wallIDs[d.WallID] {
+			return fmt.Errorf("shankpit: door %d references wall_id %d, which is not one of this level's own root walls", i, d.WallID)
+		}
+	}
+	return nil
+}
+
 // MaxSpawners bounds how many spawn points one level may hold -- a real, sane v0 cap, mirroring
 // MaxLevelObjects's own reasoning (a level needs a handful of spawns per team, not hundreds).
 const MaxSpawners = 64
@@ -176,6 +217,8 @@ type Level struct {
 	// Spawners (S459-58) -- real, author-placed spawn points, team-tagged with FFA fallback. See
 	// Spawner's own doc comment for the real team convention.
 	Spawners []Spawner `json:"spawners"`
+	// Doors -- real, author-attached scriptable doors. See Door's own doc comment.
+	Doors []Door `json:"doors"`
 	// IsDefaultQueue (S459-41, founder real-time: "need to add an option to shankpit levels to
 	// set a level as default for queue") -- exactly one level may be the real, global QUEUE
 	// default at a time, same real shape shankpit_sprays.IsDefault already established. The
@@ -205,6 +248,11 @@ type ExportDoc struct {
 	// documented on flattenObjects: only the root level's own real fields reach the native
 	// client). See Spawner's own doc comment for the real team convention.
 	Spawners []Spawner `json:"spawners,omitempty"`
+	// Doors -- the real, native-loader-facing shape SHANKPIT/packages/world/level_boxes.h's own
+	// door parser expects exactly ({box_index, script_url}, script_path deliberately never set
+	// here -- every door authored through NOCK goes via the real, downloadable script repository,
+	// script_path stays a local-dev-only fallback on the native side). See doorsForExport.
+	Doors []DoorExport `json:"doors,omitempty"`
 	// Materials (S459-16) -- every real, currently-defined material's own shading parameters,
 	// embedded directly so the native loader gets everything it needs from ONE fetch (no second
 	// round-trip to a separate materials endpoint just to render a level). See
@@ -218,6 +266,17 @@ type ExportDoc struct {
 // material has a texture_id set, but see this package's own doc comment: the native client does
 // not fetch/decode it yet (no image codec) -- it is real, present data for the day that lands,
 // not dead weight kept "just in case."
+// DoorExport is the real, native-loader-facing shape of one door -- narrower than Door (no id),
+// matching every other ExportDoc field's own "narrower than the DB row" convention. BoxIndex is
+// this door's wall's own 0-based position in the exported walls[] array (see doorsForExport's own
+// doc comment for exactly how that position is derived), NOT the door's own WallID or the wall's
+// own persisted Wall.ID -- level_boxes.h's door parser indexes directly into the boxes it just
+// parsed from walls[], in order.
+type DoorExport struct {
+	BoxIndex  int    `json:"box_index"`
+	ScriptURL string `json:"script_url"`
+}
+
 type MaterialExport struct {
 	Name       string  `json:"name"`
 	ShaderName string  `json:"shader_name"`
@@ -290,7 +349,7 @@ type LevelStore struct {
 // own real "create a level, then add a cube" flow, S459-01 before S459-04) -- unlike BRAWLPIT's
 // own CreateLevel, an empty wall list is not an error here, since there is no equivalent real
 // native-loader requirement forcing "at least one platform" the way BRAWLPIT's 2D format does.
-func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner) (*Level, error) {
+func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner, doors []Door) (*Level, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
@@ -306,6 +365,9 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	if err := validateSpawners(spawners); err != nil {
 		return nil, err
 	}
+	if err := validateDoors(doors, walls); err != nil {
+		return nil, err
+	}
 	if walls == nil {
 		walls = []Wall{}
 	}
@@ -314,6 +376,9 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	}
 	if spawners == nil {
 		spawners = []Spawner{}
+	}
+	if doors == nil {
+		doors = []Door{}
 	}
 	wallsJSON, err := json.Marshal(walls)
 	if err != nil {
@@ -327,9 +392,13 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: marshal spawners: %w", err)
 	}
+	doorsJSON, err := json.Marshal(doors)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: marshal doors: %w", err)
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO shankpit_levels (name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		name, width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON))
+		`INSERT INTO shankpit_levels (name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		name, width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON), string(doorsJSON))
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: create level: %w", err)
 	}
@@ -343,15 +412,15 @@ func (s *LevelStore) CreateLevel(ctx context.Context, name string, width, height
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, is_default_queue, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
 
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
-	var wallsJSON, objectsJSON, spawnersJSON string
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON string
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
@@ -365,6 +434,9 @@ func scanLevel(row *sql.Row) (*Level, error) {
 	}
 	if err := json.Unmarshal([]byte(spawnersJSON), &l.Spawners); err != nil {
 		return nil, fmt.Errorf("shankpit: decode stored spawners: %w", err)
+	}
+	if err := json.Unmarshal([]byte(doorsJSON), &l.Doors); err != nil {
+		return nil, fmt.Errorf("shankpit: decode stored doors: %w", err)
 	}
 	return &l, nil
 }
@@ -382,6 +454,7 @@ type LevelSummary struct {
 	WallCount          int     `json:"wall_count"`
 	ObjectCount        int     `json:"object_count"`
 	SpawnerCount       int     `json:"spawner_count"`
+	DoorCount          int     `json:"door_count"`
 	IsDefaultQueue     bool    `json:"is_default_queue"`
 	CreatedAt          string  `json:"created_at"`
 	UpdatedAt          string  `json:"updated_at"`
@@ -391,7 +464,7 @@ type LevelSummary struct {
 // level-select registry primitive this section exists to build.
 func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, is_default_queue, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: list levels: %w", err)
@@ -401,8 +474,8 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	out := []LevelSummary{}
 	for rows.Next() {
 		var sum LevelSummary
-		var wallsJSON, objectsJSON, spawnersJSON string
-		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &sum.IsDefaultQueue, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
+		var wallsJSON, objectsJSON, spawnersJSON, doorsJSON string
+		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &sum.IsDefaultQueue, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("shankpit: list levels: %w", err)
 		}
 		var walls []Wall
@@ -417,9 +490,14 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 		if err := json.Unmarshal([]byte(spawnersJSON), &spawners); err != nil {
 			return nil, fmt.Errorf("shankpit: decode stored spawners: %w", err)
 		}
+		var doors []Door
+		if err := json.Unmarshal([]byte(doorsJSON), &doors); err != nil {
+			return nil, fmt.Errorf("shankpit: decode stored doors: %w", err)
+		}
 		sum.WallCount = len(walls)
 		sum.ObjectCount = len(objects)
 		sum.SpawnerCount = len(spawners)
+		sum.DoorCount = len(doors)
 		out = append(out, sum)
 	}
 	return out, rows.Err()
@@ -431,7 +509,7 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 // array, save) and S459-05 "face-drag editing" (adjust an existing wall's center/size, save) both
 // go through -- matching BRAWLPIT's own LevelStore precedent exactly: there is no separate "add
 // one platform" endpoint there either, the whole array is replaced together.
-func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner) (*Level, error) {
+func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, depth float64, groundPlaneEnabled bool, groundPlaneSquares int, walls []Wall, objects []LevelObject, spawners []Spawner, doors []Door) (*Level, error) {
 	if err := validateGroundPlane(groundPlaneSquares); err != nil {
 		return nil, err
 	}
@@ -444,6 +522,9 @@ func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, d
 	if err := validateSpawners(spawners); err != nil {
 		return nil, err
 	}
+	if err := validateDoors(doors, walls); err != nil {
+		return nil, err
+	}
 	if walls == nil {
 		walls = []Wall{}
 	}
@@ -452,6 +533,9 @@ func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, d
 	}
 	if spawners == nil {
 		spawners = []Spawner{}
+	}
+	if doors == nil {
+		doors = []Door{}
 	}
 	wallsJSON, err := json.Marshal(walls)
 	if err != nil {
@@ -465,9 +549,13 @@ func (s *LevelStore) UpdateLevel(ctx context.Context, id int64, width, height, d
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: marshal spawners: %w", err)
 	}
+	doorsJSON, err := json.Marshal(doors)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: marshal doors: %w", err)
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, ground_plane_enabled = ?, ground_plane_squares = ?, walls_json = ?, objects_json = ?, spawners_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON), id)
+		`UPDATE shankpit_levels SET width = ?, height = ?, depth = ?, ground_plane_enabled = ?, ground_plane_squares = ?, walls_json = ?, objects_json = ?, spawners_json = ?, doors_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		width, height, depth, groundPlaneEnabled, groundPlaneSquares, string(wallsJSON), string(objectsJSON), string(spawnersJSON), string(doorsJSON), id)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: update level: %w", err)
 	}
@@ -526,7 +614,7 @@ func (s *LevelStore) CloneLevel(ctx context.Context, id int64, newName string) (
 	if err != nil {
 		return nil, err
 	}
-	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.GroundPlaneEnabled, src.GroundPlaneSquares, src.Walls, src.Objects, src.Spawners)
+	return s.CreateLevel(ctx, newName, src.Width, src.Height, src.Depth, src.GroundPlaneEnabled, src.GroundPlaneSquares, src.Walls, src.Objects, src.Spawners, src.Doors)
 }
 
 // DeleteLevel permanently removes a level row.
@@ -661,8 +749,48 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares,
-		Walls: walls, Spawners: lvl.Spawners, Materials: materials,
+		Walls: walls, Spawners: lvl.Spawners, Doors: doorsForExport(lvl.Doors, lvl.Walls), Materials: materials,
 	}, nil
+}
+
+// NockDoorScriptDownloadBaseURL is the real, absolute base every door's own script_url is built
+// against -- hardcoded to match SHANKPIT's own native LEVEL_REGISTRY_BASE_URL convention
+// (packages/world/level_boxes.h: "https://okemily.com/api/v1/shankpit-levels") rather than a
+// runtime-configurable value: story_doors.h's own level_boxes_fetch_url shells out to real curl,
+// which needs a real, absolute URL -- a relative path here would silently fail every door fetch.
+const NockDoorScriptDownloadBaseURL = "https://okemily.com/api/v1/nock-door-scripts"
+
+// doorsForExport resolves each door's own WallID into its real 0-based position within rootWalls
+// -- NOT the door's own WallID and NOT the wall's own persisted Wall.ID, but its position in
+// export order, since level_boxes.h's door parser indexes directly into the boxes it just parsed
+// from walls[]. rootWalls must be lvl.Walls (pre-flatten, pre-renumber) -- root walls always
+// occupy the first len(rootWalls) slots of Export's own final, renumbered walls slice, in the
+// exact same relative order, so a position found here is already correct for the final array.
+// A door whose wall_id no longer resolves (e.g. the wall was deleted after the door was attached
+// -- validateDoors only catches this at save time, not for data saved before this pass existed)
+// is silently skipped here rather than erroring Export, same real "an author's own stale
+// reference mustn't break the whole level" discipline flattenObjects' own cycle/depth guards
+// apply to a different real failure mode. Likewise, a since-deleted script_id is never checked
+// here at all -- SHANKPIT's own story_doors.h already degrades gracefully (a real, visible
+// stderr line, that one door just never loads) when a script_url 404s, so re-deriving the same
+// check here server-side would be real, duplicate work for no additional safety.
+func doorsForExport(doors []Door, rootWalls []Wall) []DoorExport {
+	pos := make(map[int]int, len(rootWalls))
+	for i, w := range rootWalls {
+		pos[w.ID] = i
+	}
+	out := make([]DoorExport, 0, len(doors))
+	for _, d := range doors {
+		idx, ok := pos[d.WallID]
+		if !ok {
+			continue
+		}
+		out = append(out, DoorExport{
+			BoxIndex:  idx,
+			ScriptURL: fmt.Sprintf("%s/%d/download", NockDoorScriptDownloadBaseURL, d.ScriptID),
+		})
+	}
+	return out
 }
 
 // materialsForExport embeds every real, currently-defined material (S459-16) directly into the
