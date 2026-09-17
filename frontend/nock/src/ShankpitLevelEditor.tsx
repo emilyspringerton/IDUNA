@@ -9,6 +9,7 @@ import {
   doorScripts,
   shankpitLevels,
   shankpitMaterials,
+  textures,
   type DoorScriptSummary,
   type ShankpitCharacter,
   type ShankpitDoor,
@@ -228,6 +229,40 @@ function applyFaceDrag(wall: ShankpitWall, axis: Axis, sign: 1 | -1, newFaceCoor
   return { ...wall, [centerKey]: newCenter, [sizeKey]: newSize }
 }
 
+// wallTextureLoader/applyWallTexture -- S480, founder real-time: "choosing a texture for a
+// material from the textures interface doesnt work it just defaults to the brick look." Real,
+// found-live gap: a material's own texture_id (S459-16) was never actually applied ANYWHERE --
+// not just the native client (a real, separate, already-honestly-documented limitation: proc_tex.c
+// has no image decoder at all, it only generates procedural RGBA) but THIS editor's own web
+// preview either, which only ever colored a wall via its flat r/g/b, full stop, regardless of
+// which material or texture was assigned. Loads the real image via NOCK's own texture library
+// (textures.imageUrl) and applies it as the wall material's own diffuse map when the wall's
+// resolved material (by name, falling back to "brick" -- the same fallback every other lookup in
+// this file already uses) has a texture_id set; clears any previously-applied map otherwise so
+// switching a wall (or its material) back to "no texture" is real, not sticky.
+const wallTextureLoader = new THREE.TextureLoader()
+function applyWallTexture(
+  mat: THREE.MeshStandardMaterial,
+  wallMaterialName: string | undefined,
+  r: number,
+  g: number,
+  b: number,
+  materials: ShankpitMaterial[],
+) {
+  const resolved = materials.find((m) => m.name === (wallMaterialName || 'brick'))
+  if (resolved?.texture_id) {
+    wallTextureLoader.load(textures.imageUrl(resolved.texture_id), (tex) => {
+      mat.map = tex
+      mat.color.setRGB(1, 1, 1) // a real texture shows its own true color, not tinted by the wall's own r/g/b
+      mat.needsUpdate = true
+    })
+  } else if (mat.map) {
+    mat.map = null
+    mat.color.setRGB(r, g, b) // restore the wall's own tint now that no texture overrides it
+    mat.needsUpdate = true
+  }
+}
+
 function useLevelList() {
   const [list, setList] = useState<ShankpitLevelSummary[]>([])
   const refresh = useCallback(() => {
@@ -324,6 +359,7 @@ function Viewport3D({
   objects,
   levelSummaries,
   refLevelWalls,
+  materials,
   spawnPoints,
   selectedSpawnPoint,
   onSelectSpawnPoint,
@@ -349,6 +385,7 @@ function Viewport3D({
   objects: ShankpitLevelObject[]
   levelSummaries: ShankpitLevelSummary[]
   refLevelWalls: Record<number, ShankpitWall[]>
+  materials: ShankpitMaterial[]
   spawnPoints: ShankpitSpawner[]
   selectedSpawnPoint: number | null
   onSelectSpawnPoint: (id: number | null) => void
@@ -638,11 +675,13 @@ function Viewport3D({
     for (const m of meshesRef.current) {
       scene.remove(m)
       m.geometry.dispose()
+      ;(m.material as THREE.MeshStandardMaterial).map?.dispose()
       ;(m.material as THREE.Material).dispose()
     }
     meshesRef.current = walls.map((w) => {
       const geo = new THREE.BoxGeometry(w.sx, w.sy, w.sz)
       const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(w.r, w.g, w.b) })
+      applyWallTexture(mat, w.material, w.r, w.g, w.b, materials)
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.set(w.x, w.y, w.z)
       scene.add(mesh)
@@ -654,6 +693,9 @@ function Viewport3D({
 
   // Keep existing meshes' transform/color in sync on every wall edit (face-drag, inspector edits)
   // without a full rebuild -- rebuild only reshuffles/recreates geometry when the COUNT changes.
+  // Also re-resolves each wall's own texture (S480) -- covers both a wall's material assignment
+  // changing (materials.length unchanged, walls itself changes) and materials arriving/updating
+  // after the walls already rendered (useMaterialList's own async fetch).
   useEffect(() => {
     walls.forEach((w, i) => {
       const mesh = meshesRef.current[i]
@@ -664,11 +706,13 @@ function Viewport3D({
         mesh.geometry.dispose()
         mesh.geometry = new THREE.BoxGeometry(w.sx, w.sy, w.sz)
       }
-      ;(mesh.material as THREE.MeshStandardMaterial).color.setRGB(w.r, w.g, w.b)
+      const mat = mesh.material as THREE.MeshStandardMaterial
+      mat.color.setRGB(w.r, w.g, w.b)
+      applyWallTexture(mat, w.material, w.r, w.g, w.b, materials)
     })
     applySelectionOutline()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walls, selected])
+  }, [walls, selected, materials])
 
   // Sync the spawner mesh's own visual position whenever it moves (drag, or a fresh level load).
   useEffect(() => {
@@ -740,6 +784,7 @@ function Viewport3D({
       g.traverse((c) => {
         if (c instanceof THREE.LineSegments || c instanceof THREE.Mesh) {
           c.geometry.dispose()
+          ;(c.material as THREE.MeshStandardMaterial).map?.dispose()
           ;(c.material as THREE.Material).dispose()
         }
       })
@@ -758,6 +803,7 @@ function Viewport3D({
       for (const cw of refLevelWalls[o.ref_level_id] ?? []) {
         const cgeo = new THREE.BoxGeometry(cw.sx, cw.sy, cw.sz)
         const cmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cw.r, cw.g, cw.b) })
+        applyWallTexture(cmat, cw.material, cw.r, cw.g, cw.b, materials)
         const cmesh = new THREE.Mesh(cgeo, cmat)
         cmesh.position.set(cw.x, cw.y, cw.z)
         contentGroup.add(cmesh)
@@ -770,7 +816,7 @@ function Viewport3D({
       return group
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects.length, levelSummaries.length, refLevelWalls])
+  }, [objects.length, levelSummaries.length, refLevelWalls, materials])
 
   useEffect(() => {
     objects.forEach((o, i) => {
@@ -1859,6 +1905,7 @@ export default function ShankpitLevelEditor() {
               objects={draft.objects}
               levelSummaries={list}
               refLevelWalls={refLevelWalls}
+              materials={materials}
               spawnPoints={draft.spawners}
               selectedSpawnPoint={selectedSpawnPoint}
               onSelectSpawnPoint={setSelectedSpawnPoint}
