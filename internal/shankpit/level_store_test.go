@@ -560,6 +560,34 @@ func TestExport_ResolvesDoorBoxIndexAndScriptURL(t *testing.T) {
 	}
 }
 
+// TestExport_DoorWithNoScriptLeavesScriptURLEmpty is the real regression test for the bug found
+// live 2026-09-17 (founder: "i dont know why this never moved forward i kept asking for doors
+// please make doors actually work"): a door with no ScriptID attached used to ALWAYS emit a real
+// script_url pointing at script id 0 (".../nock-door-scripts/0/download"), a real 404 every time
+// -- so a door placed without writing+attaching a custom PARENA script silently never worked, on
+// every platform, with zero visible feedback. ScriptID 0 must now leave ScriptURL empty, which is
+// what tells the native loader to use its own real, working builtin proximity-open default
+// instead of attempting a doomed fetch.
+func TestExport_DoorWithNoScriptLeavesScriptURLEmpty(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2,
+		[]shankpit.Wall{aCube()}, nil, nil,
+		[]shankpit.Door{{WallID: 1, ScriptID: 0}}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.Doors) != 1 {
+		t.Fatalf("expected 1 exported door, got %d: %+v", len(doc.Doors), doc.Doors)
+	}
+	if doc.Doors[0].ScriptURL != "" {
+		t.Fatalf("expected empty script_url for a door with no script attached, got %q", doc.Doors[0].ScriptURL)
+	}
+}
+
 // TestExport_SkipsDoorWithDeletedWall verifies doorsForExport's own real, honest degrade: a door
 // whose wall was deleted after the door was attached (only possible for pre-validateDoors data,
 // but Export must still never crash on it) is silently skipped, not an Export-time error.

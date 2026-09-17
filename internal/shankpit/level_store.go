@@ -1138,9 +1138,11 @@ const NockDoorScriptDownloadBaseURL = "https://okemily.com/api/v1/nock-door-scri
 // is silently skipped here rather than erroring Export, same real "an author's own stale
 // reference mustn't break the whole level" discipline flattenObjects' own cycle/depth guards
 // apply to a different real failure mode. Likewise, a since-deleted script_id is never checked
-// here at all -- SHANKPIT's own story_doors.h already degrades gracefully (a real, visible
-// stderr line, that one door just never loads) when a script_url 404s, so re-deriving the same
-// check here server-side would be real, duplicate work for no additional safety.
+// here at all -- a since-deleted script_id (real ScriptID != 0 that no longer resolves server-
+// side) still degrades gracefully via story_doors.h's own real, visible stderr line, so re-
+// deriving the same check here server-side would be real, duplicate work for no additional
+// safety. ScriptID == 0 is handled directly below now, not left to 404 -- see this function's
+// own body comment.
 func doorsForExport(doors []Door, rootWalls []Wall) []DoorExport {
 	pos := make(map[int]int, len(rootWalls))
 	for i, w := range rootWalls {
@@ -1152,10 +1154,20 @@ func doorsForExport(doors []Door, rootWalls []Wall) []DoorExport {
 		if !ok {
 			continue
 		}
-		out = append(out, DoorExport{
-			BoxIndex:  idx,
-			ScriptURL: fmt.Sprintf("%s/%d/download", NockDoorScriptDownloadBaseURL, d.ScriptID),
-		})
+		exp := DoorExport{BoxIndex: idx}
+		// ScriptID == 0 is the real "no script attached" state (found live, 2026-09-17: this
+		// used to ALWAYS emit a script_url even at ScriptID 0 -- ".../nock-door-scripts/0/
+		// download", a real 404 every time, so a door placed without explicitly writing+
+		// attaching a PARENA script silently never worked, with zero visible feedback to the
+		// level author, on every platform including the dedicated server. Leaving ScriptURL
+		// empty here is what tells the native loader's own story_doors_init to use its real,
+		// working builtin proximity-open default instead of attempting a dlopen that was always
+		// going to fail). A door WITH a real script keeps behaving exactly as before -- this is
+		// additive, not a behavior change for anyone who already attached one.
+		if d.ScriptID != 0 {
+			exp.ScriptURL = fmt.Sprintf("%s/%d/download", NockDoorScriptDownloadBaseURL, d.ScriptID)
+		}
+		out = append(out, exp)
 	}
 	return out
 }
