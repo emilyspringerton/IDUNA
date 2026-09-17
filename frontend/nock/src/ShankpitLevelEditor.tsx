@@ -557,21 +557,24 @@ function Viewport3D({
     scene.add(spawnerMesh)
     spawnerMeshRef.current = spawnerMesh
 
-    // WASD/QE fly camera (S487, founder real-time: "i am stuck rotating around one axis and i
-    // cant even move that axis if i touch any of the objects they move so i cant actually move my
-    // camera around when i get all up inside of the geometry... maybe i can get wasd to move
-    // around and the middle mouse can adjust the camera so i dont accidentally click stuff keep
-    // left click adjust as we have it now"). Root cause of the original complaint: orbit only
-    // ever triggered as a fallback of left-click MISSING every object (see onPointerDown below)
-    // -- once the camera is inside/near geometry, almost every left-click hits a wall instead of
-    // empty space, so orbit became unreachable in exactly the situation it's needed most. Fixed
-    // two ways: (1) WASD+QE now fly the camera THROUGH the level continuously while held (moves
-    // camStateRef's own `target`, which cameraPositionFrom derives the real camera position from
-    // -- flying is just "drive the orbit rig's pivot point around"), full 3D forward direction
-    // (W/S includes pitch, so looking down a hallway and pressing W actually flies into it, not
-    // just strafes horizontally); (2) middle-mouse-drag orbits unconditionally, before any
-    // raycast/object-hit check at all (see onPointerDown's own early-return for button===1) --
-    // left-click's existing object-select/drag/face-reshape behavior is completely untouched.
+    // WASD/QE move the SPAWNER, camera orbits/tracks it (S489 follow-up, founder real-time
+    // direct redesign of S487: "wasd should actually move the spawner where the cubes pop out of
+    // by default we rotate around that point and if we move that point it should move the camera
+    // rotate point and wasd should move the spawner and the camera - zooming all the way in you
+    // should always see the cube spawner"). S487's own version flew a free-standing camera target
+    // independent of the spawner -- real and requested at the time, but superseded here: the
+    // spawner (already the real "where new cubes appear" marker) now IS the camera's orbit pivot,
+    // continuously, not just at level-load. Moving it with WASD walks your view through the level
+    // AND drags the point new geometry spawns at together, matching the founder's own explicit
+    // unification. W/A/S/D move on the horizontal plane only (camera azimuth/theta, ignoring
+    // pitch/phi) -- deliberate: the spawner is a build-on-the-floor marker for sketching
+    // floorplans, so "forward" tilting into the ground/sky whenever you look up or down would
+    // fight that, not help it (this is also, not incidentally, the exact math the original
+    // pre-S487 arrow-key spawner nudge already used, just continuous/held instead of
+    // discrete-per-press). Q/E still move it vertically. Middle-mouse-drag still orbits
+    // unconditionally, before any raycast/object-hit check at all (see onPointerDown's own
+    // early-return for button===1) -- left-click's existing object-select/drag/face-reshape
+    // behavior is completely untouched.
     const keysHeld = new Set<string>()
     let shiftHeld = false
     const FLY_SPEED = 18 // world units/sec
@@ -631,31 +634,37 @@ function Viewport3D({
       lastFrameMs = now
       const cam = camStateRef.current
       if (keysHeld.size > 0) {
-        // Full 3D forward (includes phi/pitch), matching cameraPositionFrom's own
-        // target+radius*(sinPhi*sinTheta, cosPhi, sinPhi*cosTheta) convention -- forward is the
-        // negation of that unit offset vector (camera-to-target direction).
-        const sinPhi = Math.sin(cam.phi), cosPhi = Math.cos(cam.phi)
+        // Horizontal-only forward/right (theta only, ignoring phi/pitch) -- the same by-hand-
+        // verified convention the original pre-S487 arrow-key spawner nudge used (forward=(0,0,-1),
+        // right=(1,0,0) at theta=0), continuous/held instead of discrete-per-press.
         const sinTheta = Math.sin(cam.theta), cosTheta = Math.cos(cam.theta)
-        const fx = -(sinPhi * sinTheta), fy = -cosPhi, fz = -(sinPhi * cosTheta)
-        // right = forward x worldUp (verified at theta=0,phi=90deg: forward=(0,0,-1),
-        // right=(1,0,0) -- matches the arrow-key nudge handler's own by-hand-verified convention).
-        const rx = fz, ry = 0, rz = -fx
-        const rlen = Math.hypot(rx, ry, rz) || 1
+        const fx = -sinTheta, fz = -cosTheta
+        const rx = cosTheta, rz = -sinTheta
         const speed = (shiftHeld ? FLY_SPEED_FAST : FLY_SPEED) * dt
         let mx = 0, my = 0, mz = 0
-        if (keysHeld.has('w')) { mx += fx; my += fy; mz += fz }
-        if (keysHeld.has('s')) { mx -= fx; my -= fy; mz -= fz }
-        if (keysHeld.has('d')) { mx += rx / rlen; mz += rz / rlen }
-        if (keysHeld.has('a')) { mx -= rx / rlen; mz -= rz / rlen }
+        if (keysHeld.has('w')) { mx += fx; mz += fz }
+        if (keysHeld.has('s')) { mx -= fx; mz -= fz }
+        if (keysHeld.has('d')) { mx += rx; mz += rz }
+        if (keysHeld.has('a')) { mx -= rx; mz -= rz }
         if (keysHeld.has('e')) { my += 1 }
         if (keysHeld.has('q')) { my -= 1 }
         const mlen = Math.hypot(mx, my, mz)
         if (mlen > 0.0001) {
-          cam.target.x += (mx / mlen) * speed
-          cam.target.y += (my / mlen) * speed
-          cam.target.z += (mz / mlen) * speed
+          const s = spawnerRef.current
+          onSpawnerChangeRef.current({
+            x: s.x + (mx / mlen) * speed,
+            y: s.y + (my / mlen) * speed,
+            z: s.z + (mz / mlen) * speed,
+          })
         }
       }
+      // The spawner IS the camera's orbit pivot, always, not just at level-load -- founder:
+      // "by default we rotate around that point and if we move that point it should move the
+      // camera rotate point." Zooming radius all the way down (onWheel's own Math.max(2, ...)
+      // floor) puts the camera right next to the spawner, satisfying "zooming all the way in you
+      // should always see the cube spawner" automatically, since target IS its position.
+      const sp = spawnerRef.current
+      cam.target.set(sp.x, sp.y, sp.z)
       camera.position.copy(cameraPositionFrom(cam))
       camera.lookAt(cam.target)
       const rect = container.getBoundingClientRect()
@@ -2268,8 +2277,10 @@ export default function ShankpitLevelEditor() {
               characters={draft.characters}
             />
             <p className="hint">
-              WASD+QE fly the camera (Shift = fast), middle-mouse drag to orbit, scroll to zoom.
-              Tab toggles Object/Edit mode (Alt+3 jumps to Face select).{' '}
+              WASD+QE move the yellow spawner marker (Shift = fast) -- the camera always orbits
+              around it, so moving it walks your view through the level too. Middle-mouse drag to
+              orbit in place, scroll to zoom. Tab toggles Object/Edit mode (Alt+3 jumps to Face
+              select).{' '}
               {editMode === 'object'
                 ? "Object mode: drag a cube to move it, drag the yellow spawner marker to reposition it. New cubes spawn at the marker."
                 : 'Face mode: click a face to select it, drag it to reshape the cube, Alt+E to extrude it into a new connected box.'}{' '}
