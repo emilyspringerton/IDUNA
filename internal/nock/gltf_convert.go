@@ -288,7 +288,7 @@ func gltfReadComponent(buf []byte, off, componentType int) (float64, error) {
 // ── GOLDENBAND asset byte-encoders (ported from gband.go/gskel.go/gmesh.go, writing to a
 // bytes.Buffer instead of a file -- identical binary layout either way). ───────────────────────
 
-const gskelMaxJoints = 64
+const gskelMaxJoints = 128 // matches GOLDENBAND/src/gskel.h's own GSKEL_MAX_JOINTS exactly (raised from 64 -- a real 65-joint rig hit the old cap)
 
 type gskelJoint struct {
 	name            string

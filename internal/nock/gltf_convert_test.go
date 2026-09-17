@@ -181,3 +181,32 @@ func TestImportGLTFBytes_RejectsNonGLB(t *testing.T) {
 		t.Fatal("expected an error for garbage input, got nil")
 	}
 }
+
+// TestEncodeGSkel_65Joints is the real regression test for a live bug report (2026-09-17):
+// "glTF import failed: skin has 65 joints, exceeds GSKEL_MAX_JOINTS (64)" -- a real, common
+// full-body-plus-hands rig (e.g. a typical Mixamo-style export with individual finger bones)
+// tripped the old 64 cap on its very first real use. GSKEL_MAX_JOINTS was raised to 128
+// (GOLDENBAND/src/gskel.h, mirrored here in gskelMaxJoints) -- this proves a real 65-joint
+// skeleton now encodes cleanly.
+func TestEncodeGSkel_65Joints(t *testing.T) {
+	joints := make([]gskelJoint, 65)
+	for i := range joints {
+		joints[i] = gskelJoint{
+			name:         "joint_" + string(rune('a'+i%26)) + string(rune('0'+i/26)),
+			parentIndex:  int32(i - 1), // -1 for i==0 (root); a real parent-before-child chain otherwise
+			restRotation: [4]float32{0, 0, 0, 1},
+			inverseBind:  identityMat4(),
+		}
+	}
+	out, err := encodeGSkel(joints)
+	if err != nil {
+		t.Fatalf("encodeGSkel with 65 joints: %v (this is the exact real bug report)", err)
+	}
+	if string(out[0:4]) != "GSKL" {
+		t.Fatalf("expected real GSKL magic, got %q", out[0:4])
+	}
+	wantLen := 12 + 65*128 // header + 65 * 128-byte joint records
+	if len(out) != wantLen {
+		t.Errorf("expected %d bytes, got %d", wantLen, len(out))
+	}
+}
