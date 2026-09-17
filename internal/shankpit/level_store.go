@@ -1073,6 +1073,14 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 				ID: 0, X: worldX + rx, Y: worldY + w.Y, Z: worldZ + rz,
 				SX: rsx, SY: w.SY, SZ: rsz,
 				R: w.R, G: w.G, B: w.B, Friction: w.Friction,
+				// Material -- S479, real, found-live bug (founder real-time: "the embeded levels
+				// dont respect materials at least visually"): this struct literal never carried
+				// the child wall's own Material field through, so every wall contributed by a
+				// composed object silently fell back to DefaultMaterialName ("brick") regardless
+				// of what it was actually authored with in its source level. Real, same fix shape
+				// as R/G/B/Friction right above -- just a field that got missed when this literal
+				// was first written (S459-15), not a design choice.
+				Material: w.Material,
 			})
 		}
 		nested, err := s.flattenObjects(ctx, child.Objects, worldX, worldY, worldZ, worldRotY, childVisited, depth+1)

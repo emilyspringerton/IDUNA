@@ -437,6 +437,35 @@ func TestExport_FlattensObjectAtOffset(t *testing.T) {
 	}
 }
 
+// TestExport_ComposedObjectCarriesMaterial -- S479, real, found-live bug (founder real-time: "the
+// embeded levels dont respect materials at least visually"): flattenObjects' own Wall{} literal
+// never carried the child wall's own Material field through, so a composed object's walls always
+// silently fell back to the default material regardless of what they were actually authored with.
+func TestExport_ComposedObjectCarriesMaterial(t *testing.T) {
+	s := newTestStore(t)
+	childWall := aCube()
+	childWall.Material = "metal"
+	child, err := s.CreateLevel(context.Background(), "Child", 100, 50, 100, true, 2, []shankpit.Wall{childWall}, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	parent, err := s.CreateLevel(context.Background(), "Parent", 100, 50, 100, true, 2, nil,
+		[]shankpit.LevelObject{{RefLevelID: child.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	doc, err := s.Export(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.Walls) != 1 {
+		t.Fatalf("expected 1 flattened wall, got %d", len(doc.Walls))
+	}
+	if doc.Walls[0].Material != "metal" {
+		t.Fatalf("expected the composed wall to carry the child's own material %q through, got %q", "metal", doc.Walls[0].Material)
+	}
+}
+
 // TestExport_RotatesObjectBy90 verifies a 90-degree object rotation swaps the child's own X/Z
 // footprint correctly -- the exact "mirror the base for a 2-base fortress vs fortress map" use
 // case (founder real-time).
