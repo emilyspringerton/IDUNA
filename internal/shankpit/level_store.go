@@ -47,6 +47,14 @@ type Wall struct {
 	// S459-16 level's own real, existing walls_json rows (which have no "material" key at all)
 	// without needing a migration to backfill them.
 	Material string `json:"material,omitempty"`
+	// Name (S490, founder real-time: "theres no way to find a lost cube if you put it inside a
+	// big cube etc... i just need a list of the cubes and the ability to name them"). Purely an
+	// authoring convenience -- the native game client has no use for it at all, but reuses the
+	// exact same Wall struct ExportDoc.Walls already exports verbatim, so this rides along for
+	// free. Safe and harmless there: level_boxes.h's own hand-rolled JSON scanner only extracts
+	// keys it explicitly looks up (level_boxes_find_key), silently ignoring any other key --
+	// same purely-additive precedent Material/Friction above already established.
+	Name string `json:"name,omitempty"`
 }
 
 // LevelObject is a level placed as a child object inside another level -- the "map" primitive,

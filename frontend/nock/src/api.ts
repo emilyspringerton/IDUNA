@@ -475,6 +475,10 @@ export interface ShankpitWall {
   // resolves to "brick" server-side (see internal/shankpit.DefaultMaterialName), matching every
   // pre-S459-16 wall's own real, existing data (no "material" key at all).
   material?: string
+  // name (S490, founder real-time: "theres no way to find a lost cube if you put it inside a big
+  // cube etc... i just need a list of the cubes and the ability to name them") -- pure authoring
+  // convenience, optional, no default beyond falling back to "Cube #<id>" for display.
+  name?: string
 }
 
 // ShankpitMaterial mirrors IDUNA/internal/shankpit.Material exactly (S459-16, founder real-time:

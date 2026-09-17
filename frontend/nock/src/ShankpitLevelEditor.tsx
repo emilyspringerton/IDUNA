@@ -1286,6 +1286,15 @@ export function WallInspector({
     <div className="platform-inspector">
       <h3>Selected cube</h3>
       <label>
+        Name{' '}
+        <input
+          type="text"
+          placeholder={`Cube #${wall.id}`}
+          value={wall.name ?? ''}
+          onChange={(e) => onChange({ ...wall, name: e.target.value })}
+        />
+      </label>
+      <label>
         Material{' '}
         <select value={wall.material || 'brick'} onChange={(e) => onChange({ ...wall, material: e.target.value })}>
           {materials.length === 0 && <option value="brick">brick</option>}
@@ -2305,6 +2314,29 @@ export default function ShankpitLevelEditor() {
               <SpawnerInspector spawner={selectedSpawner} onChange={updateSpawner} onDelete={deleteSelectedSpawner} />
             ) : (
               <p className="hint">Select a cube or spawner to edit it, or add a new one.</p>
+            )}
+            {draft.walls.length > 0 && (
+              <div className="object-list">
+                <h3>Cubes ({draft.walls.length})</h3>
+                <p className="hint">
+                  Super basic, deliberately flat -- founder real-time: "theres no way to find a
+                  lost cube if you put it inside a big cube etc... it doesnt really need to be
+                  hierarchical." Click one to select it in the scene.
+                </p>
+                {draft.walls.map((w) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    className={w.id === selected ? 'active' : ''}
+                    onClick={() => {
+                      setSelected(w.id)
+                      setSelectedSpawnPoint(null)
+                    }}
+                  >
+                    {w.name || `Cube #${w.id}`}
+                  </button>
+                ))}
+              </div>
             )}
             {draft.spawners.length > 0 && (
               <div className="object-list">
