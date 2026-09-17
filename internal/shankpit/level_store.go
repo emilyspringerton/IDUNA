@@ -387,10 +387,19 @@ type Level struct {
 	// able and off able per level") -- a real, first-class, per-level, persisted property, not a
 	// Wall and not a hardcoded engine default. GroundPlaneSquares is a real square COUNT (see
 	// GridCellSize's own doc comment for why), not a raw length.
-	GroundPlaneEnabled bool          `json:"ground_plane_enabled"`
-	GroundPlaneSquares int           `json:"ground_plane_squares"`
-	Walls              []Wall        `json:"walls"`
-	Objects            []LevelObject `json:"objects"`
+	GroundPlaneEnabled bool `json:"ground_plane_enabled"`
+	GroundPlaneSquares int  `json:"ground_plane_squares"`
+	// Enclosed (S493, founder real-time: "theres not much difference between having lights on
+	// and not having lights - its still basically illuminated in this totally enclosed level").
+	// A real, per-level, designer-set lighting hint -- when true, the native client switches to
+	// RETRO_LIGHTING_INTERIOR_FLAT (zero sun/moon sky-fill) instead of the outdoor default, so
+	// real darkness and real per-fixture (HPS/IPS) point lights actually matter. Deliberately set
+	// via a dedicated SetEnclosed method (mirroring SetDefaultQueueLevel/SetStoryStartLevel's own
+	// shape), NOT threaded through CreateLevel/UpdateLevel's own already-large positional
+	// signature -- see that migration's own doc comment for the full rationale.
+	Enclosed bool          `json:"enclosed"`
+	Walls    []Wall        `json:"walls"`
+	Objects  []LevelObject `json:"objects"`
 	// Spawners (S459-58) -- real, author-placed spawn points, team-tagged with FFA fallback. See
 	// Spawner's own doc comment for the real team convention.
 	Spawners []Spawner `json:"spawners"`
@@ -437,7 +446,10 @@ type ExportDoc struct {
 	Depth              float64 `json:"depth"`
 	GroundPlaneEnabled bool    `json:"ground_plane_enabled"`
 	GroundPlaneSquares int     `json:"ground_plane_squares"`
-	Walls              []Wall  `json:"walls"`
+	// Enclosed (S493) -- real, native-loader-facing (SHANKPIT/packages/world/level_boxes.h's own
+	// CustomLevelData.enclosed) -- see Level.Enclosed's own doc comment for the full rationale.
+	Enclosed bool   `json:"enclosed,omitempty"`
+	Walls    []Wall `json:"walls"`
 	// Spawners (S459-58) -- real, author-placed spawn points, exported unchanged (no per-object
 	// flattening/transform is applied, matching the real, honest, not-yet-built limit already
 	// documented on flattenObjects: only the root level's own real fields reach the native
@@ -732,7 +744,7 @@ func (s *LevelStore) validateNextLevelID(ctx context.Context, selfID int64, next
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
@@ -741,7 +753,7 @@ func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
 	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON string
 	var nextLevelID sql.NullInt64
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &l.Enclosed, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
@@ -1019,6 +1031,22 @@ func (s *LevelStore) SetStoryStartLevel(ctx context.Context, id int64) (*Level, 
 	return s.GetLevel(ctx, id)
 }
 
+// SetEnclosed (S493) toggles a level's own real "enclosed / indoor" lighting hint. Unlike
+// SetDefaultQueueLevel/SetStoryStartLevel above, this is NOT an exclusive, "only one level at a
+// time" flag -- any number of levels can each independently be enclosed or not -- so this is a
+// plain, direct UPDATE, no transaction/clear-every-other-row step needed. See Level.Enclosed's
+// own doc comment for the full rationale.
+func (s *LevelStore) SetEnclosed(ctx context.Context, id int64, enclosed bool) (*Level, error) {
+	res, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET enclosed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, enclosed, id)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: set enclosed: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("shankpit: level %d not found", id)
+	}
+	return s.GetLevel(ctx, id)
+}
+
 // CloneLevel makes a real, full, independent copy of an existing level under a new name -- same
 // real shape as internal/brawlpit.LevelStore's own CloneLevel. Deliberately does NOT copy
 // IsStoryStart/IsDefaultQueue (a clone is never automatically the new default/story-start, same
@@ -1264,7 +1292,7 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	}
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
-		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares,
+		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed,
 		Walls: walls, Spawners: lvl.Spawners, Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,

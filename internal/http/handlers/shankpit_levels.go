@@ -56,6 +56,8 @@ func (h *ShankpitLevelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.setDefaultQueue(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "story-start" && r.Method == http.MethodPatch:
 		h.setStoryStart(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "enclosed" && r.Method == http.MethodPatch:
+		h.setEnclosed(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -208,6 +210,35 @@ func (h *ShankpitLevelsHandler) setStoryStart(w http.ResponseWriter, r *http.Req
 		return
 	}
 	lvl, err := h.Store.SetStoryStartLevel(r.Context(), id)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, lvl)
+}
+
+// setEnclosedReq carries the desired state -- unlike setDefaultQueue/setStoryStart above (real,
+// exclusive "set THIS one" toggles with no body), Enclosed is a plain per-level on/off flag, so a
+// designer needs to be able to turn it OFF just as easily as on.
+type setEnclosedReq struct {
+	Enclosed bool `json:"enclosed"`
+}
+
+// setEnclosed is the real S493 endpoint (founder real-time: "theres not much difference between
+// having lights on and not having lights - its still basically illuminated in this totally
+// enclosed level"). See Level.Enclosed's own doc comment for the full rationale.
+func (h *ShankpitLevelsHandler) setEnclosed(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseShankpitLevelID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req setEnclosedReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	lvl, err := h.Store.SetEnclosed(r.Context(), id, req.Enclosed)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return

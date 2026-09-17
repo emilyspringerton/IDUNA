@@ -25,6 +25,7 @@ func newTestStore(t *testing.T) *shankpit.LevelStore {
 			depth                REAL NOT NULL DEFAULT 100,
 			ground_plane_enabled BOOLEAN NOT NULL DEFAULT 1,
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
+			enclosed BOOLEAN NOT NULL DEFAULT 0,
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			objects_json TEXT NOT NULL DEFAULT '[]',
 			spawners_json TEXT NOT NULL DEFAULT '[]',
@@ -317,6 +318,51 @@ func TestSetStoryStartLevel_ExactlyOneStoryStart(t *testing.T) {
 	}
 	if storyStartCount != 1 {
 		t.Fatalf("expected exactly 1 story start level in list, got %d", storyStartCount)
+	}
+}
+
+// TestSetEnclosed_TogglesIndependentlyPerLevel (S493, founder real-time: "theres not much
+// difference between having lights on and not having lights - its still basically illuminated in
+// this totally enclosed level") -- unlike SetStoryStartLevel/SetDefaultQueueLevel above, this is
+// NOT an exclusive "only one at a time" flag: any number of levels can each independently be
+// enclosed or not, and toggling one must never affect another.
+func TestSetEnclosed_TogglesIndependentlyPerLevel(t *testing.T) {
+	s := newTestStore(t)
+	a, err := s.CreateLevel(context.Background(), "A", 100, 50, 100, true, 2, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	b, err := s.CreateLevel(context.Background(), "B", 100, 50, 100, true, 2, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if a.Enclosed || b.Enclosed {
+		t.Fatal("expected both new levels to default to enclosed=false")
+	}
+	if _, err := s.SetEnclosed(context.Background(), a.ID, true); err != nil {
+		t.Fatalf("set enclosed a: %v", err)
+	}
+	aAfter, _ := s.GetLevel(context.Background(), a.ID)
+	bAfter, _ := s.GetLevel(context.Background(), b.ID)
+	if !aAfter.Enclosed {
+		t.Fatal("expected level A to be enclosed")
+	}
+	if bAfter.Enclosed {
+		t.Fatal("expected level B to be UNAFFECTED by A's own enclosed flag (not an exclusive flag)")
+	}
+	if _, err := s.SetEnclosed(context.Background(), a.ID, false); err != nil {
+		t.Fatalf("unset enclosed a: %v", err)
+	}
+	aAfter2, _ := s.GetLevel(context.Background(), a.ID)
+	if aAfter2.Enclosed {
+		t.Fatal("expected level A's own enclosed flag to turn back off")
+	}
+	exported, err := s.Export(context.Background(), b.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if exported.Enclosed {
+		t.Fatal("expected Export to carry the real enclosed=false value through")
 	}
 }
 

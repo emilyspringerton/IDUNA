@@ -1,0 +1,16 @@
+-- SHANKPIT NOCK level editor -- real "enclosed / indoor" lighting flag (S493, founder real-time:
+-- "theres not much difference between having lights on and not having lights - its still
+-- basically illuminated in this totally enclosed level ... there should be more difference
+-- between light and dark"). Root cause found: SHANKPIT's own outdoor day/night lighting model
+-- (retro_lighting.c) adds a real, physically-motivated "scattered sunlight" sky-fill term to
+-- EVERY wall face regardless of direction, unconditionally -- correct outdoors, but applied even
+-- to windowless interior rooms with zero real sky exposure, swamping the real per-fixture
+-- (HPS/IPS light) point-light contrast the level author actually placed. This flag lets a
+-- designer mark a level as enclosed so the native client switches to RETRO_LIGHTING_INTERIOR_FLAT
+-- (a real preset that already existed, defined but never actually selected anywhere) instead of
+-- the outdoor default -- zero sun/moon contribution, real fixtures become the dominant light
+-- source. A dedicated setter (SetEnclosed, mirroring SetDefaultQueueLevel/SetStoryStartLevel's
+-- own established shape) rather than threading a new positional param through CreateLevel/
+-- UpdateLevel -- deliberately low blast radius against those two functions' own already-large
+-- (14-param) signature and their 60+ real existing call sites.
+ALTER TABLE shankpit_levels ADD COLUMN enclosed BOOLEAN NOT NULL DEFAULT 0;

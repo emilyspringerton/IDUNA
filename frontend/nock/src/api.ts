@@ -696,6 +696,13 @@ export interface ShankpitLevel {
   depth: number
   ground_plane_enabled: boolean
   ground_plane_squares: number
+  // enclosed (S493, founder real-time: "theres not much difference between having lights on and
+  // not having lights - its still basically illuminated in this totally enclosed level"). A real
+  // per-level lighting hint -- when true, the native client switches to a real interior lighting
+  // preset (zero outdoor sky-fill) so real darkness and real per-fixture point lights actually
+  // matter. Toggled via a dedicated setEnclosed API call, not part of the main save payload --
+  // see shankpitLevels.setEnclosed's own doc comment.
+  enclosed: boolean
   walls: ShankpitWall[]
   objects: ShankpitLevelObject[]
   spawners: ShankpitSpawner[]
@@ -830,6 +837,10 @@ export const shankpitLevels = {
   setDefaultQueue: (id: number) => sreq<ShankpitLevel>(`/${id}/default-queue`, { method: 'PATCH' }),
   // setStoryStart (S473) -- mirrors setDefaultQueue above exactly.
   setStoryStart: (id: number) => sreq<ShankpitLevel>(`/${id}/story-start`, { method: 'PATCH' }),
+  // setEnclosed (S493) -- unlike setDefaultQueue/setStoryStart above (exclusive "set THIS one"
+  // toggles, no body), enclosed is a plain per-level on/off flag, so this takes the desired state.
+  setEnclosed: (id: number, enclosed: boolean) =>
+    sreq<ShankpitLevel>(`/${id}/enclosed`, { method: 'PATCH', body: JSON.stringify({ enclosed }) }),
 }
 
 // ---- SHANKPIT Widgets (S482, founder real-time: "i dont want to make doors be levels please -

@@ -1646,6 +1646,12 @@ export default function ShankpitLevelEditor() {
   const { materials } = useMaterialList()
   const { scripts: doorScriptList } = useDoorScriptList()
   const [activeId, setActiveId] = useState<number | null>(null)
+  // enclosed (S493, founder real-time: "theres not much difference between having lights on and
+  // not having lights - its still basically illuminated in this totally enclosed level"). Kept
+  // OUTSIDE `draft` deliberately -- toggled via its own dedicated setEnclosed API call (mirroring
+  // is_story_start/is_default_queue's own "click applies immediately, no Save button" UX), not
+  // part of the main Save payload.
+  const [enclosed, setEnclosedState] = useState(false)
   const [draft, setDraft] = useState(newDefaultLevel())
   const refLevelWalls = useReferencedLevelWalls(draft.objects)
   const refWidgetWalls = useReferencedWidgetWalls(draft.objects)
@@ -1800,6 +1806,7 @@ export default function ShankpitLevelEditor() {
     setDirty(false)
     setError(null)
     setSpawner(defaultSpawnerPos())
+    setEnclosedState(lvl.enclosed)
   }, [])
 
   const startNew = () => {
@@ -1810,6 +1817,7 @@ export default function ShankpitLevelEditor() {
     setDirty(true)
     setError(null)
     setSpawner(defaultSpawnerPos())
+    setEnclosedState(false)
   }
 
   const setWalls = (walls: ShankpitWall[]) => {
@@ -2213,6 +2221,28 @@ export default function ShankpitLevelEditor() {
                 }}
               />
             </label>
+          </div>
+          <div className="dims">
+            <label title="Suppresses outdoor sun/moon sky-fill lighting for this level, so real darkness and your own placed HPS/IPS light fixtures actually matter -- turn this on for a fully enclosed interior with no windows.">
+              <input
+                type="checkbox"
+                checked={enclosed}
+                disabled={activeId === null}
+                onChange={async (e) => {
+                  const next = e.target.checked
+                  setEnclosedState(next) // optimistic -- matches Set as QUEUE default/STORY start's own immediate-apply UX
+                  if (activeId !== null) {
+                    try {
+                      await shankpitLevels.setEnclosed(activeId, next)
+                    } catch {
+                      setEnclosedState(!next) // revert on a real failure
+                    }
+                  }
+                }}
+              />{' '}
+              Enclosed / indoor (real lighting, no simulated outdoor daylight)
+            </label>
+            {activeId === null && <span className="hint">Save the level first to set this.</span>}
           </div>
           <div className="mode-toggle">
             <button type="button" className={editMode === 'object' ? 'active' : ''} onClick={() => setEditMode('object')}>

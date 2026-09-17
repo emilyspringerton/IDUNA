@@ -30,6 +30,7 @@ func newShankpitLevelsTestStore(t *testing.T) *shankpit.LevelStore {
 			depth                REAL NOT NULL DEFAULT 100,
 			ground_plane_enabled BOOLEAN NOT NULL DEFAULT 1,
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
+			enclosed BOOLEAN NOT NULL DEFAULT 0,
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			objects_json TEXT NOT NULL DEFAULT '[]',
 			spawners_json TEXT NOT NULL DEFAULT '[]',
