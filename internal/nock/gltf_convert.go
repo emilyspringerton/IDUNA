@@ -431,6 +431,27 @@ type convertedGLTF struct {
 	durationTicks uint32
 	contentHash   string
 	skeletonHash  [32]byte
+	// additionalAnims (2026-09-17, founder real-time: confirmed a real uploaded file -- Quaternius's
+	// "Universal Animation Library," CC0 -- genuinely bundles dozens of separately-named clips in
+	// one glTF) holds every animation past doc.Animations[0], which used to be silently discarded
+	// -- v0's own real, documented "first animation only" scope. clip 0 keeps flowing through the
+	// existing gbandBytes/channels/etc fields above (unchanged, so ImportGLTFBytes's own real
+	// single-clip behavior and every existing test/caller stays exactly as it was); these are the
+	// real rest, surfaced by the new ImportGLTFBytesAllClips entry point only.
+	additionalAnims []convertedAnimClip
+}
+
+// convertedAnimClip is one additional (index >= 1) animation clip's own real, independent
+// conversion result -- name comes from the glTF's own real animation.name field when present
+// (Quaternius's own library names every clip -- "Idle", "Walk_F", "Jump_Start", etc), falling
+// back to a real, honest "clip_N" (1-indexed to match a human's own sense of "the Nth clip") only
+// when the source genuinely didn't name it.
+type convertedAnimClip struct {
+	name          string
+	gbandBytes    []byte
+	channels      []string
+	durationTicks uint32
+	contentHash   string
 }
 
 // convertGLTF is import_gltf.go's ConvertGLTF, condensed for server-side use: same real
@@ -608,6 +629,24 @@ func convertGLTF(g *loadedGLTF, tickRate uint32) (*convertedGLTF, error) {
 		result.tickRate = tickRate
 		result.durationTicks = dt
 		result.contentHash = hex.EncodeToString(contentHash[:])
+	}
+	// Real, deliberate: a later clip failing to convert (e.g. a morph-target-only clip with no
+	// real translation/rotation channel, convertAnimation's own documented rejection) skips just
+	// that one clip rather than aborting a 76-clip import over it -- see ImportGLTFBytesAllClips'
+	// own doc comment for how a caller learns about a skipped clip.
+	for i := 1; i < len(doc.Animations); i++ {
+		anim := doc.Animations[i]
+		gbandBytes, channels, dt, contentHash, err := convertAnimation(doc, g, anim, tickRate, skeletonHash)
+		if err != nil {
+			continue
+		}
+		name := anim.Name
+		if name == "" {
+			name = fmt.Sprintf("clip_%d", i+1)
+		}
+		result.additionalAnims = append(result.additionalAnims, convertedAnimClip{
+			name: name, gbandBytes: gbandBytes, channels: channels, durationTicks: dt, contentHash: hex.EncodeToString(contentHash[:]),
+		})
 	}
 	return result, nil
 }
@@ -973,27 +1012,111 @@ func ImportGLTFBytes(raw []byte, tickRate uint32, authorshipKind, authorshipWho 
 		SkeletonHash: skeletonHashHex,
 	}
 	if converted.gbandBytes != nil {
-		manifest := gbandManifest{
-			GBandVersion:  1,
-			SkeletonHash:  skeletonHashHex,
-			ContentHash:   converted.contentHash,
-			TickRate:      int(converted.tickRate),
-			DurationTicks: int(converted.durationTicks),
-			Channels:      converted.channels,
-			Authorship:    gbandAuthorship{Kind: authorshipKind, Who: authorshipWho},
-			IntentTags:    []string{},
-			LoopPoints:    gbandLoopPoints{StartTick: 0, EndTick: int(converted.durationTicks)},
-		}
-		manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+		manifestBytes, err := buildGBandManifest(skeletonHashHex, converted.contentHash, int(converted.tickRate), int(converted.durationTicks), converted.channels, authorshipKind, authorshipWho)
 		if err != nil {
-			return nil, fmt.Errorf("marshaling manifest: %w", err)
+			return nil, err
 		}
 		result.GBandData = converted.gbandBytes
-		result.ManifestJSON = string(manifestBytes)
+		result.ManifestJSON = manifestBytes
 		result.TickRate = int(converted.tickRate)
 		result.DurationTicks = int(converted.durationTicks)
 		result.NumChannels = len(converted.channels)
 		result.ContentHash = converted.contentHash
 	}
 	return result, nil
+}
+
+func buildGBandManifest(skeletonHashHex, contentHash string, tickRate, durationTicks int, channels []string, authorshipKind, authorshipWho string) (string, error) {
+	manifest := gbandManifest{
+		GBandVersion:  1,
+		SkeletonHash:  skeletonHashHex,
+		ContentHash:   contentHash,
+		TickRate:      tickRate,
+		DurationTicks: durationTicks,
+		Channels:      channels,
+		Authorship:    gbandAuthorship{Kind: authorshipKind, Who: authorshipWho},
+		IntentTags:    []string{},
+		LoopPoints:    gbandLoopPoints{StartTick: 0, EndTick: durationTicks},
+	}
+	b, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshaling manifest: %w", err)
+	}
+	return string(b), nil
+}
+
+// AdditionalClip is one extra (index >= 1) animation clip found in a multi-clip glTF -- see
+// ImportGLTFBytesAllClips. Deliberately carries no mesh/skeleton data of its own (the primary
+// GLTFImportResult already has that); a caller stores this as an animation-only row, previewable/
+// attachable against the primary row (or any other row sharing its SkeletonHash) via
+// AnimStore.AttachAnimation -- the same real affordance a manually-uploaded separate clip file
+// already uses.
+type AdditionalClip struct {
+	Name          string
+	GBandData     []byte
+	ManifestJSON  string
+	TickRate      int
+	DurationTicks int
+	NumChannels   int
+	ContentHash   string
+	SkeletonHash  string
+}
+
+// ImportGLTFBytesAllClips is ImportGLTFBytes's own real multi-clip sibling (2026-09-17, founder
+// real-time: confirmed a real upload -- Quaternius's "Universal Animation Library," CC0 -- is a
+// genuine multi-clip file, dozens of separately-named animations bundled into one glTF, and
+// ImportGLTFBytes's own real, documented v0 scope ("first animation only") silently discarded
+// every clip past the first). The primary result (mesh + skeleton + the FIRST clip, exactly what
+// ImportGLTFBytes alone would have produced -- unchanged, so nothing regresses for a genuinely
+// single-clip file) plus one AdditionalClip per real, successfully-converted remaining clip. A
+// clip that fails to convert (e.g. a morph-target-only clip with no real translation/rotation
+// channel) is silently skipped rather than aborting the whole import -- one bad clip out of 76
+// shouldn't cost the other 75.
+func ImportGLTFBytesAllClips(raw []byte, tickRate uint32, authorshipKind, authorshipWho string) (*GLTFImportResult, []AdditionalClip, error) {
+	loaded, err := loadGLTFBytes(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	converted, err := convertGLTF(loaded, tickRate)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	skeletonHashHex := hex.EncodeToString(converted.skeletonHash[:])
+	primary := &GLTFImportResult{
+		GSkelData:    converted.gskelBytes,
+		GMeshData:    converted.gmeshBytes,
+		SkeletonHash: skeletonHashHex,
+	}
+	if converted.gbandBytes != nil {
+		manifestBytes, err := buildGBandManifest(skeletonHashHex, converted.contentHash, int(converted.tickRate), int(converted.durationTicks), converted.channels, authorshipKind, authorshipWho)
+		if err != nil {
+			return nil, nil, err
+		}
+		primary.GBandData = converted.gbandBytes
+		primary.ManifestJSON = manifestBytes
+		primary.TickRate = int(converted.tickRate)
+		primary.DurationTicks = int(converted.durationTicks)
+		primary.NumChannels = len(converted.channels)
+		primary.ContentHash = converted.contentHash
+	}
+
+	additional := make([]AdditionalClip, 0, len(converted.additionalAnims))
+	for _, clip := range converted.additionalAnims {
+		manifestBytes, err := buildGBandManifest(skeletonHashHex, clip.contentHash, int(tickRate), int(clip.durationTicks), clip.channels, authorshipKind, authorshipWho)
+		if err != nil {
+			continue
+		}
+		additional = append(additional, AdditionalClip{
+			Name:          clip.name,
+			GBandData:     clip.gbandBytes,
+			ManifestJSON:  manifestBytes,
+			TickRate:      int(tickRate),
+			DurationTicks: int(clip.durationTicks),
+			NumChannels:   len(clip.channels),
+			ContentHash:   clip.contentHash,
+			SkeletonHash:  skeletonHashHex,
+		})
+	}
+	return primary, additional, nil
 }

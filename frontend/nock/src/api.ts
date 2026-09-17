@@ -291,14 +291,17 @@ export const animations = {
   downloadUrl: (id: number, kind: 'gband' | 'gskel' | 'gmesh') => `${ANIMATIONS_BASE}/${id}/${kind}`,
 
   // importGLTF is the real drag-and-drop path: one raw .glb (or embedded-buffer .gltf) file,
-  // converted server-side -- no local gbtool run required first.
+  // converted server-side -- no local gbtool run required first. additional_clips (2026-09-17,
+  // founder confirmed a real multi-clip upload -- Quaternius's "Universal Animation Library" --
+  // used to have every clip past the first silently discarded) lists any OTHER real, separately-
+  // named animation clips the file also contained, each already created as its own row.
   importGLTF: (file: File, name: string, tickRate?: number) => {
     const form = new FormData()
     form.append('file', file)
     form.append('name', name)
     form.append('source_location', 'nock drag-and-drop')
     if (tickRate) form.append('tick_rate', String(tickRate))
-    return animReq<Animation>('/import-gltf', { method: 'POST', body: form })
+    return animReq<Animation & { additional_clips?: { id: number; name: string }[] }>('/import-gltf', { method: 'POST', body: form })
   },
 
   // attachAnimation* (2026-09-17, founder real-time: "build fill in the gaps... you can add

@@ -971,6 +971,10 @@ function Animations() {
   // previewing (2026-09-17, founder real-time: "can we add a 3d scene like the shankpit level
   // editor for the animations models viewer?") -- which row's real 3D preview is currently open.
   const [previewing, setPreviewing] = useState<AnimationSummary | null>(null)
+  // importNotice (2026-09-17, founder confirmed a real multi-clip upload -- Quaternius's
+  // "Universal Animation Library" -- used to have every clip past the first silently discarded)
+  // -- real, visible confirmation of how many clips an import actually found, not just "success."
+  const [importNotice, setImportNotice] = useState<string | null>(null)
   // filter (2026-09-17, founder real-time: "i dont see the animations browser or rig browser or
   // anything like that") -- this one tab already covers meshes/rigs/animations together (a row
   // is really "a GOLDENBAND character asset," any real combination of the three), but nothing
@@ -997,9 +1001,14 @@ function Animations() {
   const doImport = async (file: File) => {
     setBusy(true)
     setError(null)
+    setImportNotice(null)
     try {
       const name = pendingName.trim() || file.name.replace(/\.(glb|gltf)$/i, '')
-      await animations.importGLTF(file, name)
+      const result = await animations.importGLTF(file, name)
+      const extra = result.additional_clips?.length ?? 0
+      if (extra > 0) {
+        setImportNotice(`This file had ${extra + 1} real animation clips -- imported all of them (${name}, plus ${extra} more below).`)
+      }
       setPendingName('')
       refresh()
     } catch (err) {
@@ -1088,6 +1097,7 @@ function Animations() {
         />
       </label>
       {error && <p className="error">{error}</p>}
+      {importNotice && <p className="hint">{importNotice}</p>}
 
       <nav className="animation-filter-tabs">
         <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>

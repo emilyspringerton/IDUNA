@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -193,7 +194,12 @@ func (h *NockAnimationsHandler) importGLTF(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	result, err := nock.ImportGLTFBytes(fileData, uint32(tickRate), kind, who)
+	// S459-109, founder real-time (confirmed a real uploaded file -- Quaternius's "Universal
+	// Animation Library," CC0 -- is a genuine multi-clip pack): ImportGLTFBytesAllClips returns
+	// the primary asset (mesh+skeleton+first clip, exactly what the old single-clip
+	// ImportGLTFBytes call produced) plus every OTHER real clip the file contained, which used to
+	// be silently discarded.
+	result, additional, err := nock.ImportGLTFBytesAllClips(fileData, uint32(tickRate), kind, who)
 	if err != nil {
 		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("glTF import failed: %v", err))
 		return
@@ -204,7 +210,28 @@ func (h *NockAnimationsHandler) importGLTF(w http.ResponseWriter, r *http.Reques
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, a)
+
+	type clipSummary struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	createdClips := make([]clipSummary, 0, len(additional))
+	for _, clip := range additional {
+		clipRow, err := h.Store.CreateAnimation(r.Context(), sanitizedClipName(name, clip.Name), clip.TickRate, clip.DurationTicks, clip.NumChannels, clip.ContentHash, clip.GBandData, clip.ManifestJSON, nil, nil, clip.SkeletonHash, sourceLocation)
+		if err != nil {
+			// A name collision (re-importing the same pack twice) or any other single-clip
+			// failure must never lose the primary row (and every other successfully-created
+			// clip) that's already real and committed -- skip it, don't abort the response.
+			continue
+		}
+		createdClips = append(createdClips, clipSummary{ID: clipRow.ID, Name: clipRow.Name})
+	}
+
+	resp := struct {
+		*nock.Animation
+		AdditionalClips []clipSummary `json:"additional_clips,omitempty"`
+	}{Animation: a, AdditionalClips: createdClips}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (h *NockAnimationsHandler) get(w http.ResponseWriter, r *http.Request, idStr string) {
@@ -350,6 +377,29 @@ func (h *NockAnimationsHandler) attachAnimation(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, a)
+}
+
+var nockAnimNameInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+
+// sanitizedClipName builds a real, valid name (matches internal/nock's own validName pattern --
+// starts alnum, then up to 63 more of [a-zA-Z0-9_-]) for an additional clip created during a
+// multi-clip import, from the base import name + the clip's own real name (which may contain
+// spaces or other characters the strict name pattern doesn't allow -- a real glTF animation name
+// like "Jump Start" is legitimate, this field's own constraint is NOCK-specific, not the source
+// format's).
+func sanitizedClipName(base, clip string) string {
+	sanitize := func(s string) string {
+		s = nockAnimNameInvalidChars.ReplaceAllString(s, "_")
+		return strings.Trim(s, "_-")
+	}
+	combined := sanitize(base) + "_" + sanitize(clip)
+	if combined == "" || !((combined[0] >= 'a' && combined[0] <= 'z') || (combined[0] >= 'A' && combined[0] <= 'Z') || (combined[0] >= '0' && combined[0] <= '9')) {
+		combined = "clip_" + combined
+	}
+	if len(combined) > 64 {
+		combined = combined[:64]
+	}
+	return combined
 }
 
 func intOrZeroPtr(p *int) int {

@@ -119,6 +119,140 @@ func buildTinyGLB(t *testing.T) []byte {
 	return glb
 }
 
+// buildTwoClipGLB is buildTinyGLB's own real multi-clip sibling -- same bare-node rotation
+// fixture, but with TWO real, separately-named animations reusing the same accessors (glTF's own
+// spec permits this). Mirrors the real shape a Quaternius-style "Universal Animation Library"
+// file has (S459-109, founder confirmed a real multi-clip upload).
+func buildTwoClipGLB(t *testing.T) []byte {
+	t.Helper()
+	var buf []byte
+	appendF32 := func(vals ...float32) int {
+		off := len(buf)
+		for _, v := range vals {
+			b := make([]byte, 4)
+			binary.LittleEndian.PutUint32(b, math.Float32bits(v))
+			buf = append(buf, b...)
+		}
+		return off
+	}
+	timesOff := appendF32(0, 1)
+	timesLen := 2 * 4
+	half := float32(math.Sqrt(0.5))
+	rotOff := appendF32(0, 0, 0, 1, 0, 0, half, half)
+	rotLen := 2 * 4 * 4
+
+	type bufferView struct {
+		Buffer     int `json:"buffer"`
+		ByteOffset int `json:"byteOffset"`
+		ByteLength int `json:"byteLength"`
+	}
+	type accessor struct {
+		BufferView    int    `json:"bufferView"`
+		ComponentType int    `json:"componentType"`
+		Count         int    `json:"count"`
+		Type          string `json:"type"`
+	}
+	const gltfFloat = 5126
+	doc := map[string]any{
+		"asset":       map[string]any{"version": "2.0"},
+		"buffers":     []map[string]any{{"byteLength": len(buf)}},
+		"bufferViews": []bufferView{{0, timesOff, timesLen}, {0, rotOff, rotLen}},
+		"accessors":   []accessor{{0, gltfFloat, 2, "SCALAR"}, {1, gltfFloat, 2, "VEC4"}},
+		"nodes":       []map[string]any{{"name": "root"}},
+		"animations": []map[string]any{
+			{
+				"name":     "Idle",
+				"channels": []map[string]any{{"sampler": 0, "target": map[string]any{"node": 0, "path": "rotation"}}},
+				"samplers": []map[string]any{{"input": 0, "output": 1}},
+			},
+			{
+				"name":     "Jump Start", // deliberately has a space -- real glTF clip names aren't
+				"channels": []map[string]any{{"sampler": 0, "target": map[string]any{"node": 0, "path": "rotation"}}}, // constrained to NOCK's own stricter row-name pattern
+				"samplers": []map[string]any{{"input": 0, "output": 1}},
+			},
+		},
+	}
+	jsonBytes, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for len(jsonBytes)%4 != 0 {
+		jsonBytes = append(jsonBytes, ' ')
+	}
+	var glb []byte
+	appendChunk := func(chunkType uint32, data []byte) {
+		hdr := make([]byte, 8)
+		binary.LittleEndian.PutUint32(hdr[0:4], uint32(len(data)))
+		binary.LittleEndian.PutUint32(hdr[4:8], chunkType)
+		glb = append(glb, hdr...)
+		glb = append(glb, data...)
+	}
+	header := make([]byte, 12)
+	const glbMagic = 0x46546C67
+	binary.LittleEndian.PutUint32(header[0:4], glbMagic)
+	binary.LittleEndian.PutUint32(header[4:8], 2)
+	glb = append(glb, header...)
+	appendChunk(0x4E4F534A, jsonBytes) // "JSON"
+	appendChunk(0x004E4942, buf)       // "BIN\0"
+	binary.LittleEndian.PutUint32(glb[8:12], uint32(len(glb)))
+	return glb
+}
+
+// TestNockAnimationsHandler_ImportGLTFMultiClip is the real regression test for the 2026-09-17
+// fix (founder: confirmed a real multi-clip upload -- Quaternius's "Universal Animation Library"
+// -- had every clip past the first silently discarded on import).
+func TestNockAnimationsHandler_ImportGLTFMultiClip(t *testing.T) {
+	h := newAnimationsTestHandler(t)
+	glb := buildTwoClipGLB(t)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("name", "trick-pack") //nolint:errcheck
+	fw, err := mw.CreateFormFile("file", "pack.glb")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write(glb) //nolint:errcheck
+	mw.Close()    //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/nock/api/animations/import-gltf", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import-gltf (multi-clip): expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		ID              int64 `json:"id"`
+		AdditionalClips []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"additional_clips"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.AdditionalClips) != 1 {
+		t.Fatalf("expected exactly 1 additional clip in the response, got %d: %+v", len(resp.AdditionalClips), resp.AdditionalClips)
+	}
+	if resp.AdditionalClips[0].Name != "trick-pack_Jump_Start" {
+		t.Errorf(`expected the sanitized name "trick-pack_Jump_Start", got %q`, resp.AdditionalClips[0].Name)
+	}
+
+	// The additional clip must be a real, independently listable row -- not just present in the
+	// import response.
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/admin/nock/api/animations", nil))
+	var list []nock.AnimationSummary
+	if err := json.Unmarshal(rec2.Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 real rows (primary + 1 additional clip), got %d: %+v", len(list), list)
+	}
+}
+
 func TestNockAnimationsHandler_ImportGLTFDragAndDrop(t *testing.T) {
 	h := newAnimationsTestHandler(t)
 	glb := buildTinyGLB(t)
