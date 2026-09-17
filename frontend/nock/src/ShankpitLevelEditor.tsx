@@ -291,6 +291,7 @@ function Viewport3D({
   onSelectSpawnPoint,
   onSpawnPointsChange,
   levelExits,
+  showLevelExits,
 }: {
   width: number
   height: number
@@ -314,6 +315,7 @@ function Viewport3D({
   onSelectSpawnPoint: (id: number | null) => void
   onSpawnPointsChange: (spawners: ShankpitSpawner[]) => void
   levelExits: ShankpitLevelExit[]
+  showLevelExits: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -790,11 +792,20 @@ function Viewport3D({
       )
       group.add(sphere)
       group.position.set(ex.x, ex.y, ex.z)
+      group.visible = showLevelExits
       scene.add(group)
       return group
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [levelExits])
+
+  // Real, cheap visibility-only toggle (founder real-time: "we need the ability to turn it on
+  // and off visually in the map editor") -- deliberately separate from the rebuild effect above
+  // so flipping the checkbox never re-creates geometry, just flips THREE.Group.visible on the
+  // markers that already exist.
+  useEffect(() => {
+    for (const g of levelExitMeshesRef.current) g.visible = showLevelExits
+  }, [showLevelExits])
 
   // The real ground plane (S459-08, founder real-time: "i want there to be a plane by default
   // that the player collides with - the checkerboard in the level editor - that should
@@ -1252,6 +1263,13 @@ export default function ShankpitLevelEditor() {
   // its own current height instead of free 3D movement, so leveling walls to the ground doesn't
   // require fighting the drag plane.
   const [constrainY, setConstrainY] = useState(true)
+  // S476 follow-up (founder real-time: "we need the ability to turn it on and off visually in
+  // the map editor") -- editor-only visibility toggle for the level exit markers below. Real,
+  // deliberate scope: this is a NOCK-editor-authoring convenience, not a real in-game feature --
+  // the actual SHANKPIT client (apps/lobby/apps/server, C/SDL2) has no exit-marker rendering at
+  // all yet, checked directly, not assumed. Defaults on so the marker S476 already shipped stays
+  // visible by default.
+  const [showLevelExits, setShowLevelExits] = useState(true)
   // The spawner is deliberately NOT level data -- a per-session authoring convenience only (see
   // Viewport3D's own doc comment on the spawner mesh), so it isn't part of `draft`/persisted with
   // the level; it just resets to a sensible default on new/load.
@@ -1829,6 +1847,7 @@ export default function ShankpitLevelEditor() {
               onSelectSpawnPoint={setSelectedSpawnPoint}
               onSpawnPointsChange={setSpawners}
               levelExits={draft.levelExits}
+              showLevelExits={showLevelExits}
             />
             <p className="hint">
               Drag empty space to orbit, scroll to zoom.{' '}
@@ -1932,6 +1951,10 @@ export default function ShankpitLevelEditor() {
                 A player entering this volume transitions to the "Next level" chosen below. Every exit in this level leads
                 to the same next level (v0 is a chain, not a per-exit destination).
               </p>
+              <label>
+                <input type="checkbox" checked={showLevelExits} onChange={(e) => setShowLevelExits(e.target.checked)} />{' '}
+                Show exit markers in the 3D view (editor only -- never shown in the real game client)
+              </label>
               <label>
                 Next level{' '}
                 <select
