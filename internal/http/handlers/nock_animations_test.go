@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"mime/multipart"
 	"net/http"
@@ -35,6 +36,7 @@ func newAnimationsTestHandler(t *testing.T) *handlers.NockAnimationsHandler {
 			manifest_json   TEXT,
 			gskel_data      BLOB,
 			gmesh_data      BLOB,
+			skeleton_hash   TEXT,
 			source_location TEXT,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -245,6 +247,87 @@ func TestNockAnimationsHandler_ImportGLTFMeshOnlySucceeds(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].HasAnimation {
 		t.Errorf("unexpected list: %+v", list)
+	}
+}
+
+// TestNockAnimationsHandler_AttachAnimation is the real regression test for the 2026-09-17 fix
+// ("build fill in the gaps... you can add animations to it later, either by uploading a separate
+// file with the same rig"): a mesh-only row can have a matching-rig animation clip merged onto
+// it in place, via either the "pick an existing library row" (JSON) or "upload a fresh file"
+// (multipart) path.
+func TestNockAnimationsHandler_AttachAnimation(t *testing.T) {
+	h := newAnimationsTestHandler(t)
+
+	importGLTF := func(name string, glb []byte) nock.Animation {
+		t.Helper()
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		mw.WriteField("name", name) //nolint:errcheck
+		fw, err := mw.CreateFormFile("file", name+".glb")
+		if err != nil {
+			t.Fatalf("CreateFormFile: %v", err)
+		}
+		fw.Write(glb) //nolint:errcheck
+		mw.Close()    //nolint:errcheck
+		req := httptest.NewRequest(http.MethodPost, "/admin/nock/api/animations/import-gltf", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("import-gltf %q: expected 201, got %d: %s", name, rec.Code, rec.Body.String())
+		}
+		var a nock.Animation
+		if err := json.Unmarshal(rec.Body.Bytes(), &a); err != nil {
+			t.Fatalf("unmarshal %q: %v", name, err)
+		}
+		return a
+	}
+
+	// Both fixtures use a bare "root" node with no real skin -- convertGLTF's own synthetic
+	// single-root-joint fallback means they share the exact same real skeleton_hash, making this
+	// a real, deterministic "same rig" match, not a coincidence-prone one.
+	meshOnly := importGLTF("mesh-only", buildMeshOnlyGLB(t))
+	animated := importGLTF("animated-source", buildTinyGLB(t))
+	if meshOnly.TickRate != nil {
+		t.Fatalf("expected the mesh-only import to have no animation yet, got %+v", meshOnly)
+	}
+
+	// Path 1: attach via JSON {"source_id": ...}, reusing an existing library row.
+	jsonBody, _ := json.Marshal(map[string]int64{"source_id": animated.ID})
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/nock/api/animations/%d/attach-animation", meshOnly.ID), bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attach-animation (json source_id): expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var attached nock.Animation
+	if err := json.Unmarshal(rec.Body.Bytes(), &attached); err != nil {
+		t.Fatalf("unmarshal attach response: %v", err)
+	}
+	if attached.ID != meshOnly.ID {
+		t.Errorf("expected attach-animation to update the SAME row (id %d), got id %d", meshOnly.ID, attached.ID)
+	}
+	if attached.TickRate == nil || *attached.TickRate != 30 {
+		t.Errorf("expected the attached animation's real tick_rate (30, this import's default) to carry over, got %+v", attached)
+	}
+
+	// Path 2: attach via a fresh multipart glTF upload directly.
+	meshOnly2 := importGLTF("mesh-only-2", buildMeshOnlyGLB(t))
+	var body2 bytes.Buffer
+	mw2 := multipart.NewWriter(&body2)
+	fw2, err := mw2.CreateFormFile("file", "clip.glb")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw2.Write(buildTinyGLB(t)) //nolint:errcheck
+	mw2.Close()                //nolint:errcheck
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/nock/api/animations/%d/attach-animation", meshOnly2.ID), &body2)
+	req2.Header.Set("Content-Type", mw2.FormDataContentType())
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("attach-animation (multipart upload): expected 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 }
 

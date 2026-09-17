@@ -188,6 +188,44 @@ func TestImportGLTFBytes_RejectsNonGLB(t *testing.T) {
 // tripped the old 64 cap on its very first real use. GSKEL_MAX_JOINTS was raised to 128
 // (GOLDENBAND/src/gskel.h, mirrored here in gskelMaxJoints) -- this proves a real 65-joint
 // skeleton now encodes cleanly.
+// TestTopologyHash_IgnoresRestPoseDifferences is the real regression test for a bug found live
+// (2026-09-17) while backfilling skeleton_hash for two real, already-imported assets confirmed by
+// hand to share the same 65-joint rig: hashing the FULL encoded .gskel (rest_translation/
+// rest_rotation/inverse_bind included) made them hash different, because those per-joint values
+// can legitimately vary between two separate exports of "the same" rig without affecting whether
+// an animation clip's channels apply correctly. topologyHash must hash only name+parent_index.
+func TestTopologyHash_IgnoresRestPoseDifferences(t *testing.T) {
+	base := []gskelJoint{
+		{name: "root", parentIndex: -1, restTranslation: [3]float32{0, 0, 0}, restRotation: [4]float32{0, 0, 0, 1}},
+		{name: "child", parentIndex: 0, restTranslation: [3]float32{1, 0, 0}, restRotation: [4]float32{0, 0, 0, 1}},
+	}
+	// Same names/hierarchy, deliberately different rest pose + inverse bind values -- simulating
+	// two independent exports of "the same" rig.
+	differentRestPose := []gskelJoint{
+		{name: "root", parentIndex: -1, restTranslation: [3]float32{0, 0.01, 0}, restRotation: [4]float32{0, 0, 0.1, 0.995}},
+		{name: "child", parentIndex: 0, restTranslation: [3]float32{1.02, 0, 0}, restRotation: [4]float32{0, 0, 0, 1}, inverseBind: [16]float32{1, 2, 3, 4}},
+	}
+	if topologyHash(base) != topologyHash(differentRestPose) {
+		t.Error("expected topologyHash to be identical for the same joint names/hierarchy despite different rest pose values")
+	}
+
+	differentParent := []gskelJoint{
+		{name: "root", parentIndex: -1},
+		{name: "child", parentIndex: -1}, // real topology change: child is no longer parented to root
+	}
+	if topologyHash(base) == topologyHash(differentParent) {
+		t.Error("expected topologyHash to differ when the parent hierarchy actually changes")
+	}
+
+	differentName := []gskelJoint{
+		{name: "root", parentIndex: -1},
+		{name: "other_child", parentIndex: 0},
+	}
+	if topologyHash(base) == topologyHash(differentName) {
+		t.Error("expected topologyHash to differ when a joint name actually changes")
+	}
+}
+
 func TestEncodeGSkel_65Joints(t *testing.T) {
 	joints := make([]gskelJoint, 65)
 	for i := range joints {

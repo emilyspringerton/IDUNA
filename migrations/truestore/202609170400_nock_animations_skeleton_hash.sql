@@ -1,0 +1,11 @@
+-- Real, live gap (founder real-time, 2026-09-17): "build fill in the gaps... you can add
+-- animations to it later, either by uploading a separate file with the same rig" -- NOCK's own
+-- animation-library copy already promises this, but nothing checked whether a later-uploaded
+-- clip's own rig actually matches an already-stored mesh+rig's rig. skeleton_hash (a real,
+-- hex-encoded sha256 of the skeleton's own joint data, computed at glTF import time -- see
+-- gltf_convert.go's own GLTFImportResult.SkeletonHash) is the one real, checkable signal for
+-- that -- stored on every row so AnimStore.AttachAnimation can verify a match before merging a
+-- separately-uploaded (or already-in-library) animation clip onto an existing mesh+rig row.
+-- Plain nullable ADD COLUMN -- existing rows get NULL, backfilled lazily (not retroactively;
+-- real, honest, named in AttachAnimation's own doc comment) the next time each is touched.
+ALTER TABLE nock_animations ADD COLUMN skeleton_hash VARCHAR(64);

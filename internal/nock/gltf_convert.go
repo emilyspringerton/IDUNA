@@ -399,6 +399,21 @@ func encodeGBand(tickRate, durationTicks, numChannels uint32, skeletonHash [32]b
 
 func sha256Sum(b []byte) [32]byte { return sha256.Sum256(b) }
 
+// topologyHash hashes only what actually determines whether an animation clip's channels apply
+// correctly to a skeleton: each joint's name and parent index, in order -- NOT rest_translation/
+// rest_rotation/inverse_bind, which can legitimately differ between two exports of "the same"
+// rig without affecting compatibility (see this function's own real, live-found call site
+// comment in convertGLTF for the exact case that surfaced this).
+func topologyHash(joints []gskelJoint) [32]byte {
+	var buf bytes.Buffer
+	for _, j := range joints {
+		buf.WriteString(j.name)
+		buf.WriteByte(0) // real, explicit separator -- a name boundary must never be ambiguous
+		writeU32(&buf, uint32(j.parentIndex))
+	}
+	return sha256.Sum256(buf.Bytes())
+}
+
 func writeU32(buf *bytes.Buffer, v uint32) {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, v)
@@ -561,7 +576,18 @@ func convertGLTF(g *loadedGLTF, tickRate uint32) (*convertedGLTF, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding skeleton: %w", err)
 	}
-	skeletonHash := sha256Sum(gskelBytes)
+	// Real, deliberate: hash TOPOLOGY only (joint name + parent index, in order), not the full
+	// encoded .gskel bytes. Found live (2026-09-17) while backfilling this hash for two already-
+	// imported real assets confirmed by hand to share the exact same 65-joint rig: hashing the
+	// whole file (rest_translation/rest_rotation/inverse_bind included) made them hash
+	// DIFFERENT, because those per-joint float values can legitimately vary slightly between two
+	// separate exports of "the same" rig (a different bind pose, minor re-export float noise) --
+	// none of which affects whether an animation clip's own per-joint channels apply correctly.
+	// gpose.c's own real FK (GOLDENBAND/src/gpose.c) only ever needs matching joint COUNT, ORDER,
+	// and PARENT hierarchy to skin correctly; the mesh's own inverse_bind values are independent
+	// per-joint corrections that don't need to match anything about the animation's own source
+	// rest pose. Topology is the real, correct compatibility signal.
+	skeletonHash := topologyHash(joints)
 
 	var gmeshBytes []byte
 	if len(doc.Meshes) > 0 {
@@ -880,6 +906,15 @@ type GLTFImportResult struct {
 	DurationTicks int
 	NumChannels   int
 	ContentHash   string
+	// SkeletonHash (2026-09-17, founder real-time: "build fill in the gaps... you can add
+	// animations to it later, either by uploading a separate file with the same rig") -- real,
+	// hex-encoded sha256 of the skeleton's own joint data, present whenever the source file had a
+	// skin (regardless of whether this specific import also carried animation data). This is the
+	// one real, checkable signal that a later-uploaded animation clip's own rig actually matches
+	// an already-stored mesh+rig's rig, closing the gap NOCK's own animation-library copy
+	// explicitly promises ("uploading a separate file with the same rig") but didn't yet build
+	// any affordance for -- see AnimStore.AttachAnimation.
+	SkeletonHash string
 }
 
 // gbandManifest mirrors GOLDENBAND/format/GBAND_FORMAT.md's own manifest schema exactly (see
@@ -928,12 +963,16 @@ func ImportGLTFBytes(raw []byte, tickRate uint32, authorshipKind, authorshipWho 
 	// Real, live-found fix (2026-09-17): a glTF with no animated channels -- a bare mesh, a bare
 	// rig, or a rigged mesh with no baked animation yet, all real, legitimate assets on their
 	// own -- used to be rejected outright. Now real: store whatever the file actually has.
+	// converted.gskelBytes/skeletonHash are always real (a skinless source falls back to a real,
+	// synthetic single "root" joint -- see convertGLTF's own doc comment), so SkeletonHash is
+	// always populated here too, matching that same convention.
+	skeletonHashHex := hex.EncodeToString(converted.skeletonHash[:])
 	result := &GLTFImportResult{
-		GSkelData: converted.gskelBytes,
-		GMeshData: converted.gmeshBytes,
+		GSkelData:    converted.gskelBytes,
+		GMeshData:    converted.gmeshBytes,
+		SkeletonHash: skeletonHashHex,
 	}
 	if converted.gbandBytes != nil {
-		skeletonHashHex := hex.EncodeToString(converted.skeletonHash[:])
 		manifest := gbandManifest{
 			GBandVersion:  1,
 			SkeletonHash:  skeletonHashHex,

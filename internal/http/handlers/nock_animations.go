@@ -67,6 +67,8 @@ func (h *NockAnimationsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.manifest(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "clone" && r.Method == http.MethodPost:
 		h.clone(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "attach-animation" && r.Method == http.MethodPost:
+		h.attachAnimation(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -94,6 +96,7 @@ type gbandManifestFields struct {
 	DurationTicks int    `json:"duration_ticks"`
 	Channels      []any  `json:"channels"`
 	ContentHash   string `json:"content_hash"`
+	SkeletonHash  string `json:"skeleton_hash"`
 }
 
 func (h *NockAnimationsHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +127,7 @@ func (h *NockAnimationsHandler) create(w http.ResponseWriter, r *http.Request) {
 	gskelData, _ := readFormFile(r, "gskel") // optional -- readFormFile returns nil, nil when the field is simply absent
 	gmeshData, _ := readFormFile(r, "gmesh") // optional
 
-	a, err := h.Store.CreateAnimation(r.Context(), name, mf.TickRate, mf.DurationTicks, len(mf.Channels), mf.ContentHash, gbandData, manifestText, gskelData, gmeshData, sourceLocation)
+	a, err := h.Store.CreateAnimation(r.Context(), name, mf.TickRate, mf.DurationTicks, len(mf.Channels), mf.ContentHash, gbandData, manifestText, gskelData, gmeshData, mf.SkeletonHash, sourceLocation)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -196,7 +199,7 @@ func (h *NockAnimationsHandler) importGLTF(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	a, err := h.Store.CreateAnimation(r.Context(), name, result.TickRate, result.DurationTicks, result.NumChannels, result.ContentHash, result.GBandData, result.ManifestJSON, result.GSkelData, result.GMeshData, sourceLocation)
+	a, err := h.Store.CreateAnimation(r.Context(), name, result.TickRate, result.DurationTicks, result.NumChannels, result.ContentHash, result.GBandData, result.ManifestJSON, result.GSkelData, result.GMeshData, result.SkeletonHash, sourceLocation)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -271,6 +274,89 @@ func (h *NockAnimationsHandler) clone(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	writeJSON(w, http.StatusCreated, a)
+}
+
+// attachAnimation (2026-09-17, founder real-time: "build fill in the gaps... you can add
+// animations to it later, either by uploading a separate file with the same rig") -- real
+// affordance for the exact promise NOCK's own animation-library copy already made. Two real,
+// distinct request shapes, dispatched by Content-Type, matching two real ways a founder would
+// have a matching clip in hand:
+//   - multipart/form-data (`file` field): a fresh glTF export with the animation baked in --
+//     converted the same way import-gltf already does, but only the animation half is kept
+//     (this route's whole point is attaching motion onto an ALREADY-stored mesh+rig, not
+//     re-storing a second copy of that mesh+rig).
+//   - application/json (`{"source_id": N}`): reuse an animation clip that's already in this same
+//     library -- no re-upload needed if two rows happen to share a rig.
+func (h *NockAnimationsHandler) attachAnimation(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseAnimationID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid multipart form: %v", err))
+			return
+		}
+		fileData, err := readFormFile(r, "file")
+		if err != nil || len(fileData) == 0 {
+			mmoWriteError(w, http.StatusBadRequest, "missing file field (drop a .glb or .gltf file containing the animation)")
+			return
+		}
+		kind := r.FormValue("kind")
+		if kind == "" {
+			kind = "mocap"
+		}
+		result, err := nock.ImportGLTFBytes(fileData, 30, kind, r.FormValue("who"))
+		if err != nil {
+			mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("glTF import failed: %v", err))
+			return
+		}
+		if result.GBandData == nil {
+			mmoWriteError(w, http.StatusUnprocessableEntity, "no animation found in this file -- attach-animation needs a file with at least one animated channel")
+			return
+		}
+		a, err := h.Store.AttachAnimation(r.Context(), id, result.GBandData, result.ManifestJSON, result.TickRate, result.DurationTicks, result.NumChannels, result.ContentHash, result.SkeletonHash)
+		if err != nil {
+			mmoWriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, a)
+		return
+	}
+
+	var req struct {
+		SourceID int64 `json:"source_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON body (expected {\"source_id\": <id>})")
+		return
+	}
+	source, err := h.Store.GetAnimation(r.Context(), req.SourceID)
+	if err != nil {
+		mmoWriteError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if source.GBandData == nil {
+		mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("%q has no animation data to attach", source.Name))
+		return
+	}
+	a, err := h.Store.AttachAnimation(r.Context(), id, source.GBandData, source.ManifestJSON, intOrZeroPtr(source.TickRate), intOrZeroPtr(source.DurationTicks), intOrZeroPtr(source.NumChannels), source.ContentHash, source.SkeletonHash)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+func intOrZeroPtr(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func (h *NockAnimationsHandler) manifest(w http.ResponseWriter, r *http.Request, idStr string) {

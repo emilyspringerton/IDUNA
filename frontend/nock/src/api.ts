@@ -245,6 +245,10 @@ export interface Animation {
   num_channels?: number
   content_hash?: string
   manifest_json?: string
+  // skeleton_hash (2026-09-17) -- a real, hex sha256 of this row's own rig. The one real signal
+  // used to check whether a separately-uploaded (or already-in-library) animation clip's own rig
+  // actually matches before attaching it -- see the `attachAnimation*` calls below.
+  skeleton_hash?: string
   source_location?: string
   created_at: string
   updated_at: string
@@ -259,6 +263,7 @@ export interface AnimationSummary {
   has_skel: boolean
   has_mesh: boolean
   has_animation: boolean
+  skeleton_hash?: string
   source_location?: string
   created_at: string
   updated_at: string
@@ -294,6 +299,20 @@ export const animations = {
     form.append('source_location', 'nock drag-and-drop')
     if (tickRate) form.append('tick_rate', String(tickRate))
     return animReq<Animation>('/import-gltf', { method: 'POST', body: form })
+  },
+
+  // attachAnimation* (2026-09-17, founder real-time: "build fill in the gaps... you can add
+  // animations to it later, either by uploading a separate file with the same rig") -- real
+  // affordance for the exact promise this UI's own copy makes. Two ways in, matching the two
+  // real backend paths: pick an existing library row that already has animation, or drop a fresh
+  // glTF file with the motion baked in. Both merge onto the EXISTING row (same id) -- attaching
+  // an animation to "the mannequin" still IS the mannequin afterward, not a new row.
+  attachAnimationFromExisting: (id: number, sourceId: number) =>
+    animReq<Animation>(`/${id}/attach-animation`, { method: 'POST', body: JSON.stringify({ source_id: sourceId }) }),
+  attachAnimationFromFile: (id: number, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return animReq<Animation>(`/${id}/attach-animation`, { method: 'POST', body: form })
   },
 }
 

@@ -960,6 +960,13 @@ function Animations() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pendingName, setPendingName] = useState('')
+  // attachOpenId/attachSourceId (2026-09-17): which row's own "attach animation" panel is open,
+  // and which existing library row is selected as the source -- see attachFromExisting/
+  // attachFromFile below, the real affordance this component's own copy already promised
+  // ("you can add animations to it later, either by uploading a separate file with the same
+  // rig") but didn't build until now.
+  const [attachOpenId, setAttachOpenId] = useState<number | null>(null)
+  const [attachSourceId, setAttachSourceId] = useState<number | ''>('')
 
   const refresh = useCallback(() => {
     animations.list().then(setList)
@@ -975,6 +982,36 @@ function Animations() {
       const name = pendingName.trim() || file.name.replace(/\.(glb|gltf)$/i, '')
       await animations.importGLTF(file, name)
       setPendingName('')
+      refresh()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const attachFromExisting = async (targetId: number) => {
+    if (attachSourceId === '') return
+    setBusy(true)
+    setError(null)
+    try {
+      await animations.attachAnimationFromExisting(targetId, attachSourceId)
+      setAttachOpenId(null)
+      setAttachSourceId('')
+      refresh()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const attachFromFile = async (targetId: number, file: File) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await animations.attachAnimationFromFile(targetId, file)
+      setAttachOpenId(null)
       refresh()
     } catch (err) {
       setError(String(err))
@@ -1081,7 +1118,61 @@ function Animations() {
               >
                 Delete
               </button>
+              {!a.has_animation && (
+                <button
+                  onClick={() => {
+                    setAttachOpenId(attachOpenId === a.id ? null : a.id)
+                    setAttachSourceId('')
+                    setError(null)
+                  }}
+                >
+                  {attachOpenId === a.id ? 'Cancel' : 'Attach animation'}
+                </button>
+              )}
             </div>
+            {attachOpenId === a.id && (
+              <div className="animation-attach-panel hint">
+                <p>
+                  Pick a clip that already has animation, or drop a fresh <code>.glb</code>/<code>.gltf</code> file with the motion baked in.
+                  {a.skeleton_hash
+                    ? ' Only clips sharing this exact rig are checked automatically -- a mismatched rig is rejected, not silently misapplied.'
+                    : ' (This row was imported before rig-matching existed -- attaching still works, just without the automatic compatibility check.)'}
+                </p>
+                <div className="animation-attach-row">
+                  <select value={attachSourceId} onChange={(e) => setAttachSourceId(e.target.value ? Number(e.target.value) : '')}>
+                    <option value="">-- pick an existing clip --</option>
+                    {list
+                      .filter((cand) => cand.has_animation && cand.id !== a.id)
+                      .map((cand) => (
+                        <option key={cand.id} value={cand.id}>
+                          {cand.name}
+                          {a.skeleton_hash && cand.skeleton_hash
+                            ? a.skeleton_hash === cand.skeleton_hash
+                              ? ' (same rig)'
+                              : ' (different rig -- will be rejected)'
+                            : ''}
+                        </option>
+                      ))}
+                  </select>
+                  <button disabled={attachSourceId === '' || busy} onClick={() => attachFromExisting(a.id)}>
+                    Attach
+                  </button>
+                </div>
+                <div className="animation-attach-row">
+                  <span>or upload a file:</span>
+                  <input
+                    type="file"
+                    accept=".glb,.gltf"
+                    disabled={busy}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) attachFromFile(a.id, file)
+                      e.target.value = ''
+                    }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         ))}
         {list.length === 0 && <p className="hint">No animations yet — drop a .glb above.</p>}

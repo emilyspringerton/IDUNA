@@ -330,6 +330,14 @@ textarea {
   @apply px-2 py-1 text-xs;
 }
 
+.animation-attach-panel {
+  @apply mt-2 flex flex-col gap-2 rounded border border-line bg-bg p-2;
+}
+
+.animation-attach-row {
+  @apply flex flex-wrap items-center gap-2;
+}
+
 /* BRAWLPIT level editor (S415-02/03) -- reuses .layout/.project-list/.project-header/
    .editor-body/.canvas-pane/.side-pane from the Project (layer) editor above; these rules add
    only what's genuinely new for this tab. */

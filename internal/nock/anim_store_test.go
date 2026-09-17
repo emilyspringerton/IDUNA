@@ -26,6 +26,7 @@ func newAnimTestDB(t *testing.T) *sql.DB {
 			manifest_json   TEXT,
 			gskel_data      BLOB,
 			gmesh_data      BLOB,
+			skeleton_hash   TEXT,
 			source_location TEXT,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -48,7 +49,7 @@ func TestAnimStore_CreateGetList(t *testing.T) {
 	store := &AnimStore{DB: db}
 	ctx := context.Background()
 
-	created, err := store.CreateAnimation(ctx, "walk", 30, 64, 4, "deadbeef", fakeGBandBytes(), `{"gband_version":1}`, []byte("GSKL..."), nil, "gbtool import --gltf")
+	created, err := store.CreateAnimation(ctx, "walk", 30, 64, 4, "deadbeef", fakeGBandBytes(), `{"gband_version":1}`, []byte("GSKL..."), nil, "skelhash1", "gbtool import --gltf")
 	if err != nil {
 		t.Fatalf("CreateAnimation: %v", err)
 	}
@@ -87,7 +88,7 @@ func TestAnimStore_CreateMeshSkeletonOnly(t *testing.T) {
 	store := &AnimStore{DB: db}
 	ctx := context.Background()
 
-	created, err := store.CreateAnimation(ctx, "mannequin", 0, 0, 0, "", nil, "", []byte("GSKL..."), []byte("GMSH..."), "nock drag-and-drop")
+	created, err := store.CreateAnimation(ctx, "mannequin", 0, 0, 0, "", nil, "", []byte("GSKL..."), []byte("GMSH..."), "skelhash-mannequin", "nock drag-and-drop")
 	if err != nil {
 		t.Fatalf("CreateAnimation (mesh/skeleton only): %v", err)
 	}
@@ -110,16 +111,70 @@ func TestAnimStore_CreateMeshSkeletonOnly(t *testing.T) {
 func TestAnimStore_CreateRejectsAllEmpty(t *testing.T) {
 	db := newAnimTestDB(t)
 	store := &AnimStore{DB: db}
-	_, err := store.CreateAnimation(context.Background(), "nothing", 0, 0, 0, "", nil, "", nil, nil, "")
+	_, err := store.CreateAnimation(context.Background(), "nothing", 0, 0, 0, "", nil, "", nil, nil, "", "")
 	if err == nil {
 		t.Fatal("expected an error when mesh, skeleton, and animation are all empty")
+	}
+}
+
+// TestAnimStore_AttachAnimation is the real regression test for the 2026-09-17 fix ("build fill
+// in the gaps... you can add animations to it later, either by uploading a separate file with
+// the same rig"): a mesh/skeleton-only row can have a matching-rig animation clip merged onto it
+// in place -- same id, mesh/skeleton untouched, animation fields now real.
+func TestAnimStore_AttachAnimation(t *testing.T) {
+	db := newAnimTestDB(t)
+	store := &AnimStore{DB: db}
+	ctx := context.Background()
+
+	mannequin, err := store.CreateAnimation(ctx, "mannequin", 0, 0, 0, "", nil, "", []byte("GSKL..."), []byte("GMSH..."), "rig-A", "")
+	if err != nil {
+		t.Fatalf("CreateAnimation (mannequin): %v", err)
+	}
+
+	attached, err := store.AttachAnimation(ctx, mannequin.ID, fakeGBandBytes(), `{"gband_version":1}`, 30, 76, 455, "contenthash1", "rig-A")
+	if err != nil {
+		t.Fatalf("AttachAnimation: %v", err)
+	}
+	if attached.ID != mannequin.ID {
+		t.Errorf("expected AttachAnimation to update the SAME row (id %d), got id %d", mannequin.ID, attached.ID)
+	}
+	if intOrZero(attached.TickRate) != 30 || intOrZero(attached.DurationTicks) != 76 {
+		t.Errorf("expected animation fields to be set after attach, got %+v", attached)
+	}
+	if string(attached.GSkelData) != "GSKL..." || string(attached.GMeshData) != "GMSH..." {
+		t.Errorf("expected mesh/skeleton data to survive attach untouched, got %+v", attached)
+	}
+
+	list, err := store.ListAnimations(ctx)
+	if err != nil {
+		t.Fatalf("ListAnimations: %v", err)
+	}
+	if len(list) != 1 || !list[0].HasAnimation {
+		t.Errorf("expected the single row to now show has_animation=true, got: %+v", list)
+	}
+}
+
+// TestAnimStore_AttachAnimationRejectsSkeletonMismatch is the real regression test that
+// AttachAnimation actually checks rig compatibility rather than blindly merging.
+func TestAnimStore_AttachAnimationRejectsSkeletonMismatch(t *testing.T) {
+	db := newAnimTestDB(t)
+	store := &AnimStore{DB: db}
+	ctx := context.Background()
+
+	mannequin, err := store.CreateAnimation(ctx, "mannequin", 0, 0, 0, "", nil, "", []byte("GSKL..."), []byte("GMSH..."), "rig-A", "")
+	if err != nil {
+		t.Fatalf("CreateAnimation (mannequin): %v", err)
+	}
+	_, err = store.AttachAnimation(ctx, mannequin.ID, fakeGBandBytes(), "{}", 30, 76, 455, "hash", "rig-B")
+	if err == nil {
+		t.Fatal("expected a skeleton_hash mismatch to be rejected, got nil error")
 	}
 }
 
 func TestAnimStore_CreateRejectsBadMagic(t *testing.T) {
 	db := newAnimTestDB(t)
 	store := &AnimStore{DB: db}
-	_, err := store.CreateAnimation(context.Background(), "bad", 30, 1, 1, "x", []byte("not a gband file"), "{}", nil, nil, "")
+	_, err := store.CreateAnimation(context.Background(), "bad", 30, 1, 1, "x", []byte("not a gband file"), "{}", nil, nil, "", "")
 	if err == nil {
 		t.Fatal("expected an error for bad gband magic, got nil")
 	}
@@ -130,7 +185,7 @@ func TestAnimStore_RenameCloneDelete(t *testing.T) {
 	store := &AnimStore{DB: db}
 	ctx := context.Background()
 
-	orig, err := store.CreateAnimation(ctx, "idle", 30, 10, 2, "abc", fakeGBandBytes(), "{}", nil, nil, "")
+	orig, err := store.CreateAnimation(ctx, "idle", 30, 10, 2, "abc", fakeGBandBytes(), "{}", nil, nil, "", "")
 	if err != nil {
 		t.Fatalf("CreateAnimation: %v", err)
 	}
