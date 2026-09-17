@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-17
+- fix(shankpit): doors with no script attached were silently broken -- doorsForExport always emitted a script_url even at ScriptID 0 (a guaranteed 404). Now leaves script_url empty for the real "no script" state. Founder real-time: "i dont know why this never moved forward i kept asking for doors please make doors actually work" (sess-20260905-0720-ec33e7c5)
 - feat(shankpit): real level graph -- next_level_id (nullable, v0 chain) + is_story_start (mirrors is_default_queue's exactly-one shape) on Level, new LevelExit scriptable object (placed trigger volume), new "Level exits"/"Next level"/"Set as STORY start" NOCK UI. Founder real-time: "lets not work on voxworld this is a legacy world ... we need a way to string 2 levels together." 9 new tests, deployed + live-verified against the real okemily.com registry endpoint (sess-20260905-0720-ec33e7c5)
 - feat(shankpit): real NOCK character authoring -- internal/shankpit.Character (role+x/y/z), characters_json migration, new 'Characters (story_ai NPCs)' level editor panel with a 10-role dropdown. 5 new tests. Deployed + live-verified (sess-20260905-0720-ec33e7c5)
 - feat(shankpit): real NOCK waypoint/cover node authoring -- internal/shankpit.NavNode, nav_nodes_json migration, navNodesForExport (id->position resolution), new level-editor UI panel (add/position/cover/neighbor-link). 6 new tests. Deployed + live-verified (sess-20260905-0720-ec33e7c5)
