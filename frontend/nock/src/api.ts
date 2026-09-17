@@ -490,6 +490,11 @@ export interface ShankpitMaterial {
   texture_id?: number
   specular: number
   shininess: number
+  // friction (S478b, founder real-time: "make the material friction stuff working per cube") --
+  // real, live ground friction consumed by resolve_collision/apply_friction natively, not just a
+  // rendering parameter like specular/shininess. Default 0.30 matches physics.h's own tuned
+  // global FRICTION baseline.
+  friction: number
   created_at: string
   updated_at: string
 }
@@ -509,15 +514,29 @@ async function mreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
 
 export const shankpitMaterials = {
   list: () => mreq<ShankpitMaterial[]>(''),
-  create: (name: string, specular: number, shininess: number, textureId: number | null, shaderName: string = 'standard') =>
+  create: (
+    name: string,
+    specular: number,
+    shininess: number,
+    textureId: number | null,
+    shaderName: string = 'standard',
+    friction: number = 0.3,
+  ) =>
     mreq<ShankpitMaterial>('', {
       method: 'POST',
-      body: JSON.stringify({ name, specular, shininess, texture_id: textureId, shader_name: shaderName }),
+      body: JSON.stringify({ name, specular, shininess, texture_id: textureId, shader_name: shaderName, friction }),
     }),
-  update: (id: number, specular: number, shininess: number, textureId: number | null, shaderName: string = 'standard') =>
+  update: (
+    id: number,
+    specular: number,
+    shininess: number,
+    textureId: number | null,
+    shaderName: string = 'standard',
+    friction: number = 0.3,
+  ) =>
     mreq<ShankpitMaterial>(`/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ specular, shininess, texture_id: textureId, shader_name: shaderName }),
+      body: JSON.stringify({ specular, shininess, texture_id: textureId, shader_name: shaderName, friction }),
     }),
   delete: (id: number) => mreq<void>(`/${id}`, { method: 'DELETE' }),
 }

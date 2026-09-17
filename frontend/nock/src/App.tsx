@@ -5,6 +5,7 @@ import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
 import AnimationViewer from './AnimationViewer'
 import ShankpitAiOpponents from './ShankpitAiOpponents'
+import ShankpitMaterials from './ShankpitMaterials'
 import Sprays from './Sprays'
 import './App.css'
 
@@ -1254,8 +1255,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'sprays'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'sprays']
+type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'sprays'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'sprays']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1351,6 +1352,9 @@ export default function App() {
           <button className={tab === 'shankpit-ai-opponents' ? 'active' : ''} onClick={() => setTab('shankpit-ai-opponents')}>
             SHANKPIT AI Opponents
           </button>
+          <button className={tab === 'shankpit-materials' ? 'active' : ''} onClick={() => setTab('shankpit-materials')}>
+            SHANKPIT Materials
+          </button>
           <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
             Sprays
           </button>
@@ -1380,6 +1384,10 @@ export default function App() {
       ) : tab === 'shankpit-ai-opponents' ? (
         <div className="layout-single">
           <ShankpitAiOpponents />
+        </div>
+      ) : tab === 'shankpit-materials' ? (
+        <div className="layout-single">
+          <ShankpitMaterials />
         </div>
       ) : tab === 'sprays' ? (
         <Sprays />

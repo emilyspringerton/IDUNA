@@ -1179,74 +1179,9 @@ function LevelExitInspector({
   )
 }
 
-// MaterialsPanel -- S459-16, founder real-time: "we will need the ability to add new materials
-// and set their textures" / "we will be able to add materials via Nock and set the texture of
-// the material from the texture library." Texture-override picking from NOCK's own texture
-// library is real, deliberate follow-up (this panel edits specular/shininess -- the real, working
-// VS0 shading parameters -- and leaves texture_id null, meaning "use the native procedural
-// default for this name"); named here, not silently promised.
-function MaterialsPanel({ materials, refresh }: { materials: ShankpitMaterial[]; refresh: () => void }) {
-  const [name, setName] = useState('')
-  const [specular, setSpecular] = useState(0.05)
-  const [shininess, setShininess] = useState(8)
-  const [shaderName, setShaderName] = useState('standard')
-  const [error, setError] = useState<string | null>(null)
-
-  const add = async () => {
-    if (!name) return
-    setError(null)
-    try {
-      await shankpitMaterials.create(name, specular, shininess, null, shaderName)
-      setName('')
-      refresh()
-    } catch (err) {
-      setError(String(err))
-    }
-  }
-
-  return (
-    <div className="material-panel">
-      <h2>Materials</h2>
-      <ul>
-        {materials.map((m) => (
-          <li key={m.id}>
-            <div className="material-panel-row">
-              <span className="material-panel-title">{m.name}</span>
-            </div>
-            <span className="hint">
-              spec {m.specular}, shin {m.shininess}, shader {m.shader_name}
-            </span>
-          </li>
-        ))}
-      </ul>
-      <input placeholder="new material name" value={name} onChange={(e) => setName(e.target.value)} />
-      <label>
-        Specular{' '}
-        <input type="number" min={0} max={1} step={0.05} value={specular} onChange={(e) => setSpecular(Number(e.target.value))} />
-      </label>
-      <label>
-        Shininess{' '}
-        <input type="number" min={1} max={256} step={1} value={shininess} onChange={(e) => setShininess(Number(e.target.value))} />
-      </label>
-      <label>
-        Shader{' '}
-        <select value={shaderName} onChange={(e) => setShaderName(e.target.value)}>
-          <option value="standard">standard (Blinn-Phong)</option>
-          <option value="ips_light">ips_light (emissive panel)</option>
-          <option value="hps_light">hps_light (flickering sodium lamp)</option>
-        </select>
-      </label>
-      <button type="button" onClick={add} disabled={!name}>
-        + Add material
-      </button>
-      {error && <span className="error">{error}</span>}
-    </div>
-  )
-}
-
 export default function ShankpitLevelEditor() {
   const { list, refresh } = useLevelList()
-  const { materials, refresh: refreshMaterials } = useMaterialList()
+  const { materials } = useMaterialList()
   const { scripts: doorScriptList } = useDoorScriptList()
   const [activeId, setActiveId] = useState<number | null>(null)
   const [draft, setDraft] = useState(newDefaultLevel())
@@ -1677,7 +1612,10 @@ export default function ShankpitLevelEditor() {
         <button type="button" onClick={startNew}>
           + New level
         </button>
-        <MaterialsPanel materials={materials} refresh={refreshMaterials} />
+        <p className="hint">
+          Manage materials (shader, specular/shininess, friction, textures) in the "SHANKPIT
+          Materials" tab -- a wall here only picks one by name.
+        </p>
       </aside>
 
       <main>
