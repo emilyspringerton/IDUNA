@@ -27,12 +27,12 @@ func newAnimationsTestHandler(t *testing.T) *handlers.NockAnimationsHandler {
 		CREATE TABLE nock_animations (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
 			name            TEXT NOT NULL,
-			tick_rate       INTEGER NOT NULL,
-			duration_ticks  INTEGER NOT NULL,
-			num_channels    INTEGER NOT NULL,
-			content_hash    TEXT NOT NULL,
-			gband_data      BLOB NOT NULL,
-			manifest_json   TEXT NOT NULL,
+			tick_rate       INTEGER,
+			duration_ticks  INTEGER,
+			num_channels    INTEGER,
+			content_hash    TEXT,
+			gband_data      BLOB,
+			manifest_json   TEXT,
 			gskel_data      BLOB,
 			gmesh_data      BLOB,
 			source_location TEXT,
@@ -144,7 +144,7 @@ func TestNockAnimationsHandler_ImportGLTFDragAndDrop(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if created.Name != "test-clip" || created.TickRate != 2 || created.DurationTicks != 3 {
+	if created.Name != "test-clip" || created.TickRate == nil || *created.TickRate != 2 || created.DurationTicks == nil || *created.DurationTicks != 3 {
 		t.Errorf("unexpected created animation: %+v", created)
 	}
 
@@ -167,6 +167,84 @@ func TestNockAnimationsHandler_ImportGLTFDragAndDrop(t *testing.T) {
 	}
 	if got := rec3.Body.Bytes(); len(got) < 4 || string(got[0:4]) != "GBND" {
 		t.Errorf("downloaded gband doesn't start with GBND magic: %q", got)
+	}
+}
+
+// buildMeshOnlyGLB builds a minimal, real .glb with a single node and no "animations" block at
+// all -- the shape of a real rigged-mesh-with-no-baked-animation-yet upload (the founder's own
+// real Mannequin_F.glb, 2026-09-17), which used to be hard-rejected with a 422.
+func buildMeshOnlyGLB(t *testing.T) []byte {
+	t.Helper()
+	doc := map[string]any{
+		"asset": map[string]any{"version": "2.0"},
+		"nodes": []map[string]any{{"name": "root"}},
+	}
+	jsonBytes, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for len(jsonBytes)%4 != 0 {
+		jsonBytes = append(jsonBytes, ' ')
+	}
+	var glb []byte
+	appendChunk := func(chunkType uint32, data []byte) {
+		hdr := make([]byte, 8)
+		binary.LittleEndian.PutUint32(hdr[0:4], uint32(len(data)))
+		binary.LittleEndian.PutUint32(hdr[4:8], chunkType)
+		glb = append(glb, hdr...)
+		glb = append(glb, data...)
+	}
+	header := make([]byte, 12)
+	const glbMagic = 0x46546C67
+	binary.LittleEndian.PutUint32(header[0:4], glbMagic)
+	binary.LittleEndian.PutUint32(header[4:8], 2)
+	glb = append(glb, header...)
+	appendChunk(0x4E4F534A, jsonBytes) // "JSON"
+	binary.LittleEndian.PutUint32(glb[8:12], uint32(len(glb)))
+	return glb
+}
+
+// TestNockAnimationsHandler_ImportGLTFMeshOnlySucceeds is the real regression test for the
+// 2026-09-17 fix ("Error: 422: ... no animation found in this file"). A glTF with no animated
+// channel must now import successfully instead of hard-erroring.
+func TestNockAnimationsHandler_ImportGLTFMeshOnlySucceeds(t *testing.T) {
+	h := newAnimationsTestHandler(t)
+	glb := buildMeshOnlyGLB(t)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("name", "mannequin") //nolint:errcheck
+	fw, err := mw.CreateFormFile("file", "mannequin.glb")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write(glb) //nolint:errcheck
+	mw.Close()    //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/nock/api/animations/import-gltf", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import-gltf (mesh/skeleton only): expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var created nock.Animation
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if created.TickRate != nil || created.DurationTicks != nil {
+		t.Errorf("expected nil animation fields for a mesh-only import, got %+v", created)
+	}
+
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/admin/nock/api/animations", nil))
+	var list []nock.AnimationSummary
+	if err := json.Unmarshal(rec2.Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(list) != 1 || list[0].HasAnimation {
+		t.Errorf("unexpected list: %+v", list)
 	}
 }
 

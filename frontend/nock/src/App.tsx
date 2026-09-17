@@ -985,10 +985,20 @@ function Animations() {
 
   return (
     <div className="animation-repository">
-      <h3>Import a quaternion animation (glTF)</h3>
+      <h3>Character library</h3>
       <p className="hint">
-        Drag a <code>.glb</code> straight from Blender's "glTF Binary" export -- converted server-side into real{' '}
-        <code>.gband</code>/<code>.gskel</code>/<code>.gmesh</code> assets with real quaternion rotation channels. No local tooling needed.
+        Drop in a character from Blender, Mixamo, or anywhere else that exports <code>.glb</code>/<code>.gltf</code>. Any of these is fine on
+        its own -- you don't need all three:
+      </p>
+      <ul className="hint">
+        <li><strong>Mesh</strong> -- the 3D shape (what it looks like).</li>
+        <li><strong>Rig / skeleton</strong> -- the bones inside it that let it bend and pose.</li>
+        <li><strong>Animation</strong> -- a recorded motion using that rig (a walk, a wave, etc).</li>
+      </ul>
+      <p className="hint">
+        A rigged mesh with no animation yet -- like a mannequin standing in T-pose -- imports just fine; you can add
+        animations to it later, either by uploading a separate file with the same rig or by animating it right here
+        once NOCK's rigging/animation tools land.
       </p>
       <input
         placeholder="name (defaults to the file name)"
@@ -1028,13 +1038,17 @@ function Animations() {
           <div key={a.id} className="animation-card">
             <strong>{a.name}</strong>
             <span className="hint">
-              {a.num_channels} channels · {a.duration_ticks} ticks @ {a.tick_rate}/s
-              {a.has_skel && ' · skeleton'}
-              {a.has_mesh && ' · mesh'}
+              {[
+                a.has_mesh && 'mesh',
+                a.has_skel && 'rig',
+                a.has_animation ? `animation (${a.num_channels} channels · ${a.duration_ticks} ticks @ ${a.tick_rate}/s)` : 'no animation yet',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </span>
             {a.source_location && <span className="hint">{a.source_location}</span>}
             <div className="animation-actions">
-              <a href={animations.downloadUrl(a.id, 'gband')}>.gband</a>
+              {a.has_animation && <a href={animations.downloadUrl(a.id, 'gband')}>.gband</a>}
               {a.has_skel && <a href={animations.downloadUrl(a.id, 'gskel')}>.gskel</a>}
               {a.has_mesh && <a href={animations.downloadUrl(a.id, 'gmesh')}>.gmesh</a>}
               <button

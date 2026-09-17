@@ -924,35 +924,37 @@ func ImportGLTFBytes(raw []byte, tickRate uint32, authorshipKind, authorshipWho 
 	if err != nil {
 		return nil, err
 	}
-	if converted.gbandBytes == nil {
-		return nil, fmt.Errorf("no animation found in this file -- the animation repository requires at least one animated (translation or rotation) channel; a mesh/skeleton-only glTF isn't importable here yet")
-	}
 
-	skeletonHashHex := hex.EncodeToString(converted.skeletonHash[:])
-	manifest := gbandManifest{
-		GBandVersion:  1,
-		SkeletonHash:  skeletonHashHex,
-		ContentHash:   converted.contentHash,
-		TickRate:      int(converted.tickRate),
-		DurationTicks: int(converted.durationTicks),
-		Channels:      converted.channels,
-		Authorship:    gbandAuthorship{Kind: authorshipKind, Who: authorshipWho},
-		IntentTags:    []string{},
-		LoopPoints:    gbandLoopPoints{StartTick: 0, EndTick: int(converted.durationTicks)},
+	// Real, live-found fix (2026-09-17): a glTF with no animated channels -- a bare mesh, a bare
+	// rig, or a rigged mesh with no baked animation yet, all real, legitimate assets on their
+	// own -- used to be rejected outright. Now real: store whatever the file actually has.
+	result := &GLTFImportResult{
+		GSkelData: converted.gskelBytes,
+		GMeshData: converted.gmeshBytes,
 	}
-	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshaling manifest: %w", err)
+	if converted.gbandBytes != nil {
+		skeletonHashHex := hex.EncodeToString(converted.skeletonHash[:])
+		manifest := gbandManifest{
+			GBandVersion:  1,
+			SkeletonHash:  skeletonHashHex,
+			ContentHash:   converted.contentHash,
+			TickRate:      int(converted.tickRate),
+			DurationTicks: int(converted.durationTicks),
+			Channels:      converted.channels,
+			Authorship:    gbandAuthorship{Kind: authorshipKind, Who: authorshipWho},
+			IntentTags:    []string{},
+			LoopPoints:    gbandLoopPoints{StartTick: 0, EndTick: int(converted.durationTicks)},
+		}
+		manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshaling manifest: %w", err)
+		}
+		result.GBandData = converted.gbandBytes
+		result.ManifestJSON = string(manifestBytes)
+		result.TickRate = int(converted.tickRate)
+		result.DurationTicks = int(converted.durationTicks)
+		result.NumChannels = len(converted.channels)
+		result.ContentHash = converted.contentHash
 	}
-
-	return &GLTFImportResult{
-		GSkelData:     converted.gskelBytes,
-		GMeshData:     converted.gmeshBytes,
-		GBandData:     converted.gbandBytes,
-		ManifestJSON:  string(manifestBytes),
-		TickRate:      int(converted.tickRate),
-		DurationTicks: int(converted.durationTicks),
-		NumChannels:   len(converted.channels),
-		ContentHash:   converted.contentHash,
-	}, nil
+	return result, nil
 }

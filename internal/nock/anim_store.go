@@ -14,34 +14,43 @@ import (
 	"fmt"
 )
 
-// Animation is one row of the nock_animations table.
+// Animation is one row of the nock_animations table -- despite the table's own historical name,
+// a row does NOT require animation data (real, live-found gap, fixed 2026-09-17: "no animation
+// found in this file" blocked importing a real rigged mesh with no baked animation yet). A row
+// is really "a GOLDENBAND character asset" -- any real, non-empty combination of a mesh
+// (GMeshData), a skeleton/rig (GSkelData), and/or animation (the TickRate/DurationTicks/
+// NumChannels/ContentHash/GBandData/ManifestJSON group, all nil/empty together or all real
+// together). HasAnimation reports which case a given row is.
 type Animation struct {
-	ID             int64  `json:"id"`
-	Name           string `json:"name"`
-	TickRate       int    `json:"tick_rate"`
-	DurationTicks  int    `json:"duration_ticks"`
-	NumChannels    int    `json:"num_channels"`
-	ContentHash    string `json:"content_hash"`
-	GBandData      []byte `json:"-"` // never inlined into a JSON response -- see AnimationSummary
-	ManifestJSON   string `json:"manifest_json"`
-	GSkelData      []byte `json:"-"`
-	GMeshData      []byte `json:"-"`
-	SourceLocation string `json:"source_location,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	TickRate       *int    `json:"tick_rate,omitempty"`
+	DurationTicks  *int    `json:"duration_ticks,omitempty"`
+	NumChannels    *int    `json:"num_channels,omitempty"`
+	ContentHash    string  `json:"content_hash,omitempty"`
+	GBandData      []byte  `json:"-"` // never inlined into a JSON response -- see AnimationSummary
+	ManifestJSON   string  `json:"manifest_json,omitempty"`
+	GSkelData      []byte  `json:"-"`
+	GMeshData      []byte  `json:"-"`
+	SourceLocation string  `json:"source_location,omitempty"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
 }
 
 // AnimationSummary is the real, lightweight shape a LIST returns -- everything about an
-// Animation except its own potentially-large blobs and manifest text. HasSkel/HasMesh are real
-// booleans so a UI can show what a row actually carries without fetching the full row.
+// Animation except its own potentially-large blobs and manifest text. HasSkel/HasMesh/
+// HasAnimation are real booleans so a UI can show what a row actually carries (a bare mesh, a
+// bare rig, a rigged mesh with no animation yet, or a full animated character) without fetching
+// the full row.
 type AnimationSummary struct {
 	ID             int64  `json:"id"`
 	Name           string `json:"name"`
-	TickRate       int    `json:"tick_rate"`
-	DurationTicks  int    `json:"duration_ticks"`
-	NumChannels    int    `json:"num_channels"`
+	TickRate       *int   `json:"tick_rate,omitempty"`
+	DurationTicks  *int   `json:"duration_ticks,omitempty"`
+	NumChannels    *int   `json:"num_channels,omitempty"`
 	HasSkel        bool   `json:"has_skel"`
 	HasMesh        bool   `json:"has_mesh"`
+	HasAnimation   bool   `json:"has_animation"`
 	SourceLocation string `json:"source_location,omitempty"`
 	CreatedAt      string `json:"created_at"`
 	UpdatedAt      string `json:"updated_at"`
@@ -54,22 +63,34 @@ type AnimStore struct {
 	DB *sql.DB
 }
 
-// CreateAnimation inserts a new, real, independent animation row. gskelData/gmeshData may be nil
-// for a clip uploaded without a paired skeleton/mesh.
+// CreateAnimation inserts a new, real, independent character-asset row. gbandData/manifestJSON
+// (with tickRate/durationTicks/numChannels/contentHash) may ALL be empty/zero together -- a real,
+// legitimate "no animation yet" row (a bare mesh, a bare rig, or a rigged mesh with no baked
+// animation) -- but gskelData/gmeshData/gbandData can't ALL be empty at once (nothing real to
+// store). gskelData/gmeshData may independently be nil.
 func (s *AnimStore) CreateAnimation(ctx context.Context, name string, tickRate, durationTicks, numChannels int, contentHash string, gbandData []byte, manifestJSON string, gskelData, gmeshData []byte, sourceLocation string) (*Animation, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
-	if len(gbandData) == 0 {
-		return nil, fmt.Errorf("nock: animation gband data is empty")
+	hasAnim := len(gbandData) > 0
+	if !hasAnim && len(gskelData) == 0 && len(gmeshData) == 0 {
+		return nil, fmt.Errorf("nock: at least one of mesh, skeleton, or animation data is required")
 	}
-	if len(gbandData) < 4 || string(gbandData[0:4]) != "GBND" {
+	if hasAnim && (len(gbandData) < 4 || string(gbandData[0:4]) != "GBND") {
 		return nil, fmt.Errorf("nock: gband data has bad magic, expected a real .gband file starting with \"GBND\"")
 	}
+
+	var tickRateVal, durationTicksVal, numChannelsVal any
+	var gbandVal, manifestVal, contentHashVal any
+	if hasAnim {
+		tickRateVal, durationTicksVal, numChannelsVal = tickRate, durationTicks, numChannels
+		gbandVal, manifestVal, contentHashVal = gbandData, manifestJSON, nullIfEmpty(contentHash)
+	}
+
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO nock_animations (name, tick_rate, duration_ticks, num_channels, content_hash, gband_data, manifest_json, gskel_data, gmesh_data, source_location)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		name, tickRate, durationTicks, numChannels, contentHash, gbandData, manifestJSON, nullBytesIfEmpty(gskelData), nullBytesIfEmpty(gmeshData), nullIfEmpty(sourceLocation))
+		name, tickRateVal, durationTicksVal, numChannelsVal, contentHashVal, gbandVal, manifestVal, nullBytesIfEmpty(gskelData), nullBytesIfEmpty(gmeshData), nullIfEmpty(sourceLocation))
 	if err != nil {
 		return nil, fmt.Errorf("nock: create animation: %w", err)
 	}
@@ -90,26 +111,42 @@ func (s *AnimStore) GetAnimation(ctx context.Context, id int64) (*Animation, err
 
 func scanAnimation(row *sql.Row) (*Animation, error) {
 	var a Animation
-	var gskel, gmesh []byte
-	var sourceLocation sql.NullString
-	if err := row.Scan(&a.ID, &a.Name, &a.TickRate, &a.DurationTicks, &a.NumChannels, &a.ContentHash,
-		&a.GBandData, &a.ManifestJSON, &gskel, &gmesh, &sourceLocation, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	var tickRate, durationTicks, numChannels sql.NullInt64
+	var contentHash, manifestJSON, sourceLocation sql.NullString
+	var gband, gskel, gmesh []byte
+	if err := row.Scan(&a.ID, &a.Name, &tickRate, &durationTicks, &numChannels, &contentHash,
+		&gband, &manifestJSON, &gskel, &gmesh, &sourceLocation, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("nock: animation not found")
 		}
 		return nil, fmt.Errorf("nock: get animation: %w", err)
 	}
+	if tickRate.Valid {
+		v := int(tickRate.Int64)
+		a.TickRate = &v
+	}
+	if durationTicks.Valid {
+		v := int(durationTicks.Int64)
+		a.DurationTicks = &v
+	}
+	if numChannels.Valid {
+		v := int(numChannels.Int64)
+		a.NumChannels = &v
+	}
+	a.ContentHash = contentHash.String
+	a.ManifestJSON = manifestJSON.String
+	a.GBandData = gband
 	a.GSkelData = gskel
 	a.GMeshData = gmesh
 	a.SourceLocation = sourceLocation.String
 	return &a, nil
 }
 
-// ListAnimations returns every animation as a real, lightweight summary (no blobs/manifest
+// ListAnimations returns every character asset as a real, lightweight summary (no blobs/manifest
 // text), newest first.
 func (s *AnimStore) ListAnimations(ctx context.Context) ([]AnimationSummary, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, tick_rate, duration_ticks, num_channels, (gskel_data IS NOT NULL), (gmesh_data IS NOT NULL), source_location, created_at, updated_at
+		`SELECT id, name, tick_rate, duration_ticks, num_channels, (gskel_data IS NOT NULL), (gmesh_data IS NOT NULL), (gband_data IS NOT NULL), source_location, created_at, updated_at
 		 FROM nock_animations ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("nock: list animations: %w", err)
@@ -119,9 +156,22 @@ func (s *AnimStore) ListAnimations(ctx context.Context) ([]AnimationSummary, err
 	out := []AnimationSummary{}
 	for rows.Next() {
 		var s2 AnimationSummary
+		var tickRate, durationTicks, numChannels sql.NullInt64
 		var sourceLocation sql.NullString
-		if err := rows.Scan(&s2.ID, &s2.Name, &s2.TickRate, &s2.DurationTicks, &s2.NumChannels, &s2.HasSkel, &s2.HasMesh, &sourceLocation, &s2.CreatedAt, &s2.UpdatedAt); err != nil {
+		if err := rows.Scan(&s2.ID, &s2.Name, &tickRate, &durationTicks, &numChannels, &s2.HasSkel, &s2.HasMesh, &s2.HasAnimation, &sourceLocation, &s2.CreatedAt, &s2.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("nock: list animations: %w", err)
+		}
+		if tickRate.Valid {
+			v := int(tickRate.Int64)
+			s2.TickRate = &v
+		}
+		if durationTicks.Valid {
+			v := int(durationTicks.Int64)
+			s2.DurationTicks = &v
+		}
+		if numChannels.Valid {
+			v := int(numChannels.Int64)
+			s2.NumChannels = &v
 		}
 		s2.SourceLocation = sourceLocation.String
 		out = append(out, s2)
@@ -154,7 +204,14 @@ func (s *AnimStore) CloneAnimation(ctx context.Context, id int64, newName string
 	if err != nil {
 		return nil, err
 	}
-	return s.CreateAnimation(ctx, newName, src.TickRate, src.DurationTicks, src.NumChannels, src.ContentHash, src.GBandData, src.ManifestJSON, src.GSkelData, src.GMeshData, src.SourceLocation)
+	return s.CreateAnimation(ctx, newName, intOrZero(src.TickRate), intOrZero(src.DurationTicks), intOrZero(src.NumChannels), src.ContentHash, src.GBandData, src.ManifestJSON, src.GSkelData, src.GMeshData, src.SourceLocation)
+}
+
+func intOrZero(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // DeleteAnimation permanently removes an animation row.

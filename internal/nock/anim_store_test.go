@@ -18,12 +18,12 @@ func newAnimTestDB(t *testing.T) *sql.DB {
 		CREATE TABLE nock_animations (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
 			name            TEXT NOT NULL,
-			tick_rate       INTEGER NOT NULL,
-			duration_ticks  INTEGER NOT NULL,
-			num_channels    INTEGER NOT NULL,
-			content_hash    TEXT NOT NULL,
-			gband_data      BLOB NOT NULL,
-			manifest_json   TEXT NOT NULL,
+			tick_rate       INTEGER,
+			duration_ticks  INTEGER,
+			num_channels    INTEGER,
+			content_hash    TEXT,
+			gband_data      BLOB,
+			manifest_json   TEXT,
 			gskel_data      BLOB,
 			gmesh_data      BLOB,
 			source_location TEXT,
@@ -60,7 +60,7 @@ func TestAnimStore_CreateGetList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAnimation: %v", err)
 	}
-	if got.Name != "walk" || got.TickRate != 30 || got.DurationTicks != 64 {
+	if got.Name != "walk" || intOrZero(got.TickRate) != 30 || intOrZero(got.DurationTicks) != 64 {
 		t.Errorf("unexpected animation: %+v", got)
 	}
 	if string(got.GSkelData) != "GSKL..." {
@@ -76,6 +76,43 @@ func TestAnimStore_CreateGetList(t *testing.T) {
 	}
 	if len(list) != 1 || !list[0].HasSkel || list[0].HasMesh {
 		t.Errorf("unexpected list: %+v", list)
+	}
+}
+
+// TestAnimStore_CreateMeshSkeletonOnly is the real regression test for the 2026-09-17 fix: a
+// rigged mesh with no baked animation (the founder's own real uploaded Mannequin_F.glb) must
+// import successfully, with the animation-only fields left nil/false rather than erroring.
+func TestAnimStore_CreateMeshSkeletonOnly(t *testing.T) {
+	db := newAnimTestDB(t)
+	store := &AnimStore{DB: db}
+	ctx := context.Background()
+
+	created, err := store.CreateAnimation(ctx, "mannequin", 0, 0, 0, "", nil, "", []byte("GSKL..."), []byte("GMSH..."), "nock drag-and-drop")
+	if err != nil {
+		t.Fatalf("CreateAnimation (mesh/skeleton only): %v", err)
+	}
+	if created.TickRate != nil || created.DurationTicks != nil || created.NumChannels != nil {
+		t.Errorf("expected nil animation fields for a mesh/skeleton-only row, got %+v", created)
+	}
+	if string(created.GSkelData) != "GSKL..." || string(created.GMeshData) != "GMSH..." {
+		t.Errorf("expected mesh/skeleton data to round-trip, got %+v", created)
+	}
+
+	list, err := store.ListAnimations(ctx)
+	if err != nil {
+		t.Fatalf("ListAnimations: %v", err)
+	}
+	if len(list) != 1 || !list[0].HasSkel || !list[0].HasMesh || list[0].HasAnimation {
+		t.Errorf("unexpected list: %+v", list)
+	}
+}
+
+func TestAnimStore_CreateRejectsAllEmpty(t *testing.T) {
+	db := newAnimTestDB(t)
+	store := &AnimStore{DB: db}
+	_, err := store.CreateAnimation(context.Background(), "nothing", 0, 0, 0, "", nil, "", nil, nil, "")
+	if err == nil {
+		t.Fatal("expected an error when mesh, skeleton, and animation are all empty")
 	}
 }
 

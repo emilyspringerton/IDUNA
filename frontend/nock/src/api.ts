@@ -232,14 +232,19 @@ export const textures = {
 // gltf_convert.go for the real backend (server-side glTF conversion, no local gbtool needed for
 // the drag-and-drop path). ----
 
+// A row is really "a GOLDENBAND character asset" -- any real, non-empty combination of a mesh
+// (has_mesh), a skeleton/rig (has_skel), and/or animation (has_animation). tick_rate/
+// duration_ticks/num_channels/content_hash/manifest_json are only present when has_animation is
+// true -- a bare mesh or bare rig (or a rigged mesh with no animation baked in yet) is real and
+// legitimate on its own (fixed 2026-09-17: this used to hard-require animation data).
 export interface Animation {
   id: number
   name: string
-  tick_rate: number
-  duration_ticks: number
-  num_channels: number
-  content_hash: string
-  manifest_json: string
+  tick_rate?: number
+  duration_ticks?: number
+  num_channels?: number
+  content_hash?: string
+  manifest_json?: string
   source_location?: string
   created_at: string
   updated_at: string
@@ -248,11 +253,12 @@ export interface Animation {
 export interface AnimationSummary {
   id: number
   name: string
-  tick_rate: number
-  duration_ticks: number
-  num_channels: number
+  tick_rate?: number
+  duration_ticks?: number
+  num_channels?: number
   has_skel: boolean
   has_mesh: boolean
+  has_animation: boolean
   source_location?: string
   created_at: string
   updated_at: string
