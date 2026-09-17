@@ -12,6 +12,7 @@ import {
   type DoorScriptSummary,
   type ShankpitCharacter,
   type ShankpitDoor,
+  type ShankpitLevelExit,
   type ShankpitLevelObject,
   type ShankpitLevelSummary,
   type ShankpitMaterial,
@@ -69,6 +70,8 @@ function newDefaultLevel(): {
   doors: ShankpitDoor[]
   navNodes: ShankpitNavNode[]
   characters: ShankpitCharacter[]
+  levelExits: ShankpitLevelExit[]
+  nextLevelId: number | null
 } {
   return {
     name: '',
@@ -83,7 +86,13 @@ function newDefaultLevel(): {
     doors: [],
     navNodes: [],
     characters: [],
+    levelExits: [],
+    nextLevelId: null,
   }
+}
+
+function nextLevelExitId(exits: ShankpitLevelExit[]): number {
+  return exits.reduce((m, e) => Math.max(m, e.id), 0) + 1
 }
 
 function nextWallId(walls: ShankpitWall[]): number {
@@ -1072,6 +1081,48 @@ function CharacterInspector({
   )
 }
 
+// LevelExitInspector -- S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time:
+// "we need the loading points or whatever the opposite of the spawners is"). Same real "no
+// cross-reference" simplicity CharacterInspector above already established, plus a radius field.
+function LevelExitInspector({
+  exit,
+  onChange,
+  onDelete,
+}: {
+  exit: ShankpitLevelExit
+  onChange: (e: ShankpitLevelExit) => void
+  onDelete: () => void
+}) {
+  const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
+  return (
+    <div className="platform-inspector">
+      <h4>Level Exit #{exit.id}</h4>
+      <label>
+        X <input type="number" step={0.5} value={exit.x} onChange={(e) => onChange({ ...exit, x: num(e.target.value) })} />
+      </label>
+      <label>
+        Y <input type="number" step={0.5} value={exit.y} onChange={(e) => onChange({ ...exit, y: num(e.target.value) })} />
+      </label>
+      <label>
+        Z <input type="number" step={0.5} value={exit.z} onChange={(e) => onChange({ ...exit, z: num(e.target.value) })} />
+      </label>
+      <label>
+        Radius{' '}
+        <input
+          type="number"
+          step={0.5}
+          min={0.5}
+          value={exit.radius}
+          onChange={(e) => onChange({ ...exit, radius: Math.max(0.5, num(e.target.value)) })}
+        />
+      </label>
+      <button className="danger" type="button" onClick={onDelete}>
+        Delete exit
+      </button>
+    </div>
+  )
+}
+
 // MaterialsPanel -- S459-16, founder real-time: "we will need the ability to add new materials
 // and set their textures" / "we will be able to add materials via Nock and set the texture of
 // the material from the texture library." Texture-override picking from NOCK's own texture
@@ -1227,6 +1278,8 @@ export default function ShankpitLevelEditor() {
       doors: lvl.doors ?? [],
       navNodes: lvl.nav_nodes ?? [],
       characters: lvl.characters ?? [],
+      levelExits: lvl.level_exits ?? [],
+      nextLevelId: lvl.next_level_id ?? null,
     })
     setActiveId(id)
     setSelected(null)
@@ -1407,6 +1460,34 @@ export default function ShankpitLevelEditor() {
     setCharacters(draft.characters.filter((c) => c.id !== id))
   }
 
+  const setLevelExits = (levelExits: ShankpitLevelExit[]) => {
+    setDraft((d) => ({ ...d, levelExits }))
+    setDirty(true)
+  }
+
+  // addLevelExit -- S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we
+  // need the loading points or whatever the opposite of the spawners is"). Placed at the spawner
+  // marker's own current position, same real convenience addCharacter/addNavNode already give.
+  const addLevelExit = () => {
+    pushHistory()
+    const id = nextLevelExitId(draft.levelExits)
+    setLevelExits([...draft.levelExits, { id, x: spawner.x, y: spawner.y, z: spawner.z, radius: 4 }])
+  }
+
+  const updateLevelExit = (updated: ShankpitLevelExit) => {
+    setLevelExits(draft.levelExits.map((e) => (e.id === updated.id ? updated : e)))
+  }
+
+  const deleteLevelExit = (id: number) => {
+    pushHistory()
+    setLevelExits(draft.levelExits.filter((e) => e.id !== id))
+  }
+
+  const setNextLevelId = (nextLevelId: number | null) => {
+    setDraft((d) => ({ ...d, nextLevelId }))
+    setDirty(true)
+  }
+
   const save = async () => {
     setError(null)
     try {
@@ -1429,6 +1510,8 @@ export default function ShankpitLevelEditor() {
           draft.doors,
           draft.navNodes,
           draft.characters,
+          draft.levelExits,
+          draft.nextLevelId,
         )
         id = created.id
         setActiveId(id)
@@ -1446,6 +1529,8 @@ export default function ShankpitLevelEditor() {
           draft.doors,
           draft.navNodes,
           draft.characters,
+          draft.levelExits,
+          draft.nextLevelId,
         )
       }
       setDirty(false)
@@ -1504,6 +1589,23 @@ export default function ShankpitLevelEditor() {
                   }}
                 >
                   Set as QUEUE default
+                </button>
+              )}
+              {/* S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we dont
+                  need the text cutscene in the beginning we just need to spawn into the first
+                  map that the story is") -- exactly one level is the real, global MODE_STORY
+                  entry level at a time, same real shape the QUEUE default toggle above uses. */}
+              {l.is_story_start ? (
+                <span className="hint">STORY start</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await shankpitLevels.setStoryStart(l.id)
+                    refresh()
+                  }}
+                >
+                  Set as STORY start
                 </button>
               )}
             </li>
@@ -1772,6 +1874,39 @@ export default function ShankpitLevelEditor() {
               </button>
               {draft.characters.map((c) => (
                 <CharacterInspector key={c.id} character={c} onChange={updateCharacter} onDelete={() => deleteCharacter(c.id)} />
+              ))}
+            </div>
+            <div className="object-list">
+              {/* S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we need
+                  a way to string 2 levels together and ... we need the loading points or
+                  whatever the opposite of the spawners is") -- a real, placed trigger volume; a
+                  player entering it transitions to whichever level "Next level" below names. */}
+              <h3>Level exits</h3>
+              <p className="hint">
+                A player entering this volume transitions to the "Next level" chosen below. Every exit in this level leads
+                to the same next level (v0 is a chain, not a per-exit destination).
+              </p>
+              <label>
+                Next level{' '}
+                <select
+                  value={draft.nextLevelId ?? ''}
+                  onChange={(e) => setNextLevelId(e.target.value === '' ? null : Number(e.target.value))}
+                >
+                  <option value="">(none -- end of the story)</option>
+                  {list
+                    .filter((l) => l.id !== activeId)
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <button type="button" onClick={addLevelExit}>
+                + Add level exit
+              </button>
+              {draft.levelExits.map((ex) => (
+                <LevelExitInspector key={ex.id} exit={ex} onChange={updateLevelExit} onDelete={() => deleteLevelExit(ex.id)} />
               ))}
             </div>
           </div>

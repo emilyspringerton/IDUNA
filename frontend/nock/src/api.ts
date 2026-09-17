@@ -616,6 +616,19 @@ export interface ShankpitCharacter {
   z: number
 }
 
+// ShankpitLevelExit mirrors IDUNA/internal/shankpit.LevelExit exactly -- a real, author-placed
+// exit trigger volume (S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1, founder real-time:
+// "we need the loading points or whatever the opposite of the spawners is"). A player entering it
+// server-side transitions to this LEVEL's own real next_level_id -- every exit volume in a level
+// leads to the SAME next level (v0 is a chain, not a per-exit destination).
+export interface ShankpitLevelExit {
+  id: number
+  x: number
+  y: number
+  z: number
+  radius: number
+}
+
 // AI_ROLE_OPTIONS -- real AIRole values, hand-kept in sync with SHANKPIT's own C enum
 // (packages/simulation/story_ai.h) and IDUNA's own Go mirror (internal/shankpit.AIRole*
 // constants) -- no shared schema exists across this Go/C/TS triple boundary, same established
@@ -647,6 +660,13 @@ export interface ShankpitLevel {
   doors: ShankpitDoor[]
   nav_nodes: ShankpitNavNode[]
   characters: ShankpitCharacter[]
+  // level_exits / next_level_id (S473) -- see ShankpitLevelExit's own doc comment. next_level_id
+  // is nullable: no value is a real, honest "end of the story" or "not part of a chain" state.
+  level_exits: ShankpitLevelExit[]
+  next_level_id: number | null
+  // is_story_start (S473) -- exactly one level is the real, global MODE_STORY entry level at a
+  // time, same real "exactly one" shape is_default_queue below already uses.
+  is_story_start: boolean
   // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
   // set a level as default for queue") -- exactly one level is the real, global QUEUE default at
   // a time, same real shape ShankpitSpray's own is_default already uses.
@@ -669,6 +689,8 @@ export interface ShankpitLevelSummary {
   door_count: number
   nav_node_count: number
   character_count: number
+  level_exit_count: number
+  is_story_start: boolean
   is_default_queue: boolean
   created_at: string
   updated_at: string
@@ -703,6 +725,8 @@ export const shankpitLevels = {
     doors: ShankpitDoor[],
     navNodes: ShankpitNavNode[],
     characters: ShankpitCharacter[],
+    levelExits: ShankpitLevelExit[],
+    nextLevelId: number | null,
   ) =>
     sreq<ShankpitLevel>('', {
       method: 'POST',
@@ -719,6 +743,8 @@ export const shankpitLevels = {
         doors,
         nav_nodes: navNodes,
         characters,
+        level_exits: levelExits,
+        next_level_id: nextLevelId,
       }),
     }),
   save: (
@@ -734,6 +760,8 @@ export const shankpitLevels = {
     doors: ShankpitDoor[],
     navNodes: ShankpitNavNode[],
     characters: ShankpitCharacter[],
+    levelExits: ShankpitLevelExit[],
+    nextLevelId: number | null,
   ) =>
     sreq<ShankpitLevel>(`/${id}`, {
       method: 'PUT',
@@ -749,6 +777,8 @@ export const shankpitLevels = {
         doors,
         nav_nodes: navNodes,
         characters,
+        level_exits: levelExits,
+        next_level_id: nextLevelId,
       }),
     }),
   rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
@@ -756,6 +786,8 @@ export const shankpitLevels = {
   clone: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
   exportUrl: (id: number) => `${SHANKPIT_LEVELS_BASE}/${id}/export?_=${Date.now()}`,
   setDefaultQueue: (id: number) => sreq<ShankpitLevel>(`/${id}/default-queue`, { method: 'PATCH' }),
+  // setStoryStart (S473) -- mirrors setDefaultQueue above exactly.
+  setStoryStart: (id: number) => sreq<ShankpitLevel>(`/${id}/story-start`, { method: 'PATCH' }),
 }
 
 // ---- SHANKPIT sprays (S459-19, founder real-time: "can we implement sprays? ... export to spray
