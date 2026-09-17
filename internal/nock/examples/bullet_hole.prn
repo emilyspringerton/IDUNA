@@ -1,0 +1,62 @@
+(module gentexture)
+(import math)
+
+;; The one real tweakable knob -- edit this single number in NOCK's texture editor, click
+;; Re-run, get a different (but still coherent) asymmetric hole shape. Both the wobble's
+;; amplitude and its frequency are derived from this one value, so small changes noticeably
+;; change the shape's character, not just its strength. Roughly -1.0..1.0 is the useful range;
+;; 0.0 gives a nearly-perfect circle.
+(defn asym-seed [] : F64 0.35)
+
+(defn clamp01 [(v : F64)] : F64
+  (if (< v 0.0) 0.0 (if (> v 1.0) 1.0 v)))
+
+(defn smooth-ramp [(v : F64) (lo : F64) (hi : F64)] : F64
+  (clamp01 (/ (- v lo) (- hi lo))))
+
+(defn lerp [(a : F64) (b : F64) (t : F64)] : F64
+  (+ a (* t (- b a))))
+
+(defn norm-dx [(x : F64) (w : F64)] : F64
+  (/ (- x (/ w 2.0)) (/ w 2.0)))
+
+(defn norm-dy [(y : F64) (h : F64)] : F64
+  (/ (- y (/ h 2.0)) (/ h 2.0)))
+
+;; Perturbs the radius by a sum of two cosines at seed-derived frequencies/phases -- a cheap,
+;; deterministic way to get an irregular, non-circular boundary without atan2 (not available on
+;; this compile target).
+(defn wobble [(nx : F64) (ny : F64)] : F64
+  (* 0.05
+     (+ (math/cos (* nx (+ 6.0 (* (asym-seed) 5.0))))
+        (math/cos (* ny (+ 8.0 (* (asym-seed) 4.0)))))))
+
+(defn radius [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (+ (math/sqrt (+ (* (norm-dx x w) (norm-dx x w)) (* (norm-dy y h) (norm-dy y h))))
+     (wobble (norm-dx x w) (norm-dy y h))))
+
+;; Deterministic per-pixel grit (a classic sin/cos hash trick) -- NOT math/random-f64 on
+;; purpose: this decal should re-render pixel-identical until asym-seed is actually changed, so
+;; tweaking the one real parameter is the only thing that produces a new version.
+(defn speckle [(x : F64) (y : F64)] : F64
+  (* 0.12 (math/cos (+ (* x 1.7) (* y 2.3)))))
+
+(defn darkness [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (clamp01
+    (+ (* 0.85 (- 1.0 (smooth-ramp (radius x y w h) 0.0 0.22)))
+       (+ (* 0.55 (- 1.0 (smooth-ramp (radius x y w h) 0.0 0.07)))
+          (* (speckle x y) (- 1.0 (smooth-ramp (radius x y w h) 0.0 0.22)))))))
+
+;; Background is pure white (1.0) on purpose, not a wall color -- this decal is meant to be
+;; composited with a MULTIPLY blend at draw time (white * anything = unchanged, so the untouched
+;; background vanishes on any wall without needing an alpha channel at all), not drawn with
+;; normal alpha-over compositing. See this asset's own NOCK library notes for the in-engine
+;; glBlendFunc(GL_DST_COLOR, GL_ZERO) this expects.
+(defn pixel-r [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (lerp 1.0 0.06 (darkness x y w h)))
+
+(defn pixel-g [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (lerp 1.0 0.04 (darkness x y w h)))
+
+(defn pixel-b [(x : F64) (y : F64) (w : F64) (h : F64)] : F64
+  (lerp 1.0 0.035 (darkness x y w h)))
