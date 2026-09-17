@@ -575,10 +575,25 @@ function Viewport3D({
         }
         const wallIndex = meshesRef.current.indexOf(mesh)
         const wall = wallsRef.current[wallIndex]
-        onSelect(wall.id)
-        onSelectSpawnPointRef.current(null)
         const plane = dragPlaneThrough(mesh.position.clone())
         const grabOffset = new THREE.Vector3().subVectors(mesh.position, hits[0].point)
+        onSelectSpawnPointRef.current(null)
+        if (e.altKey) {
+          // Illustrator-style alt-drag-to-clone -- founder real-time: "if I hold ALT and im in
+          // object mode and i grab and drag a cube it needs to clone that cube just like in
+          // illustrator." Clones the hit wall with a new id, appends it, and immediately starts
+          // dragging THE CLONE -- the original stays exactly where it was, matching
+          // Illustrator's own real alt-drag contract (not a move of the original).
+          onDragStartRef.current()
+          const cloneId = nextWallId(wallsRef.current)
+          const clone: ShankpitWall = { ...wall, id: cloneId }
+          const cloneIndex = wallsRef.current.length
+          onChange([...wallsRef.current, clone])
+          onSelect(cloneId)
+          dragRef.current = { mode: 'move-wall', wallIndex: cloneIndex, plane, grabOffset, startWall: { ...clone } }
+          return
+        }
+        onSelect(wall.id)
         onDragStartRef.current()
         dragRef.current = { mode: 'move-wall', wallIndex, plane, grabOffset, startWall: { ...wall } }
         return
