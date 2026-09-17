@@ -231,6 +231,30 @@ function applyFaceDrag(wall: ShankpitWall, axis: Axis, sign: 1 | -1, newFaceCoor
   return { ...wall, [centerKey]: newCenter, [sizeKey]: newSize }
 }
 
+// EXTRUDE_DEFAULT_DEPTH -- how far the new box reaches out from the extruded face before the
+// author drags its own far face (applyFaceDrag, already real/working) to extend it further. 2
+// world units -- small enough not to overshoot into whatever's beyond, large enough to grab and
+// see immediately (matches this editor's own general "human-scale" unit convention elsewhere).
+const EXTRUDE_DEFAULT_DEPTH = 2
+
+// extrudeFace (S488, box extrude -- founder real-time: "i need box extrude to make floorplans
+// quickly... select a face of the cube and then extrude it and then scale the face of the new
+// extrusion and then extrude again"). Returns a NEW wall flush against `wall`'s own selected face,
+// same cross-section (the other two axes' position/size are copied unchanged, so the new segment
+// lines up exactly with the opening it extends), reaching outward by EXTRUDE_DEFAULT_DEPTH along
+// `axis`. This is duplicate-and-chain, not true mesh-topology extrusion (see
+// docs2/MESH_EDITING_NORTHSTAR.md's own Phase 1 scope) -- SHANKPIT's native walls are always
+// axis-aligned boxes, so "extrude" here means "the next connected box," which is exactly what the
+// founder's own worked example describes (a chain of boxes forming a hallway), not a compromise
+// on the real workflow.
+function extrudeFace(wall: ShankpitWall, axis: Axis, sign: 1 | -1, id: number): ShankpitWall {
+  const centerKey = axis
+  const sizeKey = axis === 'x' ? 'sx' : axis === 'y' ? 'sy' : 'sz'
+  const faceCoord = wall[centerKey] + sign * (wall[sizeKey] / 2)
+  const newCenter = faceCoord + sign * (EXTRUDE_DEFAULT_DEPTH / 2)
+  return { ...wall, id, [centerKey]: newCenter, [sizeKey]: EXTRUDE_DEFAULT_DEPTH }
+}
+
 // wallTextureLoader/applyWallTexture -- S480, founder real-time: "choosing a texture for a
 // material from the textures interface doesnt work it just defaults to the brick look." Real,
 // found-live gap: a material's own texture_id (S459-16) was never actually applied ANYWHERE --
@@ -477,6 +501,11 @@ function Viewport3D({
     | { mode: 'move-spawn-point'; spawnIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3 }
     | null
   >(null)
+  // selectedFaceRef (S488, box extrude) -- WHICH face is selected, persisted past the click that
+  // selected it (unlike dragRef, which only lives for the duration of an active pointer drag).
+  // Needed because Alt+E is a keyboard operation, not a drag gesture: by the time the key is
+  // pressed, any 'face' dragRef state from the original click is long gone.
+  const selectedFaceRef = useRef<FaceHit | null>(null)
 
   wallsRef.current = walls
   selectedRef.current = selected
@@ -552,6 +581,31 @@ function Viewport3D({
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.key === 'Shift') { shiftHeld = true; return }
       const key = e.key.toLowerCase()
+      // Alt+E: box extrude (S488, docs2/MESH_EDITING_NORTHSTAR.md Phase 1 -- founder real-time:
+      // "i need box extrude to make floorplans quickly ship that first"). Alt-modified
+      // deliberately (founder: "hotkeys can be alt driven if need a modifier") -- bare `e` already
+      // means "fly camera up," so this branch must be checked and returned from BEFORE the plain
+      // key falls into keysHeld below, or Alt+E would both extrude AND start the camera flying up.
+      // One-shot per keypress (real edge-trigger, matches every other keyboard operation in this
+      // file -- extrude-while-held would spam new walls every frame, not the wanted behavior).
+      if (e.altKey && key === 'e') {
+        e.preventDefault()
+        const face = selectedFaceRef.current
+        const wall = face ? wallsRef.current[face.wallIndex] : null
+        if (!face || !wall) return
+        onDragStartRef.current()
+        const newId = nextWallId(wallsRef.current)
+        const newWallIndex = wallsRef.current.length
+        const newWall = extrudeFace(wall, face.axis, face.sign, newId)
+        onChange([...wallsRef.current, newWall])
+        onSelect(newId)
+        // Auto-select the NEW box's far face (same axis/sign) so a second Alt+E immediately
+        // chains another segment -- matches the founder's own described workflow ("extrude it...
+        // extrude again... extrude again") without needing to re-click between extrusions.
+        selectedFaceRef.current = { wallIndex: newWallIndex, axis: face.axis, sign: face.sign }
+        onCommit()
+        return
+      }
       if (key === 'w' || key === 'a' || key === 's' || key === 'd' || key === 'q' || key === 'e') {
         keysHeld.add(key)
       }
@@ -674,6 +728,7 @@ function Viewport3D({
           const hit = faceHitFromNormal(wallIndex, hits[0].face.normal.clone())
           const wall = wallsRef.current[wallIndex]
           onSelect(wall.id)
+          selectedFaceRef.current = hit // S488: persists past this click, for Alt+E
           const axisDir = new THREE.Vector3(hit.axis === 'x' ? 1 : 0, hit.axis === 'y' ? 1 : 0, hit.axis === 'z' ? 1 : 0)
           const startT = hits[0].point.clone().dot(axisDir) // coordinate along the axis at the hit point
           onDragStartRef.current()
@@ -681,6 +736,7 @@ function Viewport3D({
           return
         }
         onSelect(null)
+        selectedFaceRef.current = null
         dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
         return
       }
@@ -782,7 +838,21 @@ function Viewport3D({
         onSpawnPointsChangeRef.current(nextSpawns)
         return
       }
-      const updated = { ...drag.startWall, x: newPos.x, y: newPos.y, z: newPos.z }
+      // Real, found-live bug (founder real-time: "constrain Y wile drag has never worked its a
+      // nightmare whenever i drag a block it goes above or below the leveel"). Root cause: the
+      // horizontal drag plane is built through the object's own CENTER at grab time, so ray-plane
+      // intersection always returns a point whose y exactly equals the center's original y --
+      // correct so far. But grabOffset (mesh.position - the exact clicked point on the wall's
+      // SURFACE) generally has a NONZERO y component whenever the click wasn't exactly at the
+      // wall's vertical center (true for almost every real click on a tall wall's side face), and
+      // newPos = hitPoint + grabOffset re-adds that offset -- so the final y silently drifted by
+      // up to the wall's own half-height above or below its true original position, in a
+      // direction depending on where on the wall you happened to click. The plane math was never
+      // the bug; blindly trusting it plus grabOffset to preserve y was. Fix: when constrainY is
+      // on, y is authoritatively the wall's own unchanged startWall.y -- ignore whatever the
+      // plane/grabOffset arithmetic computed for it entirely, don't try to correct that math.
+      const lockedY = constrainYRef.current ? drag.startWall.y : newPos.y
+      const updated = { ...drag.startWall, x: newPos.x, y: lockedY, z: newPos.z }
       const next = wallsRef.current.slice()
       next[drag.wallIndex] = updated
       onChange(next)
@@ -1545,6 +1615,30 @@ export default function ShankpitLevelEditor() {
   const widgetList = useWidgetSummaryList()
   const [selectedSpawnPoint, setSelectedSpawnPoint] = useState<number | null>(null)
   const [editMode, setEditMode] = useState<EditMode>('object')
+  // Tab toggles Object <-> Edit mode; Alt+3 jumps straight to Face select (S488, founder
+  // real-time: "also do alt 1 2 3 for the different edit modes tab moves you between object and
+  // edit mode"). Matches Blender's own real convention (Tab for the mode toggle, 1/2/3 for
+  // vertex/edge/face select -- here Alt-modified per the founder's own "hotkeys can be alt driven
+  // if need a modifier"). Alt+1/Alt+2 (vertex/edge select) are real, named, NOT built yet --
+  // docs2/MESH_EDITING_NORTHSTAR.md's own Phase 1 scope is Face-select only -- so they're
+  // deliberately inert here rather than half-wired to a mode that doesn't exist.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        setEditMode((m) => (m === 'object' ? 'face' : 'object'))
+        return
+      }
+      if (e.altKey && e.key === '3') {
+        e.preventDefault()
+        setEditMode('face')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
   // Constrain Y while dragging in object mode -- founder real-time: "i need the blocks to notfly
   // up and down when i drag them around unless i uncheck the constrain z or y or whatever box" /
   // "thats really important." Checked (constrained) by default -- dragging a cube glides it along
@@ -2174,10 +2268,11 @@ export default function ShankpitLevelEditor() {
               characters={draft.characters}
             />
             <p className="hint">
-              Drag empty space to orbit, scroll to zoom.{' '}
+              WASD+QE fly the camera (Shift = fast), middle-mouse drag to orbit, scroll to zoom.
+              Tab toggles Object/Edit mode (Alt+3 jumps to Face select).{' '}
               {editMode === 'object'
                 ? "Object mode: drag a cube to move it, drag the yellow spawner marker to reposition it. New cubes spawn at the marker."
-                : "Face mode: drag a cube's face to reshape it."}{' '}
+                : 'Face mode: click a face to select it, drag it to reshape the cube, Alt+E to extrude it into a new connected box.'}{' '}
               Click a cube to select it.
             </p>
           </div>
