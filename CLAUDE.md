@@ -30,6 +30,7 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | GET | `/admin/` | Back Office UI (admin role required) |
 | GET | `/admin/kanban` | Kanban board UI (Inbox + 3 columns: Backlog/Priority/Cruise, drag-and-drop; admin role required) |
 | GET | `/admin/kanban/api/inbox` | Real, open (unchecked), not-yet-carded `EMILY/BACKLOG.md` items — the live bridge from the backlog file to the board (admin role required) |
+| * | `/admin/nock/code/` | VS Code (code-server, unmodified upstream) as a NOCK tool — a plain reverse proxy (`internal/http/handlers/nock_code_proxy.go`) to a local code-server instance (`ops/systemd/nock-code-server.service`, 127.0.0.1:8892, its own auth disabled). Gated by the exact same `RequireCookieAuth`+`iduna.admin` chain as every other `/admin/nock/*` route — same Back Office login, not a separate auth system. |
 | GET | `/health` | Health check |
 
 **This table is a curated subset, not the full route table.** A SAGA audit (2026-09-07) found
@@ -68,6 +69,12 @@ so it stays true without needing a line-by-line update every time a route is add
 cmd/
   bootstrap/    — seeds agents + initial users from config/
   bob-agent/    — MySQL schema admin agent (destructive ops require confirm: true)
+  create-admin-agent/ — one-shot CLI, provisions a new agent with `iduna.admin` for signing into
+                   `/admin/login` (Back Office). `go run ./cmd/create-admin-agent -name NAME`
+                   prints the plaintext secret once — it's never retrievable again. Real, existing
+                   tool for the recurring "no agent has iduna.admin, how do I get in" gap; a
+                   credential-granting action, so a sandboxed agent needs the human to actually
+                   run it, not just be told it exists.
 internal/
   auth/         — JWT issuance, validation, Google OAuth flow
   http/handlers/ — route handlers (apples, heimdal, push-tokens, intelligence, admin, mmo*,

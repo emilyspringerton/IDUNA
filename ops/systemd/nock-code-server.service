@@ -1,0 +1,49 @@
+# /home/fatbaby/.config/systemd/user/nock-code-server.service
+#
+# code-server (VS Code in the browser, https://github.com/coder/code-server) as a NOCK tool --
+# founder real-time: "can we add VS code to the nock tools? ... have the admin work through IDUNA
+# so i can use my same login flow from back office into NOCK ... let me know if i need to fork
+# the repo to do that." No fork needed -- code-server is a normal, unmodified upstream release
+# (installed standalone into ~/.local/lib, no sudo, same convention as every other ~/.local/bin
+# tool in this monorepo) run with its OWN auth disabled (--auth none), because IDUNA's own Go
+# reverse proxy (internal/http/handlers/nock_code_proxy.go, main.go's /admin/nock/code/ route) is
+# the real gate -- the exact same RequireCookieAuth(...)(RequirePermission("iduna.admin")(...))
+# middleware chain that already protects every other /admin/nock/* route, so this literally is
+# "my same login flow from back office," not a parallel auth system (unlike JEWEL's own
+# fatbaby-broker + Basic Auth precedent, ops/systemd/jewel-jupyter.service -- deliberately NOT
+# reused here since Basic Auth is a different login than IDUNA's own cookie session).
+#
+# Bound to 127.0.0.1 ONLY -- IDUNA's own in-process proxy is the sole real path to this service;
+# it must never be reachable directly. No --abs-proxy-base-path flag: that controls code-server's
+# own UNRELATED "absproxy" feature (proxying dev servers running INSIDE a workspace out through
+# code-server), not code-server's own sub-path hosting -- checked directly against real working
+# nginx reverse-proxy examples before assuming. code-server auto-detects its own base path from
+# the incoming request path itself; the proxy (nock_code_proxy.go) forwards the full
+# /admin/nock/code/... path through UNCHANGED (no prefix stripping), matching that real,
+# documented pattern.
+#
+# Deploy:
+#   mkdir -p ~/.config/systemd/user
+#   cp ops/systemd/nock-code-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now nock-code-server.service
+
+[Unit]
+Description=code-server (VS Code) -- NOCK tools, gated entirely by IDUNA's own admin cookie auth
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fatbaby
+Environment=PATH=/home/fatbaby/.local/bin:/usr/bin:/bin
+ExecStart=/home/fatbaby/.local/bin/code-server \
+    --bind-addr=127.0.0.1:8892 \
+    --auth=none \
+    --disable-telemetry \
+    --disable-update-check \
+    /home/fatbaby
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -613,6 +613,16 @@ func main() {
 	}
 	mux.Handle("/admin/nock/", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockAssetsH)))
 
+	// NOCK code-server (VS Code in the browser, github.com/coder/code-server) -- founder
+	// real-time: "can we add VS code to the nock tools? ... have the admin work through IDUNA so
+	// i can use my same login flow from back office into NOCK." No fork of code-server: it runs
+	// unmodified, standalone, with its own auth disabled (ops/systemd/nock-code-server.service,
+	// 127.0.0.1:8892) -- this route's own RequireCookieAuth+iduna.admin chain, identical to every
+	// other /admin/nock/* route above, is the real, only gate. See nock_code_proxy.go's own doc
+	// comment for why the full path is forwarded unchanged (no prefix stripping).
+	nockCodeProxy := handlers.NewNockCodeProxyHandler("http://127.0.0.1:8892")
+	mux.Handle("/admin/nock/code/", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockCodeProxy)))
+
 	// NOCK texture library (founder real-time, 2026-09-12: "we are making a texture generator
 	// and manager so it needs to have CRUD and all that and also we are gonna want to save them
 	// in sqlite"). A real re-scope from the file-backed Project/Layer engine above: the primary
