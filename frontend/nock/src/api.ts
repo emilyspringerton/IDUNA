@@ -602,6 +602,37 @@ export interface ShankpitNavNode {
   neighbor_ids: number[]
 }
 
+// ShankpitCharacter mirrors IDUNA/internal/shankpit.Character exactly -- a real, author-placed
+// story_ai NPC (STORY_SYSTEM_NORTHSTAR.md Phase 2's own "character" kind, founder real-time:
+// "continue filling in the gaps in our level editor scriptable env characters etc"). role is the
+// same integer AIRole value SHANKPIT's own story_ai_spawn_enemy takes -- see AI_ROLE_OPTIONS
+// below for the real, hand-kept-in-sync label/value pairs. Only meaningful when the level loads
+// in MODE_STORY/MODE_STORY_CAVE on the dedicated server.
+export interface ShankpitCharacter {
+  id: number
+  role: number
+  x: number
+  y: number
+  z: number
+}
+
+// AI_ROLE_OPTIONS -- real AIRole values, hand-kept in sync with SHANKPIT's own C enum
+// (packages/simulation/story_ai.h) and IDUNA's own Go mirror (internal/shankpit.AIRole*
+// constants) -- no shared schema exists across this Go/C/TS triple boundary, same established
+// convention SHANKPIT_GRID_CELL_SIZE already uses elsewhere in this file.
+export const AI_ROLE_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: 'Rift Hound' },
+  { value: 1, label: 'Shambler Trooper' },
+  { value: 2, label: 'Gore Brute' },
+  { value: 3, label: 'Story Ally' },
+  { value: 4, label: 'Guard' },
+  { value: 5, label: 'Storm Caller' },
+  { value: 6, label: 'Bombardier' },
+  { value: 7, label: 'Relentless Pursuer' },
+  { value: 8, label: 'Territorial Beast' },
+  { value: 9, label: 'Blind Stalker' },
+]
+
 export interface ShankpitLevel {
   id: number
   name: string
@@ -615,6 +646,7 @@ export interface ShankpitLevel {
   spawners: ShankpitSpawner[]
   doors: ShankpitDoor[]
   nav_nodes: ShankpitNavNode[]
+  characters: ShankpitCharacter[]
   // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
   // set a level as default for queue") -- exactly one level is the real, global QUEUE default at
   // a time, same real shape ShankpitSpray's own is_default already uses.
@@ -636,6 +668,7 @@ export interface ShankpitLevelSummary {
   spawner_count: number
   door_count: number
   nav_node_count: number
+  character_count: number
   is_default_queue: boolean
   created_at: string
   updated_at: string
@@ -669,6 +702,7 @@ export const shankpitLevels = {
     spawners: ShankpitSpawner[],
     doors: ShankpitDoor[],
     navNodes: ShankpitNavNode[],
+    characters: ShankpitCharacter[],
   ) =>
     sreq<ShankpitLevel>('', {
       method: 'POST',
@@ -684,6 +718,7 @@ export const shankpitLevels = {
         spawners,
         doors,
         nav_nodes: navNodes,
+        characters,
       }),
     }),
   save: (
@@ -698,6 +733,7 @@ export const shankpitLevels = {
     spawners: ShankpitSpawner[],
     doors: ShankpitDoor[],
     navNodes: ShankpitNavNode[],
+    characters: ShankpitCharacter[],
   ) =>
     sreq<ShankpitLevel>(`/${id}`, {
       method: 'PUT',
@@ -712,6 +748,7 @@ export const shankpitLevels = {
         spawners,
         doors,
         nav_nodes: navNodes,
+        characters,
       }),
     }),
   rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),

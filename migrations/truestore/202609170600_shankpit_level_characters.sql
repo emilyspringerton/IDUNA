@@ -1,0 +1,14 @@
+-- SHANKPIT NOCK level editor: real, author-placed story_ai characters (EMILY/BACKLOG.md S467's
+-- own follow-up thread, STORY_SYSTEM_NORTHSTAR.md Phase 2's own "character" kind, founder
+-- real-time: "continue filling in the gaps in our level editor scriptable env characters etc").
+--
+-- characters_json stores an array of {id,role,x,y,z} objects. role is the same integer AIRole
+-- value SHANKPIT's own story_ai_spawn_enemy already takes (packages/simulation/story_ai.h) --
+-- this store has no simulation-layer dependency, same real "flat data, validated by the
+-- consumer" boundary walls_json/doors_json/nav_nodes_json already hold themselves to. Unlike
+-- Door/NavNode, a character has no cross-reference to validate (no wall_id, no neighbor_ids) --
+-- simplest real shape of the four scriptable object kinds shipped so far. Only meaningful when
+-- a level loads in MODE_STORY/MODE_STORY_CAVE on the dedicated server (server_apply_custom_level
+-- gates real spawning on that, not this store). Same real JSON-blob-column pattern
+-- walls_json/spawners_json/doors_json/nav_nodes_json already established.
+ALTER TABLE shankpit_levels ADD COLUMN characters_json TEXT NOT NULL DEFAULT '[]';

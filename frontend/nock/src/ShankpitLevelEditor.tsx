@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import {
+  AI_ROLE_OPTIONS,
   SHANKPIT_GRID_CELL_SIZE,
   SPAWNER_TEAM_BLUE,
   SPAWNER_TEAM_FFA,
@@ -9,6 +10,7 @@ import {
   shankpitLevels,
   shankpitMaterials,
   type DoorScriptSummary,
+  type ShankpitCharacter,
   type ShankpitDoor,
   type ShankpitLevelObject,
   type ShankpitLevelSummary,
@@ -66,6 +68,7 @@ function newDefaultLevel(): {
   spawners: ShankpitSpawner[]
   doors: ShankpitDoor[]
   navNodes: ShankpitNavNode[]
+  characters: ShankpitCharacter[]
 } {
   return {
     name: '',
@@ -79,6 +82,7 @@ function newDefaultLevel(): {
     spawners: [],
     doors: [],
     navNodes: [],
+    characters: [],
   }
 }
 
@@ -100,6 +104,10 @@ function nextDoorId(doors: ShankpitDoor[]): number {
 
 function nextNavNodeId(nodes: ShankpitNavNode[]): number {
   return nodes.reduce((m, n) => Math.max(m, n.id), 0) + 1
+}
+
+function nextCharacterId(characters: ShankpitCharacter[]): number {
+  return characters.reduce((m, c) => Math.max(m, c.id), 0) + 1
 }
 
 // useDoorScriptList -- same real, small "list on mount, fail-soft to empty" hook shape
@@ -1021,6 +1029,49 @@ function NavNodeInspector({
   )
 }
 
+// CharacterInspector -- STORY_SYSTEM_NORTHSTAR.md Phase 2's own "character" kind, founder
+// real-time: "continue filling in the gaps in our level editor scriptable env characters etc."
+// Position edited numerically, same real, deliberate v0 scope ObjectInspector/NavNodeInspector
+// already established (not 3D-dragged).
+function CharacterInspector({
+  character,
+  onChange,
+  onDelete,
+}: {
+  character: ShankpitCharacter
+  onChange: (c: ShankpitCharacter) => void
+  onDelete: () => void
+}) {
+  const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
+  return (
+    <div className="platform-inspector">
+      <h4>Character #{character.id}</h4>
+      <label>
+        Role{' '}
+        <select value={character.role} onChange={(e) => onChange({ ...character, role: Number(e.target.value) })}>
+          {AI_ROLE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        X <input type="number" step={0.5} value={character.x} onChange={(e) => onChange({ ...character, x: num(e.target.value) })} />
+      </label>
+      <label>
+        Y <input type="number" step={0.5} value={character.y} onChange={(e) => onChange({ ...character, y: num(e.target.value) })} />
+      </label>
+      <label>
+        Z <input type="number" step={0.5} value={character.z} onChange={(e) => onChange({ ...character, z: num(e.target.value) })} />
+      </label>
+      <button className="danger" type="button" onClick={onDelete}>
+        Delete character
+      </button>
+    </div>
+  )
+}
+
 // MaterialsPanel -- S459-16, founder real-time: "we will need the ability to add new materials
 // and set their textures" / "we will be able to add materials via Nock and set the texture of
 // the material from the texture library." Texture-override picking from NOCK's own texture
@@ -1175,6 +1226,7 @@ export default function ShankpitLevelEditor() {
       spawners: lvl.spawners ?? [],
       doors: lvl.doors ?? [],
       navNodes: lvl.nav_nodes ?? [],
+      characters: lvl.characters ?? [],
     })
     setActiveId(id)
     setSelected(null)
@@ -1331,6 +1383,30 @@ export default function ShankpitLevelEditor() {
     )
   }
 
+  const setCharacters = (characters: ShankpitCharacter[]) => {
+    setDraft((d) => ({ ...d, characters }))
+    setDirty(true)
+  }
+
+  // addCharacter -- STORY_SYSTEM_NORTHSTAR.md Phase 2's own "character" kind, founder real-time:
+  // "continue filling in the gaps in our level editor scriptable env characters etc." Placed at
+  // the spawner marker's own current position, same real convenience addNavNode/addSpawner
+  // already give. Defaults to role 0 (Rift Hound) -- the real first entry in AI_ROLE_OPTIONS.
+  const addCharacter = () => {
+    pushHistory()
+    const id = nextCharacterId(draft.characters)
+    setCharacters([...draft.characters, { id, role: AI_ROLE_OPTIONS[0].value, x: spawner.x, y: spawner.y, z: spawner.z }])
+  }
+
+  const updateCharacter = (updated: ShankpitCharacter) => {
+    setCharacters(draft.characters.map((c) => (c.id === updated.id ? updated : c)))
+  }
+
+  const deleteCharacter = (id: number) => {
+    pushHistory()
+    setCharacters(draft.characters.filter((c) => c.id !== id))
+  }
+
   const save = async () => {
     setError(null)
     try {
@@ -1352,6 +1428,7 @@ export default function ShankpitLevelEditor() {
           draft.spawners,
           draft.doors,
           draft.navNodes,
+          draft.characters,
         )
         id = created.id
         setActiveId(id)
@@ -1368,6 +1445,7 @@ export default function ShankpitLevelEditor() {
           draft.spawners,
           draft.doors,
           draft.navNodes,
+          draft.characters,
         )
       }
       setDirty(false)
@@ -1680,6 +1758,20 @@ export default function ShankpitLevelEditor() {
                   onChange={updateNavNode}
                   onDelete={() => deleteNavNode(n.id)}
                 />
+              ))}
+            </div>
+            <div className="object-list">
+              <h3>Characters (story_ai NPCs)</h3>
+              <p className="hint">
+                Only spawn for real when this level loads in MODE_STORY on the dedicated server -- see
+                docs2/specs/STORY_SYSTEM_NORTHSTAR.md. Position edited numerically, same v0 scope as Objects/Waypoints
+                above.
+              </p>
+              <button type="button" onClick={addCharacter}>
+                + Add character
+              </button>
+              {draft.characters.map((c) => (
+                <CharacterInspector key={c.id} character={c} onChange={updateCharacter} onDelete={() => deleteCharacter(c.id)} />
               ))}
             </div>
           </div>
