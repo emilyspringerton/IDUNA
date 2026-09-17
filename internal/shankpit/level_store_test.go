@@ -409,6 +409,35 @@ func TestExport_CarriesLevelExits(t *testing.T) {
 	}
 }
 
+// TestExport_CarriesLevelExitTargetSpawnerID (S491, founder real-time -- GTA-style building
+// interiors: "how can i specify which spawner the exit leads to for the seamless experience of
+// exiting the building") -- TargetSpawnerID round-trips through Export same as every other
+// LevelExit field, and the real default (0, "no specific target") is preserved when absent.
+func TestExport_CarriesLevelExitTargetSpawnerID(t *testing.T) {
+	s := newTestStore(t)
+	exits := []shankpit.LevelExit{
+		{ID: 1, X: 10, Y: 0, Z: 20, Radius: 6, TargetSpawnerID: 9},
+		{ID: 2, X: -10, Y: 0, Z: -20, Radius: 6}, // no target -- real, honest default
+	}
+	created, err := s.CreateLevel(context.Background(), "Exit Level 2", 100, 50, 100, true, 2, nil, nil, nil, nil, nil, nil, exits, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	exported, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(exported.LevelExits) != 2 {
+		t.Fatalf("expected 2 exported level exits, got %d", len(exported.LevelExits))
+	}
+	if exported.LevelExits[0].TargetSpawnerID != 9 {
+		t.Fatalf("expected exit 0's target_spawner_id to round-trip as 9, got %d", exported.LevelExits[0].TargetSpawnerID)
+	}
+	if exported.LevelExits[1].TargetSpawnerID != 0 {
+		t.Fatalf("expected exit 1's target_spawner_id to default to 0 (no specific target), got %d", exported.LevelExits[1].TargetSpawnerID)
+	}
+}
+
 func TestExport_MatchesNativeWallShape(t *testing.T) {
 	s := newTestStore(t)
 	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil, nil, nil, nil, nil)

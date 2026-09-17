@@ -655,6 +655,12 @@ export interface ShankpitLevelExit {
   y: number
   z: number
   radius: number
+  // target_spawner_id (S491, founder real-time -- GTA-style building interiors: "how can i
+  // specify which spawner the exit leads to for the seamless experience of exiting the
+  // building"). 0/absent = no specific target, the destination level's normal spawner selection
+  // applies unchanged. References a Spawner.id in the level this level's own next_level_id
+  // points at -- NOT this level's own spawners.
+  target_spawner_id?: number
 }
 
 // AI_ROLE_OPTIONS -- real AIRole values, hand-kept in sync with SHANKPIT's own C enum

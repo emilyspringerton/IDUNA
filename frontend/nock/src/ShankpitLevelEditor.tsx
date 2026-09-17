@@ -1581,10 +1581,15 @@ function LevelExitInspector({
   exit,
   onChange,
   onDelete,
+  targetLevelSpawners,
 }: {
   exit: ShankpitLevelExit
   onChange: (e: ShankpitLevelExit) => void
   onDelete: () => void
+  // targetLevelSpawners -- the DESTINATION level's own real, live spawners (empty if "Next
+  // level" isn't set yet, or hasn't finished loading -- see this file's own targetLevelSpawners
+  // fetch effect). NOT this level's own spawners.
+  targetLevelSpawners: ShankpitSpawner[]
 }) {
   const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
   return (
@@ -1609,6 +1614,26 @@ function LevelExitInspector({
           onChange={(e) => onChange({ ...exit, radius: Math.max(0.5, num(e.target.value)) })}
         />
       </label>
+      <label>
+        Target spawner{' '}
+        <select
+          value={exit.target_spawner_id ?? ''}
+          onChange={(e) => onChange({ ...exit, target_spawner_id: e.target.value === '' ? undefined : Number(e.target.value) })}
+        >
+          <option value="">(none -- normal spawner selection)</option>
+          {targetLevelSpawners.map((sp) => (
+            <option key={sp.id} value={sp.id}>
+              Spawner #{sp.id} ({sp.team === -1 ? 'FFA' : sp.team === 0 ? 'Red' : 'Blue'})
+            </option>
+          ))}
+        </select>
+      </label>
+      {targetLevelSpawners.length === 0 && (
+        <p className="hint">
+          Set "Next level" above to pick which of ITS spawners this exit leads to -- for a seamless building-exit feel
+          (GTA-style interiors), place a spawner right outside the door in the outdoor level, then target it here.
+        </p>
+      )}
       <button className="danger" type="button" onClick={onDelete}>
         Delete exit
       </button>
@@ -1632,6 +1657,31 @@ export default function ShankpitLevelEditor() {
   const [objectPickWidgetId, setObjectPickWidgetId] = useState<number | ''>('')
   const widgetList = useWidgetSummaryList()
   const [selectedSpawnPoint, setSelectedSpawnPoint] = useState<number | null>(null)
+  // targetLevelSpawners (S491, founder real-time -- GTA-style building interiors: "how can i
+  // specify which spawner the exit leads to for the seamless experience of exiting the
+  // building") -- the DESTINATION level's own real, live spawner list (fetched fresh whenever
+  // "Next level" changes), so LevelExitInspector can offer a real "target spawner" picker instead
+  // of asking the designer to remember/type a raw spawner id. Empty while nextLevelId is unset or
+  // still loading -- LevelExitInspector's own UI degrades to a plain numeric id field in that case.
+  const [targetLevelSpawners, setTargetLevelSpawners] = useState<ShankpitSpawner[]>([])
+  useEffect(() => {
+    if (draft.nextLevelId === null) {
+      setTargetLevelSpawners([])
+      return
+    }
+    let cancelled = false
+    shankpitLevels
+      .get(draft.nextLevelId)
+      .then((lvl) => {
+        if (!cancelled) setTargetLevelSpawners(lvl.spawners ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setTargetLevelSpawners([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [draft.nextLevelId])
   const [editMode, setEditMode] = useState<EditMode>('object')
   // Tab toggles Object <-> Edit mode; Alt+3 jumps straight to Face select (S488, founder
   // real-time: "also do alt 1 2 3 for the different edit modes tab moves you between object and
@@ -2443,7 +2493,13 @@ export default function ShankpitLevelEditor() {
                 + Add level exit
               </button>
               {draft.levelExits.map((ex) => (
-                <LevelExitInspector key={ex.id} exit={ex} onChange={updateLevelExit} onDelete={() => deleteLevelExit(ex.id)} />
+                <LevelExitInspector
+                  key={ex.id}
+                  exit={ex}
+                  onChange={updateLevelExit}
+                  onDelete={() => deleteLevelExit(ex.id)}
+                  targetLevelSpawners={targetLevelSpawners}
+                />
               ))}
             </div>
           </div>

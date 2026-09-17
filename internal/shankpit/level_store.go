@@ -269,6 +269,17 @@ type LevelExit struct {
 	Y      float64 `json:"y"`
 	Z      float64 `json:"z"`
 	Radius float64 `json:"radius"`
+	// TargetSpawnerID (S491, founder real-time -- GTA-style building interiors: "how can i
+	// specify which spawner the exit leads to for the seamless experience of exiting the
+	// building"). 0 (default, every pre-S491 exit's own real absent-key JSON) means "no specific
+	// target -- use the destination level's normal team/FFA spawner selection," completely
+	// unchanged. >= 1 references a Spawner.ID in the level this LEVEL's own NextLevelID points
+	// at -- deliberately NOT validated against that target level here (this level's own save/
+	// validate pass has no reason to load a DIFFERENT level's data just to check this one
+	// cross-reference, and SHANKPIT's native side already treats a stale/missing id as a real,
+	// honest, non-fatal miss -- see custom_level_pick_spawner_by_id). NOCK's own editor UI is
+	// where a designer picks this from the target level's real, live spawner list.
+	TargetSpawnerID int `json:"target_spawner_id,omitempty"`
 }
 
 // MaxLevelExits mirrors SHANKPIT's own real LEVEL_BOXES_MAX_LEVEL_EXITS (packages/world/
@@ -511,6 +522,11 @@ type LevelExitExport struct {
 	Y      float64 `json:"y"`
 	Z      float64 `json:"z"`
 	Radius float64 `json:"radius"`
+	// TargetSpawnerID (S491) -- unlike LevelExit's own ID field (an authoring-only identity,
+	// dropped here same as every other export type in this file), this one IS needed by the
+	// native client (level_boxes.h's own LevelExit.target_spawner_id) -- see LevelExit's own doc
+	// comment for the full rationale.
+	TargetSpawnerID int `json:"target_spawner_id,omitempty"`
 }
 
 type MaterialExport struct {
@@ -1357,7 +1373,7 @@ func charactersForExport(characters []Character) []CharacterExport {
 func levelExitsForExport(exits []LevelExit) []LevelExitExport {
 	out := make([]LevelExitExport, 0, len(exits))
 	for _, e := range exits {
-		out = append(out, LevelExitExport{X: e.X, Y: e.Y, Z: e.Z, Radius: e.Radius})
+		out = append(out, LevelExitExport{X: e.X, Y: e.Y, Z: e.Z, Radius: e.Radius, TargetSpawnerID: e.TargetSpawnerID})
 	}
 	return out
 }
