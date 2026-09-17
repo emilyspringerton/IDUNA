@@ -678,6 +678,14 @@ export const AI_ROLE_OPTIONS: { value: number; label: string }[] = [
   { value: 7, label: 'Relentless Pursuer' },
   { value: 8, label: 'Territorial Beast' },
   { value: 9, label: 'Blind Stalker' },
+  // AI_ROLE_WANDERING_BOT (S492, founder real-time: "how do i stat to have different characters
+  // like walking around the city and stuff - even just standing there and having their head turn
+  // and look at you and they can say something or whatever"). Real, found-live gap: this role
+  // already exists natively (AI_ROLE_WANDERING_BOT, packages/simulation/story_ai.h) and already
+  // does almost exactly this -- turns to face + waves + dances when the player gets close, never
+  // enters combat -- but was never actually exposed in this dropdown, so no NOCK designer could
+  // ever select it. Purely additive; the native value (10) was always real, just unreachable.
+  { value: 10, label: 'Wandering Bot (ambient, non-hostile)' },
 ]
 
 export interface ShankpitLevel {

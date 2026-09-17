@@ -841,6 +841,31 @@ func TestCreateLevel_RejectsUnknownCharacterRole(t *testing.T) {
 	}
 }
 
+// TestCreateLevel_AcceptsWanderingBotRole (S492, founder real-time: "how do i stat to have
+// different characters like walking around the city and stuff - even just standing there and
+// having their head turn and look at you and they can say something or whatever") -- real
+// regression test for a found-live gap: AIRoleWanderingBot (10) is a real, already-working native
+// role (AI_ROLE_WANDERING_BOT, packages/simulation/story_ai.h -- patrols, turns to face + waves +
+// dances near the player, never combat), but validateCharacters' own range check stopped one
+// value short at AIRoleBlindStalker (9), so a level with this role would have been REJECTED
+// outright at save time, not just hidden from NOCK's own dropdown (a separate, now also fixed,
+// gap in frontend/nock/src/api.ts's AI_ROLE_OPTIONS).
+func TestCreateLevel_AcceptsWanderingBotRole(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateLevel(context.Background(), "Wandering Bot Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil,
+		[]shankpit.Character{{ID: 1, Role: shankpit.AIRoleWanderingBot, X: 5, Y: 0, Z: 5}}, nil, nil)
+	if err != nil {
+		t.Fatalf("expected AIRoleWanderingBot (10) to be accepted, got: %v", err)
+	}
+	exported, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(exported.Characters) != 1 || exported.Characters[0].Role != shankpit.AIRoleWanderingBot {
+		t.Fatalf("expected the wandering bot character to round-trip through export, got %+v", exported.Characters)
+	}
+}
+
 // TestCreateLevel_RejectsTooManyCharacters verifies the real MaxCharacters bound, mirroring
 // SHANKPIT's own native STORY_AI_MAX cap.
 func TestCreateLevel_RejectsTooManyCharacters(t *testing.T) {

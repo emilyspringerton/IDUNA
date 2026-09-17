@@ -236,6 +236,11 @@ const (
 	AIRoleRelentlessPursuer = 7
 	AIRoleTerritorialBeast  = 8
 	AIRoleBlindStalker      = 9
+	// AIRoleWanderingBot (S492) -- real, found-live gap: this value was always real natively
+	// (AI_ROLE_WANDERING_BOT) but was missing from both this const block AND validateCharacters'
+	// own range check below, so a designer could never actually save a character with this role
+	// at all -- the save would be rejected outright, not just hidden from the picker.
+	AIRoleWanderingBot = 10
 )
 
 // validateCharacters checks structural bounds and that every character's own role is a real,
@@ -249,7 +254,7 @@ func validateCharacters(characters []Character) error {
 		return fmt.Errorf("shankpit: too many characters (%d, max %d -- SHANKPIT's own native STORY_AI_MAX can't hold more)", len(characters), MaxCharacters)
 	}
 	for i, c := range characters {
-		if c.Role < AIRoleRiftHound || c.Role > AIRoleBlindStalker {
+		if c.Role < AIRoleRiftHound || c.Role > AIRoleWanderingBot {
 			return fmt.Errorf("shankpit: character %d has unknown role %d", i, c.Role)
 		}
 	}
