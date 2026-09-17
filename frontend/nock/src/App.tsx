@@ -980,9 +980,19 @@ function Animations() {
   // is really "a GOLDENBAND character asset," any real combination of the three), but nothing
   // let you browse just one kind. These filter views are that -- a real "rig browser"/"animation
   // browser" as a view over the same data, not a separate page.
-  const [filter, setFilter] = useState<'all' | 'mesh' | 'rig' | 'animated' | 'needs-animation'>('all')
+  // Real, found-live fix (2026-09-17, founder: "its also weird that the manequin and the
+  // animations are in the same list of cards or whatever") -- once multi-clip import (S459-109)
+  // started creating dozens of bare motion-clip rows per upload, a mesh/rig "character" you
+  // actually want to browse/use gets buried under a pile of clip "ingredients" meant to be picked
+  // from inside the Attach panel, not browsed as their own peer entries. isCharacter/isClip name
+  // that real distinction explicitly; "characters" is the default view for exactly that reason.
+  const isCharacter = (a: AnimationSummary) => a.has_mesh || a.has_skel
+  const isBareClip = (a: AnimationSummary) => a.has_animation && !a.has_mesh && !a.has_skel
+  const [filter, setFilter] = useState<'characters' | 'clips' | 'all' | 'mesh' | 'rig' | 'animated' | 'needs-animation'>('characters')
   const filteredList = list.filter((a) => {
     switch (filter) {
+      case 'characters': return isCharacter(a)
+      case 'clips': return isBareClip(a)
       case 'mesh': return a.has_mesh
       case 'rig': return a.has_skel
       case 'animated': return a.has_animation
@@ -1100,9 +1110,21 @@ function Animations() {
       {importNotice && <p className="hint">{importNotice}</p>}
 
       <nav className="animation-filter-tabs">
+        <button className={filter === 'characters' ? 'active' : ''} onClick={() => setFilter('characters')}>
+          Characters ({list.filter(isCharacter).length})
+        </button>
+        <button className={filter === 'clips' ? 'active' : ''} onClick={() => setFilter('clips')}>
+          Motion clips ({list.filter(isBareClip).length})
+        </button>
         <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
           All ({list.length})
         </button>
+      </nav>
+      <p className="hint">
+        {filter === 'characters' && 'A mesh and/or rig you can preview or place in a game -- pick which motion clip animates it from its own "Attach animation" panel below.'}
+        {filter === 'clips' && 'Bare motion clips with no mesh/rig of their own -- ingredients, meant to be picked from a character\'s own "Attach animation" panel, not used on their own.'}
+      </p>
+      <nav className="animation-filter-tabs">
         <button className={filter === 'mesh' ? 'active' : ''} onClick={() => setFilter('mesh')}>
           Meshes ({list.filter((a) => a.has_mesh).length})
         </button>
@@ -1110,7 +1132,7 @@ function Animations() {
           Rigs ({list.filter((a) => a.has_skel).length})
         </button>
         <button className={filter === 'animated' ? 'active' : ''} onClick={() => setFilter('animated')}>
-          Animations ({list.filter((a) => a.has_animation).length})
+          Has animation ({list.filter((a) => a.has_animation).length})
         </button>
         <button className={filter === 'needs-animation' ? 'active' : ''} onClick={() => setFilter('needs-animation')}>
           Needs animation ({list.filter((a) => !a.has_animation).length})
@@ -1166,7 +1188,7 @@ function Animations() {
               >
                 Delete
               </button>
-              {!a.has_animation && (
+              {(a.has_mesh || a.has_skel) && (
                 <button
                   onClick={() => {
                     setAttachOpenId(attachOpenId === a.id ? null : a.id)
@@ -1174,13 +1196,14 @@ function Animations() {
                     setError(null)
                   }}
                 >
-                  {attachOpenId === a.id ? 'Cancel' : 'Attach animation'}
+                  {attachOpenId === a.id ? 'Cancel' : a.has_animation ? 'Switch animation' : 'Attach animation'}
                 </button>
               )}
             </div>
             {attachOpenId === a.id && (
               <div className="animation-attach-panel hint">
                 <p>
+                  {a.has_animation && 'This already has an animation attached -- picking another one below replaces it (the mesh/rig stay the same, only the motion changes). '}
                   Pick a clip that already has animation, or drop a fresh <code>.glb</code>/<code>.gltf</code> file with the motion baked in.
                   {a.skeleton_hash
                     ? ' Only clips sharing this exact rig are checked automatically -- a mismatched rig is rejected, not silently misapplied.'
