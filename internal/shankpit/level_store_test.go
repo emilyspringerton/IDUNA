@@ -29,6 +29,7 @@ func newTestStore(t *testing.T) *shankpit.LevelStore {
 			objects_json TEXT NOT NULL DEFAULT '[]',
 			spawners_json TEXT NOT NULL DEFAULT '[]',
 			doors_json TEXT NOT NULL DEFAULT '[]',
+			nav_nodes_json TEXT NOT NULL DEFAULT '[]',
 			is_default_queue BOOLEAN NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -48,7 +49,7 @@ func aCube() shankpit.Wall {
 
 func TestCreateLevel_EmptyWallsAllowed(t *testing.T) {
 	s := newTestStore(t)
-	lvl, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil)
+	lvl, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create with zero walls should succeed (S459-01 before S459-04): %v", err)
 	}
@@ -59,7 +60,7 @@ func TestCreateLevel_EmptyWallsAllowed(t *testing.T) {
 
 func TestCreateLevel_RejectsInvalidName(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateLevel(context.Background(), "", 100, 50, 100, true, 2, nil, nil, nil, nil); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "", 100, 50, 100, true, 2, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected an error for an empty name")
 	}
 }
@@ -68,7 +69,7 @@ func TestCreateLevel_RejectsNonPositiveWallSize(t *testing.T) {
 	s := newTestStore(t)
 	bad := aCube()
 	bad.SX = 0
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{bad}, nil, nil, nil); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{bad}, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected an error for a zero-size wall")
 	}
 }
@@ -77,24 +78,24 @@ func TestCreateLevel_RejectsOutOfRangeColor(t *testing.T) {
 	s := newTestStore(t)
 	bad := aCube()
 	bad.R = 1.5
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{bad}, nil, nil, nil); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{bad}, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected an error for an out-of-[0,1] color component")
 	}
 }
 
 func TestCreateLevel_RejectsOutOfRangeGroundPlaneSquares(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 0, nil, nil, nil, nil); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 0, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected an error for ground_plane_squares below the real minimum")
 	}
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, shankpit.MaxGroundPlaneSquares+1, nil, nil, nil, nil); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, shankpit.MaxGroundPlaneSquares+1, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected an error for ground_plane_squares above the real maximum")
 	}
 }
 
 func TestExport_CarriesGroundPlaneFields(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, false, 7, nil, nil, nil, nil)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, false, 7, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestCreateLevel_RejectsTooManyWalls(t *testing.T) {
 		w.ID = i
 		walls[i] = w
 	}
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, walls, nil, nil, nil); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, walls, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected an error for exceeding MaxWalls")
 	}
 }
@@ -126,7 +127,7 @@ func TestCreateLevel_RejectsTooManyWalls(t *testing.T) {
 // one face, the rest of the box stays put" contract is broken.
 func TestFaceDragEditing_ReshapesCubeWithoutMovingOppositeFace(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestFaceDragEditing_ReshapesCubeWithoutMovingOppositeFace(t *testing.T) {
 	edited.X = newCenterX
 	edited.SX = newSX
 
-	updated, err := s.UpdateLevel(context.Background(), created.ID, created.Width, created.Height, created.Depth, true, 2, []shankpit.Wall{edited}, nil, nil, nil)
+	updated, err := s.UpdateLevel(context.Background(), created.ID, created.Width, created.Height, created.Depth, true, 2, []shankpit.Wall{edited}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestFaceDragEditing_ReshapesCubeWithoutMovingOppositeFace(t *testing.T) {
 
 func TestListLevels_ReturnsWallCountNotFullWalls(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube(), aCube()}, nil, nil, nil); err != nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube(), aCube()}, nil, nil, nil, nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	list, err := s.ListLevels(context.Background())
@@ -173,7 +174,7 @@ func TestListLevels_ReturnsWallCountNotFullWalls(t *testing.T) {
 
 func TestRenameLevel(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Old Name", 100, 50, 100, true, 2, nil, nil, nil, nil)
+	created, err := s.CreateLevel(context.Background(), "Old Name", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestRenameLevel(t *testing.T) {
 
 func TestCloneLevel_CopiesWalls(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Original", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil)
+	created, err := s.CreateLevel(context.Background(), "Original", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestCloneLevel_CopiesWalls(t *testing.T) {
 
 func TestDeleteLevel(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -217,11 +218,11 @@ func TestDeleteLevel(t *testing.T) {
 
 func TestSetDefaultQueueLevel_ExactlyOneDefault(t *testing.T) {
 	s := newTestStore(t)
-	a, err := s.CreateLevel(context.Background(), "A", 100, 50, 100, true, 2, nil, nil, nil, nil)
+	a, err := s.CreateLevel(context.Background(), "A", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create a: %v", err)
 	}
-	b, err := s.CreateLevel(context.Background(), "B", 100, 50, 100, true, 2, nil, nil, nil, nil)
+	b, err := s.CreateLevel(context.Background(), "B", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create b: %v", err)
 	}
@@ -260,7 +261,7 @@ func TestSetDefaultQueueLevel_ExactlyOneDefault(t *testing.T) {
 
 func TestExport_MatchesNativeWallShape(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -277,12 +278,12 @@ func TestExport_MatchesNativeWallShape(t *testing.T) {
 // object contributes its own walls, translated by the object's own placement position.
 func TestExport_FlattensObjectAtOffset(t *testing.T) {
 	s := newTestStore(t)
-	child, err := s.CreateLevel(context.Background(), "Child", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil)
+	child, err := s.CreateLevel(context.Background(), "Child", 100, 50, 100, true, 2, []shankpit.Wall{aCube()}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create child: %v", err)
 	}
 	parent, err := s.CreateLevel(context.Background(), "Parent", 100, 50, 100, true, 2, nil,
-		[]shankpit.LevelObject{{RefLevelID: child.ID, X: 100, Y: 0, Z: 200, RotY: 0}}, nil, nil)
+		[]shankpit.LevelObject{{RefLevelID: child.ID, X: 100, Y: 0, Z: 200, RotY: 0}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -304,12 +305,12 @@ func TestExport_FlattensObjectAtOffset(t *testing.T) {
 func TestExport_RotatesObjectBy90(t *testing.T) {
 	s := newTestStore(t)
 	child, err := s.CreateLevel(context.Background(), "Child", 100, 50, 100, true, 2,
-		[]shankpit.Wall{{ID: 1, X: 10, Y: 0, Z: 0, SX: 8, SY: 4, SZ: 2, R: 1, G: 1, B: 1}}, nil, nil, nil)
+		[]shankpit.Wall{{ID: 1, X: 10, Y: 0, Z: 0, SX: 8, SY: 4, SZ: 2, R: 1, G: 1, B: 1}}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create child: %v", err)
 	}
 	parent, err := s.CreateLevel(context.Background(), "Parent", 100, 50, 100, true, 2, nil,
-		[]shankpit.LevelObject{{RefLevelID: child.ID, X: 0, Y: 0, Z: 0, RotY: 90}}, nil, nil)
+		[]shankpit.LevelObject{{RefLevelID: child.ID, X: 0, Y: 0, Z: 0, RotY: 90}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -328,12 +329,12 @@ func TestExport_RotatesObjectBy90(t *testing.T) {
 // (a level referencing itself) at SAVE time, before it ever reaches Export's own recursion guard.
 func TestExport_RejectsDirectSelfReference(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	_, err = s.UpdateLevel(context.Background(), created.ID, created.Width, created.Height, created.Depth, true, 2, nil,
-		[]shankpit.LevelObject{{RefLevelID: created.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil)
+		[]shankpit.LevelObject{{RefLevelID: created.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for a level object directly referencing its own parent level")
 	}
@@ -344,17 +345,17 @@ func TestExport_RejectsDirectSelfReference(t *testing.T) {
 // can't see at save time.
 func TestExport_RejectsIndirectCycle(t *testing.T) {
 	s := newTestStore(t)
-	a, err := s.CreateLevel(context.Background(), "A", 100, 50, 100, true, 2, nil, nil, nil, nil)
+	a, err := s.CreateLevel(context.Background(), "A", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create a: %v", err)
 	}
 	b, err := s.CreateLevel(context.Background(), "B", 100, 50, 100, true, 2, nil,
-		[]shankpit.LevelObject{{RefLevelID: a.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil)
+		[]shankpit.LevelObject{{RefLevelID: a.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create b: %v", err)
 	}
 	if _, err := s.UpdateLevel(context.Background(), a.ID, 100, 50, 100, true, 2, nil,
-		[]shankpit.LevelObject{{RefLevelID: b.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil); err != nil {
+		[]shankpit.LevelObject{{RefLevelID: b.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil); err != nil {
 		t.Fatalf("update a to reference b: %v", err)
 	}
 	if _, err := s.Export(context.Background(), a.ID); err == nil {
@@ -368,7 +369,7 @@ func TestExport_RejectsIndirectCycle(t *testing.T) {
 func TestCreateLevel_RejectsDoorWithUnknownWallID(t *testing.T) {
 	s := newTestStore(t)
 	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2,
-		[]shankpit.Wall{aCube()}, nil, nil, []shankpit.Door{{WallID: 999, ScriptID: 1}}); err == nil {
+		[]shankpit.Wall{aCube()}, nil, nil, []shankpit.Door{{WallID: 999, ScriptID: 1}}, nil); err == nil {
 		t.Fatal("expected an error for a door referencing an unknown wall_id")
 	}
 }
@@ -385,7 +386,7 @@ func TestCreateLevel_RejectsTooManyDoors(t *testing.T) {
 		walls[i] = w
 		doors[i] = shankpit.Door{WallID: w.ID, ScriptID: 1}
 	}
-	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, walls, nil, nil, doors); err == nil {
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, walls, nil, nil, doors, nil); err == nil {
 		t.Fatal("expected an error for exceeding MaxDoors")
 	}
 }
@@ -401,7 +402,7 @@ func TestExport_ResolvesDoorBoxIndexAndScriptURL(t *testing.T) {
 	secondWall.ID = 7 // deliberately non-sequential, to prove box_index is a real POSITION, not the raw wall_id
 	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2,
 		[]shankpit.Wall{aCube(), secondWall}, nil, nil,
-		[]shankpit.Door{{WallID: 7, ScriptID: 42}})
+		[]shankpit.Door{{WallID: 7, ScriptID: 42}}, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -427,7 +428,7 @@ func TestExport_ResolvesDoorBoxIndexAndScriptURL(t *testing.T) {
 func TestExport_SkipsDoorWithDeletedWall(t *testing.T) {
 	s := newTestStore(t)
 	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2,
-		[]shankpit.Wall{aCube()}, nil, nil, nil)
+		[]shankpit.Wall{aCube()}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -443,5 +444,105 @@ func TestExport_SkipsDoorWithDeletedWall(t *testing.T) {
 	}
 	if len(doc.Doors) != 0 {
 		t.Fatalf("expected the stale door to be silently skipped, got %+v", doc.Doors)
+	}
+}
+
+// TestCreateLevel_RejectsNavNodeWithUnknownNeighborID verifies validateNavNodes catches a node
+// whose own neighbor_ids references a node that isn't part of this level, at save time -- same
+// real "caught immediately" discipline TestCreateLevel_RejectsDoorWithUnknownWallID established.
+func TestCreateLevel_RejectsNavNodeWithUnknownNeighborID(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil,
+		[]shankpit.NavNode{{ID: 1, X: 0, Y: 0, Z: 0, NeighborIDs: []int{999}}}); err == nil {
+		t.Fatal("expected an error for a nav node referencing an unknown neighbor_id")
+	}
+}
+
+// TestCreateLevel_RejectsTooManyNavNodes verifies the real MaxNavNodes bound, mirroring
+// SHANKPIT's own native AI_NAV_MAX_NODES cap.
+func TestCreateLevel_RejectsTooManyNavNodes(t *testing.T) {
+	s := newTestStore(t)
+	nodes := make([]shankpit.NavNode, shankpit.MaxNavNodes+1)
+	for i := range nodes {
+		nodes[i] = shankpit.NavNode{ID: i + 1, X: float64(i), Y: 0, Z: 0}
+	}
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nodes); err == nil {
+		t.Fatal("expected an error for exceeding MaxNavNodes")
+	}
+}
+
+// TestCreateLevel_RejectsTooManyNeighbors verifies the real MaxNavNeighbors per-node bound,
+// mirroring SHANKPIT's own native AI_NAV_MAX_NEIGHBORS cap.
+func TestCreateLevel_RejectsTooManyNeighbors(t *testing.T) {
+	s := newTestStore(t)
+	other := shankpit.NavNode{ID: 2, X: 1, Y: 0, Z: 0}
+	tooMany := shankpit.NavNode{ID: 1, X: 0, Y: 0, Z: 0, NeighborIDs: []int{2, 2, 2, 2, 2}}
+	// NeighborIDs having duplicates is irrelevant to this check -- what matters is len() >
+	// MaxNavNeighbors(4), which 5 entries triggers regardless of content.
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil,
+		[]shankpit.NavNode{tooMany, other}); err == nil {
+		t.Fatal("expected an error for exceeding MaxNavNeighbors on one node")
+	}
+}
+
+// TestExport_ResolvesNavNodeNeighborsToPositions verifies the real, load-bearing mechanism
+// navNodesForExport implements: a node's own neighbor_ids resolve to real 0-based POSITIONS in
+// the exported nav_nodes[] array (not the raw ids), the exact shape SHANKPIT's native
+// level_boxes.h nav-node parser expects -- same real convention doorsForExport already
+// established for box_index.
+func TestExport_ResolvesNavNodeNeighborsToPositions(t *testing.T) {
+	s := newTestStore(t)
+	// Deliberately non-sequential/out-of-order ids to prove positions are real array order, not
+	// derived from id value or declaration order.
+	nodeA := shankpit.NavNode{ID: 50, X: 0, Y: 0, Z: 0, NeighborIDs: []int{7}}
+	nodeB := shankpit.NavNode{ID: 7, X: 5, Y: 0, Z: 0, IsCover: true, CoverDirX: -1, CoverDirZ: 0, NeighborIDs: []int{50}}
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil,
+		[]shankpit.NavNode{nodeA, nodeB})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.NavNodes) != 2 {
+		t.Fatalf("expected 2 exported nav nodes, got %d: %+v", len(doc.NavNodes), doc.NavNodes)
+	}
+	// nodeA is position 0, its neighbor (id 7 = nodeB) must resolve to position 1.
+	if len(doc.NavNodes[0].Neighbors) != 1 || doc.NavNodes[0].Neighbors[0] != 1 {
+		t.Fatalf("expected node 0's neighbor to resolve to position 1, got %+v", doc.NavNodes[0])
+	}
+	// nodeB is position 1, its neighbor (id 50 = nodeA) must resolve to position 0.
+	if len(doc.NavNodes[1].Neighbors) != 1 || doc.NavNodes[1].Neighbors[0] != 0 {
+		t.Fatalf("expected node 1's neighbor to resolve to position 0, got %+v", doc.NavNodes[1])
+	}
+	if !doc.NavNodes[1].IsCover || doc.NavNodes[1].CoverDirX != -1 {
+		t.Fatalf("expected node 1's cover fields to round-trip, got %+v", doc.NavNodes[1])
+	}
+}
+
+// TestExport_SkipsNavNodeNeighborWithDeletedNode verifies navNodesForExport's own real, honest
+// degrade: a neighbor_id that no longer resolves (simulating data saved before validateNavNodes
+// existed) is silently dropped from that node's own neighbor list, not an Export-time error.
+func TestExport_SkipsNavNodeNeighborWithDeletedNode(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.DB.ExecContext(context.Background(),
+		`UPDATE shankpit_levels SET nav_nodes_json = ? WHERE id = ?`,
+		`[{"id":1,"x":0,"y":0,"z":0,"neighbor_ids":[999]}]`, created.ID); err != nil {
+		t.Fatalf("inject stale nav node: %v", err)
+	}
+	doc, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export should not fail on a stale neighbor reference: %v", err)
+	}
+	if len(doc.NavNodes) != 1 {
+		t.Fatalf("expected the node itself to still export, got %+v", doc.NavNodes)
+	}
+	if len(doc.NavNodes[0].Neighbors) != 0 {
+		t.Fatalf("expected the stale neighbor reference to be silently dropped, got %+v", doc.NavNodes[0])
 	}
 }

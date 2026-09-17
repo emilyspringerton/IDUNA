@@ -584,6 +584,24 @@ export interface ShankpitDoor {
   script_id: number
 }
 
+// ShankpitNavNode mirrors IDUNA/internal/shankpit.NavNode exactly -- a real, author-placed
+// waypoint/cover node (founder real-time: "we are going to need a waypoint system in the levels
+// and maps northstar it" / "continue filling in the gaps in our level editor"). cover_dir_x/z is
+// the direction FROM the node AWAY FROM the obstacle providing cover (see SHANKPIT's own
+// ai_nav.h doc comment for the real dot-product test this feeds) -- only meaningful when
+// is_cover is true. neighbor_ids references OTHER ShankpitNavNode.id values within this same
+// level, resolved to real array positions only at export time.
+export interface ShankpitNavNode {
+  id: number
+  x: number
+  y: number
+  z: number
+  is_cover: boolean
+  cover_dir_x: number
+  cover_dir_z: number
+  neighbor_ids: number[]
+}
+
 export interface ShankpitLevel {
   id: number
   name: string
@@ -596,6 +614,7 @@ export interface ShankpitLevel {
   objects: ShankpitLevelObject[]
   spawners: ShankpitSpawner[]
   doors: ShankpitDoor[]
+  nav_nodes: ShankpitNavNode[]
   // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
   // set a level as default for queue") -- exactly one level is the real, global QUEUE default at
   // a time, same real shape ShankpitSpray's own is_default already uses.
@@ -616,6 +635,7 @@ export interface ShankpitLevelSummary {
   object_count: number
   spawner_count: number
   door_count: number
+  nav_node_count: number
   is_default_queue: boolean
   created_at: string
   updated_at: string
@@ -648,6 +668,7 @@ export const shankpitLevels = {
     objects: ShankpitLevelObject[],
     spawners: ShankpitSpawner[],
     doors: ShankpitDoor[],
+    navNodes: ShankpitNavNode[],
   ) =>
     sreq<ShankpitLevel>('', {
       method: 'POST',
@@ -662,6 +683,7 @@ export const shankpitLevels = {
         objects,
         spawners,
         doors,
+        nav_nodes: navNodes,
       }),
     }),
   save: (
@@ -675,6 +697,7 @@ export const shankpitLevels = {
     objects: ShankpitLevelObject[],
     spawners: ShankpitSpawner[],
     doors: ShankpitDoor[],
+    navNodes: ShankpitNavNode[],
   ) =>
     sreq<ShankpitLevel>(`/${id}`, {
       method: 'PUT',
@@ -688,6 +711,7 @@ export const shankpitLevels = {
         objects,
         spawners,
         doors,
+        nav_nodes: navNodes,
       }),
     }),
   rename: (id: number, name: string) => sreq<ShankpitLevel>(`/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),

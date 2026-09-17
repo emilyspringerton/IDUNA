@@ -13,6 +13,7 @@ import {
   type ShankpitLevelObject,
   type ShankpitLevelSummary,
   type ShankpitMaterial,
+  type ShankpitNavNode,
   type ShankpitSpawner,
   type ShankpitSpawnerTeam,
   type ShankpitWall,
@@ -64,6 +65,7 @@ function newDefaultLevel(): {
   objects: ShankpitLevelObject[]
   spawners: ShankpitSpawner[]
   doors: ShankpitDoor[]
+  navNodes: ShankpitNavNode[]
 } {
   return {
     name: '',
@@ -76,6 +78,7 @@ function newDefaultLevel(): {
     objects: [],
     spawners: [],
     doors: [],
+    navNodes: [],
   }
 }
 
@@ -93,6 +96,10 @@ function nextSpawnerId(spawners: ShankpitSpawner[]): number {
 
 function nextDoorId(doors: ShankpitDoor[]): number {
   return doors.reduce((m, d) => Math.max(m, d.id), 0) + 1
+}
+
+function nextNavNodeId(nodes: ShankpitNavNode[]): number {
+  return nodes.reduce((m, n) => Math.max(m, n.id), 0) + 1
 }
 
 // useDoorScriptList -- same real, small "list on mount, fail-soft to empty" hook shape
@@ -942,6 +949,78 @@ function SpawnerInspector({
   )
 }
 
+// NavNodeInspector -- founder real-time: "we are going to need a waypoint system in the levels
+// and maps northstar it" / "continue filling in the gaps in our level editor." Position edited
+// numerically here, same real, deliberate v0 scope call ObjectInspector's own doc comment
+// already established (not yet 3D-dragged). The neighbor checklist is the real edge-authoring
+// UI: linking is symmetric (SHANKPIT's own ai_nav_link is bidirectional), so checking node B in
+// node A's own list is enough -- there's no separate "connect mode" to enter.
+function NavNodeInspector({
+  node,
+  allNodes,
+  onChange,
+  onDelete,
+}: {
+  node: ShankpitNavNode
+  allNodes: ShankpitNavNode[]
+  onChange: (n: ShankpitNavNode) => void
+  onDelete: () => void
+}) {
+  const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
+  const toggleNeighbor = (otherId: number) => {
+    const has = node.neighbor_ids.includes(otherId)
+    onChange({
+      ...node,
+      neighbor_ids: has ? node.neighbor_ids.filter((id) => id !== otherId) : [...node.neighbor_ids, otherId],
+    })
+  }
+  return (
+    <div className="platform-inspector">
+      <h4>Waypoint node #{node.id}</h4>
+      <label>
+        X <input type="number" step={0.5} value={node.x} onChange={(e) => onChange({ ...node, x: num(e.target.value) })} />
+      </label>
+      <label>
+        Y <input type="number" step={0.5} value={node.y} onChange={(e) => onChange({ ...node, y: num(e.target.value) })} />
+      </label>
+      <label>
+        Z <input type="number" step={0.5} value={node.z} onChange={(e) => onChange({ ...node, z: num(e.target.value) })} />
+      </label>
+      <label>
+        <input type="checkbox" checked={node.is_cover} onChange={(e) => onChange({ ...node, is_cover: e.target.checked })} /> Cover node
+      </label>
+      {node.is_cover && (
+        <>
+          <p className="hint">Cover direction: points AWAY from the threat this node blocks (a unit-ish vector, e.g. -1/0/1).</p>
+          <label>
+            Cover dir X{' '}
+            <input type="number" step={0.5} value={node.cover_dir_x} onChange={(e) => onChange({ ...node, cover_dir_x: num(e.target.value) })} />
+          </label>
+          <label>
+            Cover dir Z{' '}
+            <input type="number" step={0.5} value={node.cover_dir_z} onChange={(e) => onChange({ ...node, cover_dir_z: num(e.target.value) })} />
+          </label>
+        </>
+      )}
+      {allNodes.length > 1 && (
+        <div>
+          <p className="hint">Linked to (real A* edges):</p>
+          {allNodes
+            .filter((n) => n.id !== node.id)
+            .map((n) => (
+              <label key={n.id} className="neighbor-toggle">
+                <input type="checkbox" checked={node.neighbor_ids.includes(n.id)} onChange={() => toggleNeighbor(n.id)} /> node #{n.id}
+              </label>
+            ))}
+        </div>
+      )}
+      <button className="danger" type="button" onClick={onDelete}>
+        Delete node
+      </button>
+    </div>
+  )
+}
+
 // MaterialsPanel -- S459-16, founder real-time: "we will need the ability to add new materials
 // and set their textures" / "we will be able to add materials via Nock and set the texture of
 // the material from the texture library." Texture-override picking from NOCK's own texture
@@ -1095,6 +1174,7 @@ export default function ShankpitLevelEditor() {
       objects: lvl.objects,
       spawners: lvl.spawners ?? [],
       doors: lvl.doors ?? [],
+      navNodes: lvl.nav_nodes ?? [],
     })
     setActiveId(id)
     setSelected(null)
@@ -1219,6 +1299,38 @@ export default function ShankpitLevelEditor() {
     }
   }
 
+  const setNavNodes = (navNodes: ShankpitNavNode[]) => {
+    setDraft((d) => ({ ...d, navNodes }))
+    setDirty(true)
+  }
+
+  // addNavNode -- founder real-time: "we are going to need a waypoint system in the levels and
+  // maps northstar it" / "continue filling in the gaps in our level editor." Placed at the
+  // spawner marker's own current position, same real "no accidental overlap" convenience
+  // addCube/addObject/addSpawner already give.
+  const addNavNode = () => {
+    pushHistory()
+    const id = nextNavNodeId(draft.navNodes)
+    setNavNodes([
+      ...draft.navNodes,
+      { id, x: spawner.x, y: spawner.y, z: spawner.z, is_cover: false, cover_dir_x: 0, cover_dir_z: 0, neighbor_ids: [] },
+    ])
+  }
+
+  const updateNavNode = (updated: ShankpitNavNode) => {
+    setNavNodes(draft.navNodes.map((n) => (n.id === updated.id ? updated : n)))
+  }
+
+  // deleteNavNode cascades to every OTHER node's own neighbor_ids -- a dangling reference to a
+  // deleted node would fail validateNavNodes on the next save anyway, same real cascade
+  // discipline deleteSelected already applies to a deleted wall's own attached door.
+  const deleteNavNode = (id: number) => {
+    pushHistory()
+    setNavNodes(
+      draft.navNodes.filter((n) => n.id !== id).map((n) => ({ ...n, neighbor_ids: n.neighbor_ids.filter((nid) => nid !== id) })),
+    )
+  }
+
   const save = async () => {
     setError(null)
     try {
@@ -1239,6 +1351,7 @@ export default function ShankpitLevelEditor() {
           draft.objects,
           draft.spawners,
           draft.doors,
+          draft.navNodes,
         )
         id = created.id
         setActiveId(id)
@@ -1254,6 +1367,7 @@ export default function ShankpitLevelEditor() {
           draft.objects,
           draft.spawners,
           draft.doors,
+          draft.navNodes,
         )
       }
       setDirty(false)
@@ -1549,6 +1663,25 @@ export default function ShankpitLevelEditor() {
                 ))}
               </div>
             )}
+            <div className="object-list">
+              <h3>Waypoint / cover nodes</h3>
+              <p className="hint">
+                Positioned and linked numerically here (same v0 scope as Objects above) -- not yet drag-placed in the 3D
+                viewport.
+              </p>
+              <button type="button" onClick={addNavNode}>
+                + Add waypoint node
+              </button>
+              {draft.navNodes.map((n) => (
+                <NavNodeInspector
+                  key={n.id}
+                  node={n}
+                  allNodes={draft.navNodes}
+                  onChange={updateNavNode}
+                  onDelete={() => deleteNavNode(n.id)}
+                />
+              ))}
+            </div>
           </div>
         </div>
       </main>

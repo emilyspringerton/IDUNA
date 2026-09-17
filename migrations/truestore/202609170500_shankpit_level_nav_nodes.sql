@@ -1,0 +1,14 @@
+-- SHANKPIT NOCK level editor: real, author-placed waypoint/cover nodes (EMILY/BACKLOG.md S464's
+-- own follow-up thread + founder real-time: "we are going to need a waypoint system in the
+-- levels and maps northstar it" / "continue filling in the gaps in our level editor").
+--
+-- nav_nodes_json stores an array of {id,x,y,z,is_cover,cover_dir_x,cover_dir_z,neighbor_ids}
+-- objects. neighbor_ids references OTHER NavNode.id values within the same level (never a
+-- persisted node's own id used as an array position -- that translation happens only at Export
+-- time, in navNodesForExport, same real "author-facing ids vs. native array positions" split
+-- Door's own wall_id already established). Mirrors SHANKPIT's own real AINavNode field-for-field
+-- (packages/simulation/ai_nav.h) so loading one into a running AINavGraph is a direct field
+-- copy, not a translation -- see packages/world/level_boxes.h's own new LevelNavNode struct and
+-- story_ai_load_nav_graph. Same real JSON-blob-column pattern walls_json/spawners_json/
+-- doors_json already established.
+ALTER TABLE shankpit_levels ADD COLUMN nav_nodes_json TEXT NOT NULL DEFAULT '[]';

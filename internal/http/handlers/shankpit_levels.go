@@ -83,6 +83,7 @@ type createShankpitLevelReq struct {
 	Objects            []shankpit.LevelObject `json:"objects"`
 	Spawners           []shankpit.Spawner     `json:"spawners"`
 	Doors              []shankpit.Door        `json:"doors"`
+	NavNodes           []shankpit.NavNode     `json:"nav_nodes"`
 }
 
 func (h *ShankpitLevelsHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +92,7 @@ func (h *ShankpitLevelsHandler) create(w http.ResponseWriter, r *http.Request) {
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	lvl, err := h.Store.CreateLevel(r.Context(), req.Name, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors)
+	lvl, err := h.Store.CreateLevel(r.Context(), req.Name, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors, req.NavNodes)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -123,6 +124,7 @@ type updateShankpitLevelReq struct {
 	Objects            []shankpit.LevelObject `json:"objects"`
 	Spawners           []shankpit.Spawner     `json:"spawners"`
 	Doors              []shankpit.Door        `json:"doors"`
+	NavNodes           []shankpit.NavNode     `json:"nav_nodes"`
 }
 
 // update is the real editor "save" action -- dimensions + the full wall layout replace the
@@ -141,7 +143,7 @@ func (h *ShankpitLevelsHandler) update(w http.ResponseWriter, r *http.Request, i
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	lvl, err := h.Store.UpdateLevel(r.Context(), id, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors)
+	lvl, err := h.Store.UpdateLevel(r.Context(), id, req.Width, req.Height, req.Depth, req.GroundPlaneEnabled, req.GroundPlaneSquares, req.Walls, req.Objects, req.Spawners, req.Doors, req.NavNodes)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
