@@ -68,7 +68,21 @@ type createShankpitMaterialReq struct {
 	TextureID  *int64  `json:"texture_id"`
 	Specular   float64 `json:"specular"`
 	Shininess  float64 `json:"shininess"`
+	// Friction (S478b) -- omitted/zero in an old client's request body decodes to a real 0.0,
+	// NOT the DB column's own 0.30 default (an explicit INSERT column list, see CreateMaterial),
+	// so a stale frontend build would silently create frictionless materials. Guarded against
+	// exactly that in create() below.
+	Friction float64 `json:"friction"`
 }
+
+// shankpitMaterialFrictionUnset is the real sentinel a request body's own JSON decode can't tell
+// apart from "the author deliberately typed 0" -- Go's zero value for float64 is 0, same as a
+// missing key. Real, honest tradeoff (not solved with a *float64, to keep the request struct/
+// frontend contract simple): a genuinely-intended 0.0 (frictionless ice) gets the same real 0.30
+// fallback as an old client omitting the field entirely. Named here, not silently accepted --
+// picking a deliberate near-zero (e.g. 0.01) instead of exactly 0 is the real, current way to
+// author a truly frictionless material until this gets a sharper (non-zero-collapsing) contract.
+const shankpitMaterialFrictionDefault = 0.30
 
 func (h *ShankpitMaterialsHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req createShankpitMaterialReq
@@ -76,7 +90,11 @@ func (h *ShankpitMaterialsHandler) create(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	m, err := h.Store.CreateMaterial(r.Context(), req.Name, req.ShaderName, req.TextureID, req.Specular, req.Shininess)
+	friction := req.Friction
+	if friction == 0 {
+		friction = shankpitMaterialFrictionDefault
+	}
+	m, err := h.Store.CreateMaterial(r.Context(), req.Name, req.ShaderName, req.TextureID, req.Specular, req.Shininess, friction)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -89,6 +107,7 @@ type updateShankpitMaterialReq struct {
 	TextureID  *int64  `json:"texture_id"`
 	Specular   float64 `json:"specular"`
 	Shininess  float64 `json:"shininess"`
+	Friction   float64 `json:"friction"`
 }
 
 func (h *ShankpitMaterialsHandler) update(w http.ResponseWriter, r *http.Request, idStr string) {
@@ -102,7 +121,11 @@ func (h *ShankpitMaterialsHandler) update(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	m, err := h.Store.UpdateMaterial(r.Context(), id, req.ShaderName, req.TextureID, req.Specular, req.Shininess)
+	friction := req.Friction
+	if friction == 0 {
+		friction = shankpitMaterialFrictionDefault
+	}
+	m, err := h.Store.UpdateMaterial(r.Context(), id, req.ShaderName, req.TextureID, req.Specular, req.Shininess, friction)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return

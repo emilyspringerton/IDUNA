@@ -34,8 +34,16 @@ type Material struct {
 	TextureID  *int64  `json:"texture_id,omitempty"`
 	Specular   float64 `json:"specular"`
 	Shininess  float64 `json:"shininess"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	// Friction (S478b, founder real-time: "the physics are so slippery it can be unreasonably
+	// hard to parkour" -> "make the material friction stuff working per cube" -> "do we need to
+	// make friction per material?"). Consumed natively by resolve_collision/apply_friction
+	// (packages/common/physics.h) per the box a player is actually standing on, resolved through
+	// its material_idx -- real, live ground friction per material, not just a rendering
+	// parameter. Default 0.30 matches physics.h's own global FRICTION baseline exactly (see this
+	// column's own migration).
+	Friction  float64 `json:"friction"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
 }
 
 // ShaderStandard is the one real, built-in shader VS0 ships (a real Blinn-Phong specular-
@@ -80,6 +88,14 @@ const MaxSpecular = 1.0
 const MinShininess = 1.0
 const MaxShininess = 256.0
 
+// MinFriction/MaxFriction (S478b) -- real, sane range for the ground-friction decay constant
+// apply_friction (packages/common/physics.h) applies per tick. 0 would mean a material never
+// decelerates a grounded player at all (frictionless ice, a real, legitimate extreme -- not
+// disallowed); 1.0 is comfortably above physics.h's own tuned FRICTION baseline (0.30), leaving
+// headroom for a deliberately very-sticky material without allowing a nonsensical value.
+const MinFriction = 0.0
+const MaxFriction = 1.0
+
 func validateMaterialName(name string) error {
 	if !validMaterialName.MatchString(name) {
 		return fmt.Errorf("shankpit: invalid material name %q (must match %s -- lowercase, starts with a letter)", name, validMaterialName.String())
@@ -97,6 +113,13 @@ func validateMaterialShading(specular, shininess float64) error {
 	return nil
 }
 
+func validateMaterialFriction(friction float64) error {
+	if friction < MinFriction || friction > MaxFriction {
+		return fmt.Errorf("shankpit: material friction must be in [%g, %g], got %g", MinFriction, MaxFriction, friction)
+	}
+	return nil
+}
+
 func validateShaderName(name string) error {
 	if !validShaderNames[name] {
 		return fmt.Errorf("shankpit: unknown shader_name %q (real, native shaders only -- see ShaderStandard's own doc comment)", name)
@@ -109,14 +132,14 @@ type MaterialStore struct {
 	DB *sql.DB
 }
 
-const materialColumns = `id, name, shader_name, texture_id, specular, shininess, created_at, updated_at`
+const materialColumns = `id, name, shader_name, texture_id, specular, shininess, friction, created_at, updated_at`
 
 func scanMaterial(row interface {
 	Scan(dest ...any) error
 }) (*Material, error) {
 	var m Material
 	var textureID sql.NullInt64
-	if err := row.Scan(&m.ID, &m.Name, &m.ShaderName, &textureID, &m.Specular, &m.Shininess, &m.CreatedAt, &m.UpdatedAt); err != nil {
+	if err := row.Scan(&m.ID, &m.Name, &m.ShaderName, &textureID, &m.Specular, &m.Shininess, &m.Friction, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: material not found")
 		}
@@ -160,7 +183,7 @@ func (s *MaterialStore) GetMaterialByName(ctx context.Context, name string) (*Ma
 // native client's own real, honest "brick" fallback; see level_boxes.h's own doc comment).
 // shaderName references SHANKPIT's own real, native, compiled-in shader registry by name (see
 // Material's own ShaderName doc comment) -- empty defaults to ShaderStandard.
-func (s *MaterialStore) CreateMaterial(ctx context.Context, name, shaderName string, textureID *int64, specular, shininess float64) (*Material, error) {
+func (s *MaterialStore) CreateMaterial(ctx context.Context, name, shaderName string, textureID *int64, specular, shininess, friction float64) (*Material, error) {
 	if err := validateMaterialName(name); err != nil {
 		return nil, err
 	}
@@ -173,9 +196,12 @@ func (s *MaterialStore) CreateMaterial(ctx context.Context, name, shaderName str
 	if err := validateMaterialShading(specular, shininess); err != nil {
 		return nil, err
 	}
+	if err := validateMaterialFriction(friction); err != nil {
+		return nil, err
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO shankpit_materials (name, shader_name, texture_id, specular, shininess) VALUES (?, ?, ?, ?, ?)`,
-		name, shaderName, textureID, specular, shininess)
+		`INSERT INTO shankpit_materials (name, shader_name, texture_id, specular, shininess, friction) VALUES (?, ?, ?, ?, ?, ?)`,
+		name, shaderName, textureID, specular, shininess, friction)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: create material: %w", err)
 	}
@@ -195,7 +221,7 @@ func (s *MaterialStore) getMaterialByID(ctx context.Context, id int64) (*Materia
 // (textureID nil clears back to the native procedural default; non-nil sets a real NOCK-managed
 // override -- see this file's own DefaultMaterialName / package doc comment on the native
 // loader's own real, current "override stored but not yet fetched/decoded" limitation).
-func (s *MaterialStore) UpdateMaterial(ctx context.Context, id int64, shaderName string, textureID *int64, specular, shininess float64) (*Material, error) {
+func (s *MaterialStore) UpdateMaterial(ctx context.Context, id int64, shaderName string, textureID *int64, specular, shininess, friction float64) (*Material, error) {
 	if shaderName == "" {
 		shaderName = ShaderStandard
 	}
@@ -205,9 +231,12 @@ func (s *MaterialStore) UpdateMaterial(ctx context.Context, id int64, shaderName
 	if err := validateMaterialShading(specular, shininess); err != nil {
 		return nil, err
 	}
+	if err := validateMaterialFriction(friction); err != nil {
+		return nil, err
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE shankpit_materials SET shader_name = ?, texture_id = ?, specular = ?, shininess = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		shaderName, textureID, specular, shininess, id)
+		`UPDATE shankpit_materials SET shader_name = ?, texture_id = ?, specular = ?, shininess = ?, friction = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		shaderName, textureID, specular, shininess, friction, id)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: update material: %w", err)
 	}

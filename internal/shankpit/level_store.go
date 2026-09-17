@@ -497,6 +497,9 @@ type MaterialExport struct {
 	ShaderName string  `json:"shader_name"`
 	Specular   float64 `json:"specular"`
 	Shininess  float64 `json:"shininess"`
+	// Friction (S478b) -- the real, native-consumed ground-friction value for any box resolving
+	// to this material. See Material.Friction's own doc comment for the full rationale.
+	Friction   float64 `json:"friction"`
 	TextureURL string  `json:"texture_url,omitempty"`
 }
 
@@ -1244,7 +1247,7 @@ func (s *LevelStore) materialsForExport(ctx context.Context) ([]MaterialExport, 
 	}
 	out := make([]MaterialExport, 0, len(mats))
 	for _, m := range mats {
-		me := MaterialExport{Name: m.Name, ShaderName: m.ShaderName, Specular: m.Specular, Shininess: m.Shininess}
+		me := MaterialExport{Name: m.Name, ShaderName: m.ShaderName, Specular: m.Specular, Shininess: m.Shininess, Friction: m.Friction}
 		if m.TextureID != nil {
 			me.TextureURL = fmt.Sprintf("/admin/nock/api/textures/%d/image", *m.TextureID)
 		}
