@@ -136,6 +136,16 @@ func localUserPermissions(u *userlog.LocalUser) []string {
 			"drive.write",
 			"subscriptions.admin",
 			"devportal.access",
+			// logs.read (S474, found live 2026-09-17): GET /portal/logs and GET /services/
+			// search/jobs both require this in ADDITION to devportal.access above -- the
+			// webmaster (uid=0) had devportal.access from the 2026-08-28 grant but was never
+			// given logs.read itself, so /portal/logs 403'd for the one real local account that
+			// actually exists to use it, even though ingest (POST /services/collector) has
+			// always worked. Found while wiring the SHANKPIT RL training pipeline's own
+			// per-generation heartbeat events into this exact log -- founder real-time: "can we
+			// have more debugging in the heartbeat" would have shipped a real ingest pipeline
+			// with no real way to ever look at what it collected.
+			"logs.read",
 		}
 	}
 	return []string{"iduna.me.read", "users.read.self", "devportal.access"}

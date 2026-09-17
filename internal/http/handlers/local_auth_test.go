@@ -95,3 +95,62 @@ func TestLocalAuthHandler_EmitsEvents(t *testing.T) {
 		t.Errorf("failure event must never contain the raw password, got: %s", recs[1].Event.Data)
 	}
 }
+
+// TestLocalAuthHandler_WebmasterGetsLogsReadPermission is the real regression test for a gap
+// found live 2026-09-17 while wiring the SHANKPIT RL training pipeline's own per-generation
+// heartbeat events into IDUNA's unified logging backend: GET /portal/logs and GET /services/
+// search/jobs both require logs.read IN ADDITION TO devportal.access, but the webmaster (uid=0
+// -- the one real local account with an actual reason to use either) was only ever granted
+// devportal.access (2026-08-28), never logs.read itself -- so the log VIEWER 403'd even though
+// ingest always worked. This asserts the real, issued JWT actually carries logs.read now, not
+// just that localUserPermissions' own source lists it (that function is unexported, unreachable
+// from this external test package -- the real, issued token is the real contract this matters
+// for).
+func TestLocalAuthHandler_WebmasterGetsLogsReadPermission(t *testing.T) {
+	keys, err := jwt.GenerateKeys()
+	if err != nil {
+		t.Fatalf("generate keys: %v", err)
+	}
+	proj := &stubUserProjector{byEmail: map[string]*userlog.LocalUser{
+		"webmaster@example.com": {LocalUID: 0, Email: "webmaster@example.com", Status: "active",
+			PasswordHash: mustHash(t, "correct-horse-battery-staple")},
+	}}
+	eventLog, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileEventLog: %v", err)
+	}
+	t.Cleanup(func() { _ = eventLog.Close() })
+	h := &handlers.LocalAuthHandler{Keys: keys, Proj: proj, EventLog: eventLog}
+
+	body, _ := json.Marshal(map[string]string{"email": "webmaster@example.com", "password": "correct-horse-battery-staple"})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/auth/local", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login: status = %d, want 200", rr.Code)
+	}
+	var resp struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	claims, err := jwt.Verify(keys, resp.Token)
+	if err != nil {
+		t.Fatalf("verify issued token: %v", err)
+	}
+	perms, ok := claims["permissions"].([]any)
+	if !ok {
+		t.Fatalf("permissions claim missing or wrong type: %#v", claims["permissions"])
+	}
+	found := false
+	for _, p := range perms {
+		if p == "logs.read" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("webmaster's own issued JWT is missing logs.read, got permissions: %v", perms)
+	}
+}
