@@ -366,6 +366,7 @@ function Viewport3D({
   onSpawnPointsChange,
   levelExits,
   showLevelExits,
+  characters,
 }: {
   width: number
   height: number
@@ -392,6 +393,7 @@ function Viewport3D({
   onSpawnPointsChange: (spawners: ShankpitSpawner[]) => void
   levelExits: ShankpitLevelExit[]
   showLevelExits: boolean
+  characters: ShankpitCharacter[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -402,6 +404,7 @@ function Viewport3D({
   const spawnerMeshRef = useRef<THREE.Mesh | null>(null)
   const spawnPointMeshesRef = useRef<THREE.Mesh[]>([])
   const levelExitMeshesRef = useRef<THREE.Group[]>([])
+  const characterMeshesRef = useRef<THREE.Mesh[]>([])
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const wallsRef = useRef(walls)
   const selectedRef = useRef(selected)
@@ -932,6 +935,35 @@ function Viewport3D({
   useEffect(() => {
     for (const g of levelExitMeshesRef.current) g.visible = showLevelExits
   }, [showLevelExits])
+
+  // Character markers -- S481, founder real-time: "how can i see the character in the level
+  // editor?" Real, found-live gap: NavNode/Character shared the exact same missing-marker gap
+  // LevelExit had before its own fix (S476) -- only walls/spawn points/level exits ever got a
+  // real 3D marker; a placed character was numeric x/y/z fields only, with zero way to see where
+  // it actually landed. A magenta capsule roughly matching a real player's own collision profile
+  // (PLAYER_WIDTH*2 wide, PLAYER_HEIGHT tall -- packages/common/physics.h) so its footprint reads
+  // as "about where a character-sized thing stands," not an arbitrary blob. Same real "rebuild on
+  // every change, read-only display for now" v0 scope levelExitMeshesRef above already uses --
+  // this level holds at most a handful of characters, so a full rebuild is real, negligible cost.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    for (const m of characterMeshesRef.current) {
+      scene.remove(m)
+      m.geometry.dispose()
+      ;(m.material as THREE.Material).dispose()
+    }
+    characterMeshesRef.current = characters.map((c) => {
+      const mesh = new THREE.Mesh(
+        new THREE.CapsuleGeometry(1.0, 4.5, 4, 8),
+        new THREE.MeshStandardMaterial({ color: 0xff33cc, emissive: 0x660044, emissiveIntensity: 0.6 }),
+      )
+      mesh.position.set(c.x, c.y + 3.25, c.z) // capsule is center-origin; lift so its own base sits on c.y
+      scene.add(mesh)
+      return mesh
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characters])
 
   // The real ground plane (S459-08, founder real-time: "i want there to be a plane by default
   // that the player collides with - the checkerboard in the level editor - that should
@@ -1927,6 +1959,7 @@ export default function ShankpitLevelEditor() {
               onSpawnPointsChange={setSpawners}
               levelExits={draft.levelExits}
               showLevelExits={showLevelExits}
+              characters={draft.characters}
             />
             <p className="hint">
               Drag empty space to orbit, scroll to zoom.{' '}
@@ -2009,9 +2042,11 @@ export default function ShankpitLevelEditor() {
             <div className="object-list">
               <h3>Characters (story_ai NPCs)</h3>
               <p className="hint">
-                Only spawn for real when this level loads in MODE_STORY on the dedicated server -- see
-                docs2/specs/STORY_SYSTEM_NORTHSTAR.md. Position edited numerically, same v0 scope as Objects/Waypoints
-                above.
+                Spawn on the dedicated server in any mode (S480) -- Role picks the AI's real combat/behavior
+                brain only, not its visual model; every character currently renders as one of 5 fixed robot
+                kits, cycled by connection order, not author-chosen (a real, named gap -- see
+                docs2/specs/STORY_SYSTEM_NORTHSTAR.md). Position edited numerically, same v0 scope as
+                Objects/Waypoints above; shown in the 3D view as a magenta capsule.
               </p>
               <button type="button" onClick={addCharacter}>
                 + Add character
