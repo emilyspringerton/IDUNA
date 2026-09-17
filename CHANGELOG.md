@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-17
+- fix(nock): 'Switch animation' now stays reachable once a character already has one attached (was a real frontend visibility bug, not a design limit -- backend already supported re-attaching); split the Animations tab into Characters vs Motion clips views, Characters as the new default, so multi-clip imports don't bury a real usable mesh/rig under dozens of bare clip rows (sess-20260905-0720-ec33e7c5)
 - feat(nock): multi-clip glTF import -- ImportGLTFBytesAllClips imports every real animation clip in a multi-clip file (e.g. Quaternius's Universal Animation Library), not just the first (a real, silent data-loss gap in the old single-clip importer). Each additional clip becomes its own animation-only row, attachable via the existing attach-animation flow (sess-20260905-0720-ec33e7c5)
 - feat(nock): real in-browser 3D preview for the Animations tab -- first JS/TS reader for GOLDENBAND's .gskel/.gmesh/.gband formats, real THREE.SkinnedMesh + AnimationMixer playback (not a hand-rolled skinning reimplementation), Preview button on any mesh/rig row (sess-20260905-0720-ec33e7c5)
 - feat(nock): filterable views (Meshes/Rigs/Animations/Needs-animation) in the Animations tab -- real 'browser' affordance over the same unified character-asset data, not a separate page (sess-20260905-0720-ec33e7c5)
