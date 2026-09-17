@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-17
+- feat(shankpit): real NOCK waypoint/cover node authoring -- internal/shankpit.NavNode, nav_nodes_json migration, navNodesForExport (id->position resolution), new level-editor UI panel (add/position/cover/neighbor-link). 6 new tests. Deployed + live-verified (sess-20260905-0720-ec33e7c5)
 - feat(shankpit): real NOCK door authoring -- internal/shankpit.Door (wall_id+script_id), doors_json column, doorsForExport resolves wall position + real download URL, WallInspector gets a Door script picker. Closes STORY_SYSTEM_NORTHSTAR.md's last-named authoring gap ('how do i put doors in my levels?'). Deployed + live-verified (iduna.service restarted, doors_json confirmed on live DB, export endpoint backward-compatible) (sess-20260905-0720-ec33e7c5)
 - fix(nock): 'Switch animation' now stays reachable once a character already has one attached (was a real frontend visibility bug, not a design limit -- backend already supported re-attaching); split the Animations tab into Characters vs Motion clips views, Characters as the new default, so multi-clip imports don't bury a real usable mesh/rig under dozens of bare clip rows (sess-20260905-0720-ec33e7c5)
 - feat(nock): multi-clip glTF import -- ImportGLTFBytesAllClips imports every real animation clip in a multi-clip file (e.g. Quaternius's Universal Animation Library), not just the first (a real, silent data-loss gap in the old single-clip importer). Each additional clip becomes its own animation-only row, attachable via the existing attach-animation flow (sess-20260905-0720-ec33e7c5)
