@@ -60,8 +60,16 @@ type Wall struct {
 // flattenObjects does not act on them yet (both default false, matching "DEFAULTS TO OFF") -- see
 // that function's own doc comment for the real, honest, not-yet-built reason why.
 type LevelObject struct {
-	ID           int     `json:"id"`
-	RefLevelID   int64   `json:"ref_level_id"`
+	ID         int   `json:"id"`
+	RefLevelID int64 `json:"ref_level_id,omitempty"`
+	// RefWidgetID (S482, founder real-time: "i dont want to make doors be levels please - make
+	// widget or something") -- exactly one of RefLevelID/RefWidgetID is ever set (validateObjects
+	// enforces this), never both. A widget-referencing object composes only that widget's own
+	// walls/doors (Widget has no dimension, no ground plane, no Objects of its own) -- see
+	// flattenObjects' own widget branch. PlaneVisible/PlaneSolid below are meaningless for a
+	// widget reference (a widget has no ground plane at all) and are simply ignored, not
+	// validated, when RefWidgetID is set.
+	RefWidgetID  int64   `json:"ref_widget_id,omitempty"`
 	X            float64 `json:"x"`
 	Y            float64 `json:"y"`
 	Z            float64 `json:"z"`
@@ -312,7 +320,12 @@ func validateObjects(selfID int64, objs []LevelObject) error {
 		if !validRotY[o.RotY] {
 			return fmt.Errorf("shankpit: object %d has invalid rot_y %d (must be 0, 90, 180, or 270)", i, o.RotY)
 		}
-		if o.RefLevelID == selfID {
+		hasLevel := o.RefLevelID != 0
+		hasWidget := o.RefWidgetID != 0
+		if hasLevel == hasWidget {
+			return fmt.Errorf("shankpit: object %d must reference exactly one of ref_level_id or ref_widget_id", i)
+		}
+		if hasLevel && o.RefLevelID == selfID {
 			return fmt.Errorf("shankpit: object %d references its own parent level directly -- not allowed (deeper cycles are caught at export time)", i)
 		}
 	}
@@ -561,6 +574,11 @@ type LevelStore struct {
 	// caller/test that doesn't need it): Export falls back to embedding no Materials array at all
 	// rather than panicking, and the native client's own DefaultMaterialName fallback covers it.
 	Materials *MaterialStore
+	// Widgets resolves a LevelObject's own RefWidgetID (S482) at flatten time -- nil is a real,
+	// valid state for a caller/test that never places a widget-referencing object; flattenObjects
+	// returns a real, honest error for a widget-referencing object only if one is actually
+	// encountered with this field unset, not eagerly.
+	Widgets *WidgetStore
 }
 
 // CreateLevel inserts a new, real, independent level row. A level may start with zero walls (v0's
@@ -1064,6 +1082,46 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 	var outWalls []Wall
 	var outDoors []composedDoorRef
 	for _, obj := range objects {
+		// S482, founder real-time: "i dont want to make doors be levels please - make widget or
+		// something." A widget-referencing object composes its walls/doors the exact same real
+		// way a level-referencing one does (reusing the identical transform math below), but
+		// never recurses -- a Widget has no Objects of its own (real, deliberate v0 scope limit:
+		// a leaf-level reusable geometry piece, not a recursively-composable one like a level),
+		// and has no ground plane/dimension to (not) compose either, unlike a level object.
+		if obj.RefWidgetID != 0 {
+			if s.Widgets == nil {
+				return nil, nil, fmt.Errorf("shankpit: object references widget %d but no WidgetStore is wired up", obj.RefWidgetID)
+			}
+			widget, err := s.Widgets.GetWidget(ctx, obj.RefWidgetID)
+			if err != nil {
+				return nil, nil, fmt.Errorf("shankpit: object references widget %d: %w", obj.RefWidgetID, err)
+			}
+			ox, oz, _, _ := rotateY90(obj.X, obj.Z, 0, 0, originRotY)
+			worldX := originX + ox
+			worldZ := originZ + oz
+			worldY := originY + obj.Y
+			worldRotY := (originRotY + obj.RotY) % 360
+
+			childWallStart := len(outWalls)
+			childWallIndexByID := make(map[int]int, len(widget.Walls))
+			for i, w := range widget.Walls {
+				childWallIndexByID[w.ID] = i
+				rx, rz, rsx, rsz := rotateY90(w.X, w.Z, w.SX, w.SZ, worldRotY)
+				outWalls = append(outWalls, Wall{
+					ID: 0, X: worldX + rx, Y: worldY + w.Y, Z: worldZ + rz,
+					SX: rsx, SY: w.SY, SZ: rsz,
+					R: w.R, G: w.G, B: w.B, Friction: w.Friction, Material: w.Material,
+				})
+			}
+			for _, d := range widget.Doors {
+				idx, ok := childWallIndexByID[d.WallID]
+				if !ok {
+					continue
+				}
+				outDoors = append(outDoors, composedDoorRef{wallIndex: childWallStart + idx, scriptID: d.ScriptID})
+			}
+			continue
+		}
 		if visited[obj.RefLevelID] {
 			return nil, nil, fmt.Errorf("shankpit: level object cycle detected involving level %d", obj.RefLevelID)
 		}

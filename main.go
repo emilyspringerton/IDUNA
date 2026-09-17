@@ -680,7 +680,13 @@ func main() {
 	// game later. Own real package/table (internal/shankpit), not folded into internal/nock,
 	// same design principle that already keeps NOCK un-coupled from any one specific game.
 	shankpitMaterialStore := &shankpit.MaterialStore{DB: db}
-	shankpitLevelStore := &shankpit.LevelStore{DB: db, Materials: shankpitMaterialStore}
+	// S482, founder real-time: "i dont want to make doors be levels please - make widget or
+	// something they are both objects but widgets just dont show up in the levels menu" -- a
+	// real, separate table/store from levels (see the migration's own doc comment for why),
+	// wired into LevelStore so flattenObjects can resolve a widget-referencing object at export
+	// time the same real way it already resolves a level-referencing one.
+	shankpitWidgetStore := &shankpit.WidgetStore{DB: db}
+	shankpitLevelStore := &shankpit.LevelStore{DB: db, Materials: shankpitMaterialStore, Widgets: shankpitWidgetStore}
 	shankpitLevelsH := &handlers.ShankpitLevelsHandler{Store: shankpitLevelStore}
 	shankpitLevelsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitLevelsH))
 	mux.Handle("/admin/nock/api/shankpit-levels", shankpitLevelsProtected)
@@ -700,6 +706,16 @@ func main() {
 
 	shankpitMaterialsPublicH := &handlers.ShankpitMaterialsPublicHandler{Store: shankpitMaterialStore}
 	mux.Handle("/api/v1/shankpit-materials", shankpitMaterialsPublicH)
+
+	// S482, founder real-time: "make widget or something they are both objects but widgets just
+	// dont show up in the levels menu" -- admin CRUD only, same gate every other NOCK editor
+	// surface uses. No public /api/v1 registry endpoint: unlike levels/materials, a widget is
+	// never independently fetched by the native client -- it only ever reaches the native loader
+	// already-flattened into whichever level's own export placed it as an object.
+	shankpitWidgetsH := &handlers.ShankpitWidgetsHandler{Store: shankpitWidgetStore}
+	shankpitWidgetsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitWidgetsH))
+	mux.Handle("/admin/nock/api/shankpit-widgets", shankpitWidgetsProtected)
+	mux.Handle("/admin/nock/api/shankpit-widgets/", shankpitWidgetsProtected)
 
 	// S459-19, founder real-time: "can we implement sprays? ... export to spray goes to sprays
 	// registry same treatment ... we need a nock sprays interface right now just to set the

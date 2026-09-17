@@ -44,7 +44,19 @@ func newTestStore(t *testing.T) *shankpit.LevelStore {
 	if _, err := db.Exec(`CREATE UNIQUE INDEX idx_shankpit_levels_name ON shankpit_levels(name)`); err != nil {
 		t.Fatalf("create index: %v", err)
 	}
-	return &shankpit.LevelStore{DB: db}
+	if _, err := db.Exec(`
+		CREATE TABLE shankpit_widgets (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			walls_json TEXT NOT NULL DEFAULT '[]',
+			doors_json TEXT NOT NULL DEFAULT '[]',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`); err != nil {
+		t.Fatalf("create shankpit_widgets: %v", err)
+	}
+	widgets := &shankpit.WidgetStore{DB: db}
+	return &shankpit.LevelStore{DB: db, Widgets: widgets}
 }
 
 func aCube() shankpit.Wall {
@@ -833,5 +845,69 @@ func TestExport_CharactersRoundTripWithNoIDTranslation(t *testing.T) {
 	got := doc.Characters[0]
 	if got.Role != shankpit.AIRoleTerritorialBeast || got.X != 10 || got.Y != 8 || got.Z != -10 {
 		t.Fatalf("expected role/x/y/z to round-trip unchanged, got %+v", got)
+	}
+}
+
+// TestExport_ComposedWidgetObject -- S482, founder real-time: "i dont want to make doors be
+// levels please - make widget or something they are both objects but widgets just dont show up
+// in the levels menu and the geometry of the widget shows up not the geometry of the underlying
+// level under the widget - there should be no ground plane and no dimension in the widget - a
+// level is a dimension - a widget is just a widget." Verifies a widget's own walls AND doors
+// compose into a level's export correctly, the same real way a level-referencing object already
+// does (S479 follow-up), via the new RefWidgetID field.
+func TestExport_ComposedWidgetObject(t *testing.T) {
+	s := newTestStore(t)
+	doorWall := aCube()
+	doorWall.ID = 9 // deliberately non-sequential, same real-position proof as the level-object door test
+	widget, err := s.Widgets.CreateWidget(context.Background(), "Door Widget",
+		[]shankpit.Wall{aCube(), doorWall},
+		[]shankpit.Door{{WallID: 9, ScriptID: 0}})
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	parent, err := s.CreateLevel(context.Background(), "Parent", 100, 50, 100, true, 2,
+		[]shankpit.Wall{aCube()},
+		[]shankpit.LevelObject{{RefWidgetID: widget.ID, X: 20, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	doc, err := s.Export(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.Walls) != 3 {
+		t.Fatalf("expected 3 flattened walls (1 root + 2 from the widget), got %d", len(doc.Walls))
+	}
+	// The widget's second wall was placed at local x=0; the object itself is offset by X=20.
+	if doc.Walls[1].X != 20 || doc.Walls[2].X != 20 {
+		t.Fatalf("expected the widget's own walls translated by the object's own offset (20), got %+v", doc.Walls)
+	}
+	if len(doc.Doors) != 1 {
+		t.Fatalf("expected the widget's own door to survive composition, got %d doors: %+v", len(doc.Doors), doc.Doors)
+	}
+	if doc.Doors[0].BoxIndex != 2 {
+		t.Fatalf("expected box_index 2 (root wall at 0, widget's first wall at 1, door wall at 2), got %d", doc.Doors[0].BoxIndex)
+	}
+}
+
+// TestCreateLevel_RejectsObjectWithBothOrNeitherRef verifies validateObjects' own new S482 rule:
+// exactly one of ref_level_id/ref_widget_id must be set, never both, never neither.
+func TestCreateLevel_RejectsObjectWithBothOrNeitherRef(t *testing.T) {
+	s := newTestStore(t)
+	widget, err := s.Widgets.CreateWidget(context.Background(), "Some Widget", nil, nil)
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	other, err := s.CreateLevel(context.Background(), "Other Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create other level: %v", err)
+	}
+	if _, err := s.CreateLevel(context.Background(), "Neither", 100, 50, 100, true, 2, nil,
+		[]shankpit.LevelObject{{X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil, nil, nil, nil); err == nil {
+		t.Fatal("expected an error for an object with neither ref_level_id nor ref_widget_id set")
+	}
+	if _, err := s.CreateLevel(context.Background(), "Both", 100, 50, 100, true, 2, nil,
+		[]shankpit.LevelObject{{RefLevelID: other.ID, RefWidgetID: widget.ID, X: 0, Y: 0, Z: 0, RotY: 0}}, nil, nil, nil, nil, nil, nil); err == nil {
+		t.Fatal("expected an error for an object with BOTH ref_level_id and ref_widget_id set")
 	}
 }
