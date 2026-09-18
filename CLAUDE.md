@@ -266,6 +266,18 @@ lens during planning/triage/judgment calls. Use it to spot the general case behi
 ask. It augments judgment, it does not replace doing the work: direct, concrete execution of
 the literal task asked for still happens every time.
 
+## CONSTRUCT File Generation (standing instruction, monorepo Principle 21)
+
+**IDUNA auto-generates deterministic CONSTRUCT and MANIFEST files on every push** via `scripts/generate_iduna_construct.sh` (integrated into CI). The CONSTRUCT is a plaintext snapshot of all tracked source files with SHA256 hashes, sizes, and git modes — used for reproducible builds, audit trails, and offline access.
+
+Key features of IDUNA's implementation:
+- Uses `git ls-files` for determinism (same git tree always produces identical output)
+- Includes a MANIFEST file with per-file metadata (sha256, size, git mode)
+- Base64-encodes binary files automatically
+- Excludes generated artifacts (CONSTRUCT files themselves, build/, dist/, vendor/, etc.)
+
+No manual work needed — generation is automatic. See the main `CLAUDE.md`'s "Principle 21: CONSTRUCT Files" section for the full monorepo pattern and how it integrates with releases.
+
 ## Commit Protocol (standing instruction)
 
 Always commit and push completed work immediately — don't wait to be asked. This is the default for every repo in this monorepo.
