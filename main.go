@@ -1018,6 +1018,11 @@ func main() {
 	// Local (password) auth + open registration — public, rate-limited.
 	mux.Handle("/api/v1/auth/local", authRateLimit(localAuthH))
 	mux.Handle("/api/v1/auth/register", authRateLimit(registerH))
+	// S503-06: generic per-game online services (guest accounts, token verify, match results, stats) and the
+	// game-scoped checkpoint registry. Guest register/login share the auth IP limiter's budget style but with
+	// their own bucket so game traffic can't starve real logins. Config rows live in internal/games.
+	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
+	mux.Handle("/api/v1/game-checkpoints/", &handlers.GameCheckpointsRouter{DB: db, Keys: keys, EventLog: unifiedLog})
 
 	// User CRUD — requires JWT.
 	usersProtected := middleware.RequireAuth(keys)(usersH)
@@ -1234,8 +1239,11 @@ func main() {
 	kgraphH := middleware.RequireAuth(keys)(&handlers.KGraphHandler{})
 	mux.Handle("/api/v1/kgraph/", kgraphH)
 
-	log.Println("iduna listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	// IDUNA_ADDR lets a throwaway instance (tests, live verification) bind a private port instead of
+	// colliding with the real :8080. Default is unchanged.
+	listenAddr := getenv("IDUNA_ADDR", ":8080")
+	log.Printf("iduna listening on %s", listenAddr)
+	log.Fatal(http.ListenAndServe(listenAddr, mux))
 }
 
 func getenv(k, def string) string {

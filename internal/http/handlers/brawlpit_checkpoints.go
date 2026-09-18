@@ -34,14 +34,22 @@ const weightsContentType = "application/x-brawlpit-weights"
 const weightsContentTypeLZ4 = "application/x-brawlpit-weights-lz4"
 
 // BrawlpitCheckpointsHandler serves every /api/v1/brawlpit-checkpoints... route.
+//
+// S503-06: game-generic. Prefix is the URL base this instance is mounted at (empty = the historic
+// /api/v1/brawlpit-checkpoints) and Store.Game scopes every row; game-checkpoints routes for other games
+// (e.g. deadweight) are this same handler with a different Prefix + Store.Game -- no copied code.
 type BrawlpitCheckpointsHandler struct {
+	Prefix   string
 	Store    *brawlpit.CheckpointStore
 	EventLog userlog.EventLog // optional (S453); nil skips event emission entirely, same convention every other handler's EventLog field already uses
 }
 
 func (h *BrawlpitCheckpointsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	const prefix = "/api/v1/brawlpit-checkpoints"
+	prefix := h.Prefix
+	if prefix == "" {
+		prefix = "/api/v1/brawlpit-checkpoints"
+	}
 	if !strings.HasPrefix(path, prefix) {
 		http.NotFound(w, r)
 		return
@@ -74,6 +82,13 @@ func (h *BrawlpitCheckpointsHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 // registry") -- the same trust level list/download already have. Returns the current selection
 // as a bare Checkpoint, or `null` (200, not 404) if no selection has ever been made -- a real,
 // expected, honest state for a fresh registry, matching GetActiveOpponent's own doc comment.
+func (h *BrawlpitCheckpointsHandler) gameSlug() string {
+	if h.Store.Game == "" {
+		return brawlpit.DefaultGame
+	}
+	return h.Store.Game
+}
+
 func (h *BrawlpitCheckpointsHandler) getActive(w http.ResponseWriter, r *http.Request) {
 	c, err := h.Store.GetActiveOpponent(r.Context())
 	if err != nil {
@@ -166,7 +181,7 @@ func (h *BrawlpitCheckpointsHandler) upload(w http.ResponseWriter, r *http.Reque
 	// real, observed ~1900 Elo lineage going dark with no record of what happened to it). A new
 	// checkpoint entering the league is real, load-bearing "the AI changed" -- it can be sampled
 	// as an opponent or a resume target the moment it exists.
-	emitAuthEvent(r.Context(), h.EventLog, "iduna:brawlpit.checkpoint.upload", "brawlpit-checkpoints", map[string]any{
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:"+h.gameSlug()+".checkpoint.upload", h.gameSlug()+"-checkpoints", map[string]any{
 		"id": c.ID, "role": c.Role, "generation": c.Generation, "elo": c.Elo,
 		"source_location": c.SourceLocation, "has_weights": c.HasWeights,
 	})

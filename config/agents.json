@@ -199,6 +199,33 @@
       "permissions": [
         "shankpit.checkpoints.write"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000018",
+      "name": "DEADWEIGHT-BOTS",
+      "type": "game_bot_agent",
+      "description": "DEADWEIGHT pool bots (dw_bot) -- authenticate via POST /api/v1/auth/agent and present the JWT in the game-server HELLO; the server verifies it via POST /api/v1/games/deadweight/verify and gets a stable bot player identity. Cannot report results. S503-06, 2026-09-18.",
+      "permissions": [
+        "deadweight.bot.play"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-000000000019",
+      "name": "DEADWEIGHT-SERVER",
+      "type": "game_bot_agent",
+      "description": "DEADWEIGHT game server (dw_server) -- reports authoritative match results via POST /api/v1/games/deadweight/match-result. Separate from the bots so a bot can never forge a result. S503-06, 2026-09-18.",
+      "permissions": [
+        "deadweight.match.write"
+      ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-00000000001a",
+      "name": "DEADWEIGHT-RL",
+      "type": "game_bot_agent",
+      "description": "DEADWEIGHT RL training pipeline (any location) -- uploads checkpoints to /api/v1/game-checkpoints/deadweight. Same pattern as BRAWLPIT-RL. S503-06, 2026-09-18.",
+      "permissions": [
+        "deadweight.checkpoints.write"
+      ]
     }
   ]
 }

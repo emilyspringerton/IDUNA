@@ -90,6 +90,20 @@ func scanCheckpointRow(scan func(...any) error) (*Checkpoint, error) {
 type CheckpointStore struct {
 	DB      *sql.DB
 	BlobDir string // e.g. var/brawlpit-checkpoints -- real .zip/.bin files, named by this row's own id
+	// Game scopes every query to one game's rows (S503-06: this registry is game-generic; brawlpit is
+	// just the default so every pre-existing construction site keeps working unchanged). Rows of other
+	// games are invisible: Get/List/Set*/Record* on another game's id behave as "not found".
+	Game string
+}
+
+// DefaultGame is the slug pre-existing (brawlpit) rows carry and an empty CheckpointStore.Game means.
+const DefaultGame = "brawlpit"
+
+func (s *CheckpointStore) game() string {
+	if s.Game == "" {
+		return DefaultGame
+	}
+	return s.Game
 }
 
 func validateCheckpointInput(role, sourceLocation, filename string, data []byte) error {
@@ -134,9 +148,9 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 	name := fmt.Sprintf("%s_%s", role, time.Now().UTC().Format("20060102_150405"))
 
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO brawlpit_rl_checkpoints (name, role, generation, elo, source_location, filename, sha256, size_bytes, blob_path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
-		name, role, generation, elo, sourceLocation, filename, sha, len(data))
+		`INSERT INTO brawlpit_rl_checkpoints (name, role, generation, elo, source_location, filename, sha256, size_bytes, blob_path, game)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
+		name, role, generation, elo, sourceLocation, filename, sha, len(data), s.game())
 	if err != nil {
 		return nil, fmt.Errorf("brawlpit: create checkpoint row: %w", err)
 	}
@@ -149,7 +163,7 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 	if err := os.WriteFile(blobPath, data, 0o644); err != nil {
 		// Real, honest cleanup: don't leave a DB row pointing at a blob that was never
 		// actually written -- a real failed upload should look entirely absent, not half-real.
-		_, _ = s.DB.ExecContext(ctx, `DELETE FROM brawlpit_rl_checkpoints WHERE id = ?`, id)
+		_, _ = s.DB.ExecContext(ctx, `DELETE FROM brawlpit_rl_checkpoints WHERE id = ? AND game = ?`, id, s.game())
 		return nil, fmt.Errorf("brawlpit: write checkpoint blob: %w", err)
 	}
 	if _, err := s.DB.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET blob_path = ? WHERE id = ?`, blobPath, id); err != nil {
@@ -160,7 +174,7 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 }
 
 func (s *CheckpointStore) Get(ctx context.Context, id int64) (*Checkpoint, error) {
-	row := s.DB.QueryRowContext(ctx, `SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE id = ?`, id)
+	row := s.DB.QueryRowContext(ctx, `SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE id = ? AND game = ?`, id, s.game())
 	c, err := scanCheckpointRow(row.Scan)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -178,10 +192,10 @@ func (s *CheckpointStore) List(ctx context.Context, roleFilter string) ([]Checkp
 	var err error
 	if roleFilter != "" {
 		rows, err = s.DB.QueryContext(ctx,
-			`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE role = ? ORDER BY created_at DESC`, roleFilter)
+			`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE game = ? AND role = ? ORDER BY created_at DESC`, s.game(), roleFilter)
 	} else {
 		rows, err = s.DB.QueryContext(ctx,
-			`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints ORDER BY created_at DESC`)
+			`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE game = ? ORDER BY created_at DESC`, s.game())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("brawlpit: list checkpoints: %w", err)
@@ -212,10 +226,10 @@ func (s *CheckpointStore) SetActiveOpponent(ctx context.Context, id int64) (*Che
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_active_opponent = 0`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_active_opponent = 0 WHERE game = ?`, s.game()); err != nil {
 		return nil, fmt.Errorf("brawlpit: clear prior active opponent: %w", err)
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_active_opponent = 1 WHERE id = ?`, id)
+	res, err := tx.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_active_opponent = 1 WHERE id = ? AND game = ?`, id, s.game())
 	if err != nil {
 		return nil, fmt.Errorf("brawlpit: set active opponent: %w", err)
 	}
@@ -233,7 +247,7 @@ func (s *CheckpointStore) SetActiveOpponent(ctx context.Context, id int64) (*Che
 // checkpoints and no explicit selection is a normal, expected state).
 func (s *CheckpointStore) GetActiveOpponent(ctx context.Context) (*Checkpoint, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE is_active_opponent = 1 LIMIT 1`)
+		`SELECT `+checkpointColumns+` FROM brawlpit_rl_checkpoints WHERE is_active_opponent = 1 AND game = ? LIMIT 1`, s.game())
 	c, err := scanCheckpointRow(row.Scan)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -249,7 +263,7 @@ func (s *CheckpointStore) GetActiveOpponent(ctx context.Context) (*Checkpoint, e
 // per-row flag -- no global single-selection invariant to enforce, so a plain single UPDATE is
 // enough (no transaction needed).
 func (s *CheckpointStore) SetDisabled(ctx context.Context, id int64, disabled bool) (*Checkpoint, error) {
-	res, err := s.DB.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_disabled = ? WHERE id = ?`, disabled, id)
+	res, err := s.DB.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET is_disabled = ? WHERE id = ? AND game = ?`, disabled, id, s.game())
 	if err != nil {
 		return nil, fmt.Errorf("brawlpit: set checkpoint disabled: %w", err)
 	}

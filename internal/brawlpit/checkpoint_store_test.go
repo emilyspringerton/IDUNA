@@ -36,6 +36,7 @@ func newCheckpointTestDB(t *testing.T) *sql.DB {
 			weights_size_bytes INTEGER NOT NULL DEFAULT 0,
 			weights_sha256 TEXT NOT NULL DEFAULT '',
 			is_disabled     INTEGER NOT NULL DEFAULT 0,
+			game            TEXT NOT NULL DEFAULT 'brawlpit',
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	if err != nil {
