@@ -850,6 +850,13 @@ func main() {
 	)
 	mux.Handle("/admin/nock/api/shankpit-checkpoints/", shankpitCheckpointActivateH)
 
+	// DEADWEIGHT (and any future games.Registry game): NOCK admin write actions on the game-scoped registry.
+	mux.Handle("/admin/nock/api/game-checkpoints/", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(
+		middleware.RequirePermission("iduna.admin")(
+			&handlers.GameCheckpointsAdminRouter{DB: db},
+		),
+	))
+
 	// GFD Mob Drops (kanban GFD-MD-001) -- same direct-file-access precedent as GFD Item
 	// Builder above, applied to the newly data-driven data/mob_drops.json.
 	gfdMobDropsJSONPath := getenv("GFD_MOB_DROPS_JSON_PATH", "/home/fatbaby/GoblinFoxDragon/data/mob_drops.json")

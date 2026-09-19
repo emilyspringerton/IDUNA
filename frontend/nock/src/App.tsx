@@ -5,6 +5,7 @@ import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
 import AnimationViewer from './AnimationViewer'
 import ShankpitAiOpponents from './ShankpitAiOpponents'
+import DeadweightAiOpponents from './DeadweightAiOpponents'
 import ShankpitMaterials from './ShankpitMaterials'
 import ShankpitWidgets from './ShankpitWidgets'
 import Sprays from './Sprays'
@@ -1256,8 +1257,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'sprays'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'sprays']
+type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1359,6 +1360,9 @@ export default function App() {
           <button className={tab === 'shankpit-widgets' ? 'active' : ''} onClick={() => setTab('shankpit-widgets')}>
             SHANKPIT Widgets
           </button>
+          <button className={tab === 'deadweight-ai-opponents' ? 'active' : ''} onClick={() => setTab('deadweight-ai-opponents')}>
+            DEADWEIGHT AI Opponents
+          </button>
           <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
             Sprays
           </button>
@@ -1388,6 +1392,10 @@ export default function App() {
       ) : tab === 'shankpit-ai-opponents' ? (
         <div className="layout-single">
           <ShankpitAiOpponents />
+        </div>
+      ) : tab === 'deadweight-ai-opponents' ? (
+        <div className="layout-single">
+          <DeadweightAiOpponents />
         </div>
       ) : tab === 'shankpit-materials' ? (
         <div className="layout-single">

@@ -1082,3 +1082,36 @@ export const shankpitCheckpoints = {
       return (await res.json()) as ShankpitCheckpoint
     }),
 }
+
+// --- DEADWEIGHT RL checkpoint registry (game-scoped, S503-06/12) ---
+// Same shape as the SHANKPIT registry above; served by the generic /api/v1/game-checkpoints/{game} router.
+export type DeadweightCheckpoint = ShankpitCheckpoint
+
+const DEADWEIGHT_CHECKPOINTS_BASE = '/api/v1/game-checkpoints/deadweight'
+const DEADWEIGHT_CHECKPOINTS_ADMIN_BASE = '/admin/nock/api/game-checkpoints/deadweight'
+
+async function dwreq<T>(path: string): Promise<T> {
+  const res = await fetch(`${DEADWEIGHT_CHECKPOINTS_BASE}${path}`, { credentials: 'include' })
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+  return (await res.json()) as T
+}
+
+export const deadweightCheckpoints = {
+  list: (role?: string) => dwreq<DeadweightCheckpoint[]>(role ? `?role=${enc(role)}` : ''),
+  getActive: () => dwreq<DeadweightCheckpoint | null>('/active'),
+  activate: (id: number) =>
+    fetch(`${DEADWEIGHT_CHECKPOINTS_ADMIN_BASE}/${id}/activate`, { method: 'PATCH', credentials: 'include' }).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+      return (await res.json()) as DeadweightCheckpoint
+    }),
+  setDisabled: (id: number, disabled: boolean) =>
+    fetch(`${DEADWEIGHT_CHECKPOINTS_ADMIN_BASE}/${id}/disable`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled }),
+    }).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => res.statusText)}`)
+      return (await res.json()) as DeadweightCheckpoint
+    }),
+}
