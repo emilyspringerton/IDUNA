@@ -18,6 +18,7 @@ import (
 	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/blog"
 	"iduna/internal/brawlpit"
+	"iduna/internal/deckstats"
 	"iduna/internal/drive"
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
@@ -1028,6 +1029,15 @@ func main() {
 	// S503-06: generic per-game online services (guest accounts, token verify, match results, stats) and the
 	// game-scoped checkpoint registry. Guest register/login share the auth IP limiter's budget style but with
 	// their own bucket so game traffic can't starve real logins. Config rows live in internal/games.
+	// WOTAN's public, read-only DEADWEIGHT draft-deck browser (decks + win rates from dw_server's decks.ndjson). More specific
+	// patterns than the generic /api/v1/games/ handler below, so they win.
+	deckStatsH := &handlers.DeckStatsHandler{
+		Store:   &deckstats.Store{Path: getenv("DEADWEIGHT_DECK_LOG", "/home/fatbaby/DEADWEIGHT/var/matches/decks.ndjson")},
+		Limiter: middleware.NewIPRateLimiter(120),
+	}
+	mux.Handle("/api/v1/games/deadweight/decks", deckStatsH)
+	mux.Handle("/api/v1/games/deadweight/decks/", deckStatsH)
+	mux.Handle("/api/v1/games/deadweight/card-stats", deckStatsH)
 	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
 	mux.Handle("/api/v1/game-checkpoints/", &handlers.GameCheckpointsRouter{DB: db, Keys: keys, EventLog: unifiedLog})
 
