@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-19
+
+- deploy: rebuilt+restarted with S503-06 game-scoped checkpoint route; bootstrap provisioned DEADWEIGHT-BOTS/SERVER/RL agents (sess-20260918-1725-497f394f)
+
+
 ## 2026-09-18
 
 - S503-06: game-scoped online services (guest accounts, token verify, match results+Elo, stats/leaderboard) and brawlpit checkpoint registry generalized to /api/v1/game-checkpoints/{game}; DEADWEIGHT first game; IDUNA_ADDR env (281ef1a) (sess-20260918-1725-497f394f)
