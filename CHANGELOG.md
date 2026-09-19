@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-19
+- feat(nock): DEADWEIGHT AI Opponents tab + game-scoped admin activate/disable route (GameCheckpointsAdminRouter) (sess-20260918-1725-497f394f)
 
 - deploy: rebuilt+restarted with S503-06 game-scoped checkpoint route; bootstrap provisioned DEADWEIGHT-BOTS/SERVER/RL agents (sess-20260918-1725-497f394f)
 
