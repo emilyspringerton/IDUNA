@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-19
+- feat(games): public read-only DEADWEIGHT draft deck stats API for WOTAN (internal/deckstats; /api/v1/games/deadweight/{decks,decks/{id},card-stats}); redeployed (sess-20260918-1725-497f394f)
 - feat(nock): DEADWEIGHT AI Opponents tab + game-scoped admin activate/disable route (GameCheckpointsAdminRouter) (sess-20260918-1725-497f394f)
 
 - deploy: rebuilt+restarted with S503-06 game-scoped checkpoint route; bootstrap provisioned DEADWEIGHT-BOTS/SERVER/RL agents (sess-20260918-1725-497f394f)
