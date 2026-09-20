@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-20
+
+- OpenExecutive M2M credential provisioning via IDUNA IAM (M2M auth, one-time secret reveal) (sess-20260920-1908-24cb3558)
+
+
 ## 2026-09-19
 - feat(games): public read-only DEADWEIGHT draft deck stats API for WOTAN (internal/deckstats; /api/v1/games/deadweight/{decks,decks/{id},card-stats}); redeployed (sess-20260918-1725-497f394f)
 - feat(nock): DEADWEIGHT AI Opponents tab + game-scoped admin activate/disable route (GameCheckpointsAdminRouter) (sess-20260918-1725-497f394f)
