@@ -138,6 +138,7 @@ func main() {
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
 	heimdalH := &handlers.HeimdalHandler{Store: iamStore}
+	openexecutiveH := handlers.NewOpenExecutiveHandler(iamStore)
 
 	// Subscriptions (Emily+ gate) — S23-04. StripeWebhookSecret wired explicitly here (was
 	// previously left unset, silently falling back to stripeWebhook's own os.Getenv lookup at
@@ -355,6 +356,11 @@ func main() {
 	mux.Handle("/.well-known/jwks.json", jwksH)
 	mux.Handle("/api/v1/jwks", jwksH) // also serve JWKS on the path idunaauth expects
 	mux.Handle("/health", healthH)
+
+	// OpenExecutive API — M2M credential provisioning (admin only), service health checks
+	mux.Handle("/api/v1/openexecutive/health", http.HandlerFunc(openexecutiveH.HealthCheck))
+	openexecProvisionProtected := middleware.RequireAuth(keys)(http.HandlerFunc(openexecutiveH.Provision))
+	mux.Handle("/api/v1/openexecutive/provision", openexecProvisionProtected)
 
 	// Apples API — auth required; permission checks handled inside the handler.
 	applesProtected := middleware.RequireAuth(keys)(applesH)

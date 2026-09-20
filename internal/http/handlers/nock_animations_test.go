@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -387,6 +388,69 @@ func TestNockAnimationsHandler_ImportGLTFMeshOnlySucceeds(t *testing.T) {
 // TestNockAnimationsHandler_AttachAnimation is the real regression test for the 2026-09-17 fix
 // ("build fill in the gaps... you can add animations to it later, either by uploading a separate
 // file with the same rig"): a mesh-only row can have a matching-rig animation clip merged onto
+// TestNockAnimationsHandler_SaveEditedGBand is the real regression test for the 2026-09-17
+// "animations editor - clone then edit workflow" ask: a founder-edited .gband (base64-encoded
+// client-side) can be saved back onto an existing row via PATCH .../gband, and the row's own
+// animation fields (tick_rate/duration_ticks/num_channels/content_hash) update to match.
+func TestNockAnimationsHandler_SaveEditedGBand(t *testing.T) {
+	h := newAnimationsTestHandler(t)
+	glb := buildTinyGLB(t)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("name", "clip-to-edit") //nolint:errcheck
+	fw, err := mw.CreateFormFile("file", "clip.glb")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write(glb) //nolint:errcheck
+	mw.Close()    //nolint:errcheck
+	req := httptest.NewRequest(http.MethodPost, "/admin/nock/api/animations/import-gltf", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import-gltf: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created nock.Animation
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// A real, minimal, well-formed edited .gband -- 1 tick, 1 channel, real GBND magic -- doesn't
+	// need to be a faithful re-encoding of the original clip for this test; it only needs to
+	// prove the save path persists exactly what it's given.
+	editedGBand := append([]byte("GBND"), make([]byte, 80+4)...)
+	// A real edit preserves the row's own real skeleton_hash unchanged -- editing animation data
+	// never touches the rig it's meant to animate.
+	editedManifest := fmt.Sprintf(`{"gband_version":1,"skeleton_hash":%q,"content_hash":"def","tick_rate":5,"duration_ticks":1,"channels":["root.qx"]}`, created.SkeletonHash)
+	saveBody, _ := json.Marshal(map[string]string{
+		"gband_data_base64": base64.StdEncoding.EncodeToString(editedGBand),
+		"manifest_json":      editedManifest,
+	})
+	req2 := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/admin/nock/api/animations/%d/gband", created.ID), bytes.NewReader(saveBody))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("PATCH .../gband: expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var saved nock.Animation
+	if err := json.Unmarshal(rec2.Body.Bytes(), &saved); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if saved.TickRate == nil || *saved.TickRate != 5 {
+		t.Errorf("expected the edited tick_rate=5 to persist, got %+v", saved)
+	}
+
+	// Download must return the exact edited bytes, not the original import's own.
+	rec3 := httptest.NewRecorder()
+	h.ServeHTTP(rec3, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/admin/nock/api/animations/%d/gband", created.ID), nil))
+	if !bytes.Equal(rec3.Body.Bytes(), editedGBand) {
+		t.Error("expected the downloaded gband to be the edited bytes, not the original import")
+	}
+}
+
 // it in place, via either the "pick an existing library row" (JSON) or "upload a fresh file"
 // (multipart) path.
 func TestNockAnimationsHandler_AttachAnimation(t *testing.T) {

@@ -16,6 +16,7 @@ package handlers
 // one real source of truth, not two copies that can drift apart.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,6 +71,8 @@ func (h *NockAnimationsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.clone(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "attach-animation" && r.Method == http.MethodPost:
 		h.attachAnimation(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "gband" && r.Method == http.MethodPatch:
+		h.saveEditedGBand(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}
@@ -407,6 +410,48 @@ func intOrZeroPtr(p *int) int {
 		return 0
 	}
 	return *p
+}
+
+// saveEditedGBand (2026-09-17, founder real-time: "lets build the animations editor - clone then
+// edit workflow") -- real save path for NOCK's new in-browser animation editor
+// (frontend/nock/src/AnimationEditor.tsx). The editor already did the real work client-side
+// (decoded the row's own .gband, let a founder tweak per-tick joint poses, re-encoded a real,
+// complete .gband binary -- see frontend/nock/src/goldenband.ts's own encodeGBand) -- this route
+// just persists those already-valid bytes. Reuses AnimStore.AttachAnimation directly (the exact
+// same "replace this row's own animation data" operation attach-animation already performs),
+// rather than a new store method -- editing IS replacing, just with founder-authored bytes
+// instead of an imported clip's own.
+func (h *NockAnimationsHandler) saveEditedGBand(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseAnimationID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		GBandDataBase64 string `json:"gband_data_base64"`
+		ManifestJSON    string `json:"manifest_json"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	gbandData, err := base64.StdEncoding.DecodeString(req.GBandDataBase64)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "gband_data_base64 is not valid base64: "+err.Error())
+		return
+	}
+	var mf gbandManifestFields
+	if err := json.Unmarshal([]byte(req.ManifestJSON), &mf); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "manifest_json is not valid JSON: "+err.Error())
+		return
+	}
+	a, err := h.Store.AttachAnimation(r.Context(), id, gbandData, req.ManifestJSON, mf.TickRate, mf.DurationTicks, len(mf.Channels), mf.ContentHash, mf.SkeletonHash)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
 }
 
 func (h *NockAnimationsHandler) manifest(w http.ResponseWriter, r *http.Request, idStr string) {
