@@ -45,8 +45,8 @@ func randomClaimCode() (string, error) {
 	return b.String(), nil
 }
 
-// GameClaimCodesHandler serves both the generate/list API (/admin/game-claim-codes/api/*) and
-// is wired alongside GameClaimCodesPageHandler for the form itself.
+// GameClaimCodesHandler serves the DEADWEIGHT admin API (/admin/deadweight/api/*) and
+// is wired alongside DeadweightAdminPageHandler for the tabbed page itself.
 type GameClaimCodesHandler struct {
 	DB *sql.DB
 }
@@ -62,6 +62,15 @@ type claimCodeRow struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
+type playerRow struct {
+	PlayerID     string `json:"player_id"`
+	DisplayName  string `json:"display_name"`
+	AccountState string `json:"account_state"`
+	Founder      bool   `json:"founder"`
+	Tickets      int    `json:"tickets"`
+	RegisteredAt string `json:"registered_at"`
+}
+
 func (h *GameClaimCodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/api/games") && r.Method == http.MethodGet:
@@ -70,9 +79,53 @@ func (h *GameClaimCodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.generate(w, r)
 	case strings.HasSuffix(r.URL.Path, "/api/codes") && r.Method == http.MethodGet:
 		h.list(w, r)
+	case strings.HasSuffix(r.URL.Path, "/api/players") && r.Method == http.MethodGet:
+		h.listPlayers(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// listPlayers -- S523 (Claim Account finalization): the founder's own "add a second [tab]" ask.
+// A real, direct look at whether guest-claim is actually flipping account_state, without a DB
+// shell -- the last 50 players for a game, newest first, with the same account_state computation
+// redeem()/guest-login already use (player_credentials row present = "base"/claimed).
+func (h *GameClaimCodesHandler) listPlayers(w http.ResponseWriter, r *http.Request) {
+	game := r.URL.Query().Get("game")
+	if _, ok := games.Registry[game]; !ok {
+		mmoWriteError(w, http.StatusBadRequest, "unknown game slug")
+		return
+	}
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT p.player_id, p.display_name, p.is_founder, p.registered_at,
+		        COALESCE(t.tickets, 0), (pc.player_id IS NOT NULL) AS claimed
+		 FROM players p
+		 LEFT JOIN game_player_tickets t ON t.player_id = p.player_id AND t.game = p.game
+		 LEFT JOIN player_credentials pc ON pc.player_id = p.player_id
+		 WHERE p.game = ? ORDER BY p.registered_at DESC LIMIT 50`, game)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+
+	out := []playerRow{}
+	for rows.Next() {
+		var row playerRow
+		var founderFlag, claimed int
+		if err := rows.Scan(&row.PlayerID, &row.DisplayName, &founderFlag, &row.RegisteredAt, &row.Tickets, &claimed); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		row.Founder = founderFlag != 0
+		if claimed != 0 {
+			row.AccountState = "base"
+		} else {
+			row.AccountState = "guest"
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // listGames feeds the form's game dropdown from games.Registry -- never hardcoded, so a new
@@ -201,10 +254,13 @@ func (h *GameClaimCodesHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// GameClaimCodesPageHandler serves the form itself at /admin/game-claim-codes.
-type GameClaimCodesPageHandler struct{}
+// DeadweightAdminPageHandler serves the combined DEADWEIGHT admin hub at /admin/deadweight --
+// S523 (Claim Account finalization), founder real-time: "clean up the menu so it just says
+// DEADWEIGHT and the sub pages have the 2 tabs or whatever." One nav entry, two tabs (Claim
+// Codes / Players) instead of a growing list of flat, single-purpose top-level links.
+type DeadweightAdminPageHandler struct{}
 
-func (h *GameClaimCodesPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *DeadweightAdminPageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(gameClaimCodesPageHTML))
 }
@@ -214,7 +270,7 @@ const gameClaimCodesPageHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Game Claim Codes</title>
+<title>DEADWEIGHT</title>
 <style>
   :root {
     --cream: #faf6ee; --gold: #b8934a; --ink: #2b2620; --line: #e2d8c3;
@@ -247,16 +303,26 @@ const gameClaimCodesPageHTML = `<!DOCTYPE html>
   .results { background: #f3ecd9; border: 1px solid var(--line); border-radius: 6px; padding: 0.75rem 1rem; margin-top: 1rem; font-family: monospace; font-size: 0.95rem; }
   .results div { padding: 0.15rem 0; }
   .pill { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 3px; font-size: 0.75rem; }
-  .pill.unused { background: #e4f0e5; color: var(--ok); }
-  .pill.used { background: #f0e5e5; color: var(--danger); }
+  .pill.unused, .pill.base { background: #e4f0e5; color: var(--ok); }
+  .pill.used, .pill.guest { background: #f0e5e5; color: var(--danger); }
+  .tabs { display: flex; gap: 0.25rem; margin: 1rem 0 1.25rem; border-bottom: 1px solid var(--line); }
+  .tab-btn { background: transparent; border: 1px solid var(--line); border-bottom: none; color: #7a6f5a; border-radius: 6px 6px 0 0; padding: 0.5rem 1.1rem; font-size: 0.9rem; }
+  .tab-btn.active { background: var(--card); color: var(--ink); font-weight: 600; border-color: var(--gold); }
+  .tab-panel[hidden] { display: none; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Game Claim Codes</h1>
-  <div class="sub"><a href="/admin">← Back Office</a> — mints game_claim_codes rows (redeemed via the client's "Redeem Code" box). "Premium key" = founder_flag on, 0 tickets.</div>
+  <h1>DEADWEIGHT</h1>
+  <div class="sub"><a href="/admin">← Back Office</a> — claim codes (mints game_claim_codes rows, redeemed via the client's "Redeem Code" box) and player accounts (guest vs. claimed).</div>
 </header>
 <main>
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-btn-codes" type="button">Claim Codes</button>
+    <button class="tab-btn" id="tab-btn-players" type="button">Players</button>
+  </div>
+
+  <div class="tab-panel" id="tab-codes">
   <div class="form-card">
     <h3 style="margin-top:0">Generate code(s)</h3>
     <div class="row">
@@ -292,6 +358,14 @@ const gameClaimCodesPageHTML = `<!DOCTYPE html>
     <thead><tr><th>Code</th><th>Tickets</th><th>Founder</th><th>Tier</th><th>Status</th><th>Created</th></tr></thead>
     <tbody id="codes-body"></tbody>
   </table>
+  </div>
+
+  <div class="tab-panel" id="tab-players" hidden>
+  <table id="players-table">
+    <thead><tr><th>Name</th><th>Account</th><th>Founder</th><th>Tickets</th><th>Registered</th><th>Player ID</th></tr></thead>
+    <tbody id="players-body"></tbody>
+  </table>
+  </div>
 </main>
 <script>
 function api(path, opts) {
@@ -324,7 +398,7 @@ function currentGame() {
 async function loadCodes() {
   const game = currentGame();
   if (!game) return;
-  const codes = await api('/admin/game-claim-codes/api/codes?game=' + encodeURIComponent(game));
+  const codes = await api('/admin/deadweight/api/codes?game=' + encodeURIComponent(game));
   const tbody = document.getElementById('codes-body');
   tbody.innerHTML = '';
   codes.forEach(c => {
@@ -344,7 +418,7 @@ async function loadCodes() {
 }
 
 async function loadGames() {
-  const games = await api('/admin/game-claim-codes/api/games');
+  const games = await api('/admin/deadweight/api/games');
   const sel = document.getElementById('f-game');
   sel.innerHTML = '';
   games.forEach(g => {
@@ -352,7 +426,10 @@ async function loadGames() {
     opt.value = g; opt.textContent = g;
     sel.appendChild(opt);
   });
-  sel.addEventListener('change', () => loadCodes().catch(e => setMsg(e.message, 'error')));
+  sel.addEventListener('change', () => {
+    loadCodes().catch(e => setMsg(e.message, 'error'));
+    if (!tabs.players.hidden) loadPlayers().catch(e => setMsg(e.message, 'error'));
+  });
   await loadCodes();
 }
 
@@ -367,7 +444,7 @@ document.getElementById('gen-btn').addEventListener('click', async () => {
       founder: document.getElementById('f-founder').checked,
       tier: document.getElementById('f-tier').value.trim(),
     };
-    const res = await api('/admin/game-claim-codes/api/generate', { method: 'POST', body: JSON.stringify(body) });
+    const res = await api('/admin/deadweight/api/generate', { method: 'POST', body: JSON.stringify(body) });
     const resultsEl = document.getElementById('results');
     resultsEl.innerHTML = res.codes.map(c => '<div>' + escapeHtml(c) + '</div>').join('');
     resultsEl.hidden = false;
@@ -377,6 +454,35 @@ document.getElementById('gen-btn').addEventListener('click', async () => {
     setMsg(e.message, 'error');
   }
 });
+
+async function loadPlayers() {
+  const game = currentGame();
+  if (!game) return;
+  const players = await api('/admin/deadweight/api/players?game=' + encodeURIComponent(game));
+  const tbody = document.getElementById('players-body');
+  tbody.innerHTML = '';
+  players.forEach(p => {
+    const tr = document.createElement('tr');
+    const account = '<span class="pill ' + p.account_state + '">' + p.account_state + '</span>';
+    tr.innerHTML =
+      '<td>' + escapeHtml(p.display_name) + '</td>' +
+      '<td>' + account + '</td>' +
+      '<td>' + (p.founder ? 'yes' : '') + '</td>' +
+      '<td>' + p.tickets + '</td>' +
+      '<td>' + escapeHtml(p.registered_at) + '</td>' +
+      '<td style="font-family: monospace; font-size: 0.75rem">' + escapeHtml(p.player_id) + '</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+const tabs = { codes: document.getElementById('tab-codes'), players: document.getElementById('tab-players') };
+const tabBtns = { codes: document.getElementById('tab-btn-codes'), players: document.getElementById('tab-btn-players') };
+function showTab(name) {
+  for (const k in tabs) { tabs[k].hidden = k !== name; tabBtns[k].classList.toggle('active', k === name); }
+  if (name === 'players') loadPlayers().catch(e => setMsg(e.message, 'error'));
+}
+tabBtns.codes.addEventListener('click', () => showTab('codes'));
+tabBtns.players.addEventListener('click', () => showTab('players'));
 
 loadGames().catch(e => setMsg(e.message, 'error'));
 </script>
