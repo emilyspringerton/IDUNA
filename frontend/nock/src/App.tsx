@@ -1270,6 +1270,19 @@ function tabFromHash(): Tab {
   return (VALID_TABS as string[]).includes(h) ? (h as Tab) : 'textures'
 }
 
+// code-server (VS Code) needs its own root-mounted host, not a /admin/nock/code subpath --
+// confirmed live, 2026-09-21: code-server's server-side router only recognizes fixed root-level
+// paths (/, /_static/*, ...) with no base-path support at all, so a subpath proxy 404s on every
+// asset request even though the top-level page loads. See IDUNA/main.go's NOCK_CODE_SERVER_HOST
+// wiring and nock_code_proxy.go's own doc comment for the full story. Derived at runtime (not
+// hardcoded) so this keeps working across environments: "okemily.com"/"www.okemily.com" ->
+// "console.okemily.com"; any other host (local dev, a future deployment) gets the same
+// "console." prefix on whatever hostname NOCK itself is being served from.
+function codeServerUrl(): string {
+  const host = window.location.hostname.replace(/^www\./, '')
+  return `${window.location.protocol}//console.${host}/`
+}
+
 // useTheme -- S459-20, founder real-time: "have a light mode and a dark mode both colorful."
 // daisyUI's own two real, stock themes (cupcake/dracula, wired in index.css's own @plugin
 // config) already auto-follow the OS's prefers-color-scheme with no JS at all -- this hook adds
@@ -1411,14 +1424,16 @@ export default function App() {
       ) : tab === 'code' ? (
         <div className="layout-single" style={{ height: 'calc(100vh - 120px)' }}>
           <p style={{ margin: '0 0 8px' }}>
-            <a href="/admin/nock/code/" target="_blank" rel="noopener noreferrer">
+            <a href={codeServerUrl()} target="_blank" rel="noopener noreferrer">
               Open in a new tab
             </a>{' '}
-            if the embedded editor below feels cramped.
+            if the embedded editor below feels cramped. It runs on a dedicated host, gated by the
+            same Back Office login -- log in there once if you land on a login page inside the
+            frame below.
           </p>
           <iframe
             title="VS Code"
-            src="/admin/nock/code/"
+            src={codeServerUrl()}
             style={{ width: '100%', height: '100%', border: 'none' }}
           />
         </div>

@@ -26,18 +26,19 @@ func TestNockCodeProxy_ForwardsFullPathUnchanged(t *testing.T) {
 	defer upstream.Close()
 
 	proxy := NewNockCodeProxyHandler(upstream.URL)
-	req := httptest.NewRequest(http.MethodGet, "/admin/nock/code/stable-abc123/static/out/vs/code.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/stable-abc123/static/out/vs/code.js", nil)
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from upstream, got %d", rec.Code)
 	}
-	// Real, load-bearing assertion: the /admin/nock/code prefix must survive the proxy hop
-	// UNCHANGED -- code-server auto-detects its own base path from the request path itself
-	// (checked directly against real working reverse-proxy examples before this was built), so
-	// stripping the prefix here would silently break every asset/websocket URL it generates.
-	if gotPath != "/admin/nock/code/stable-abc123/static/out/vs/code.js" {
+	// Real, load-bearing assertion: the path must survive the proxy hop UNCHANGED. This handler
+	// is only correct mounted at a host's real root (main.go's NOCK_CODE_SERVER_HOST wiring) --
+	// code-server's own server-side router has no base-path/prefix support at all, confirmed live
+	// (see nock_code_proxy.go's own doc comment); this test's job is narrower, proving the proxy
+	// itself does zero path mangling, not that any particular mount point works end-to-end.
+	if gotPath != "/stable-abc123/static/out/vs/code.js" {
 		t.Fatalf("expected the full path to reach upstream unchanged, got %q", gotPath)
 	}
 	if gotMethod != http.MethodGet {
@@ -56,7 +57,7 @@ func TestNockCodeProxy_ForwardsMethodAndBody(t *testing.T) {
 	defer upstream.Close()
 
 	proxy := NewNockCodeProxyHandler(upstream.URL)
-	req := httptest.NewRequest(http.MethodPost, "/admin/nock/code/api/some-write", strings.NewReader(`{"real":"payload"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/some-write", strings.NewReader(`{"real":"payload"}`))
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req)
 

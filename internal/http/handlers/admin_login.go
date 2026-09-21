@@ -23,6 +23,17 @@ type AdminLoginHandler struct {
 	Keys     *jwt.Keys
 	Issuer   string
 	EventLog userlog.EventLog // optional (S226-03); nil skips event emission entirely
+
+	// CookieDomain, when set, is the iduna_session cookie's Domain attribute (e.g.
+	// ".okemily.com") so the SAME Back Office login is honored on a sibling
+	// subdomain -- needed for console.okemily.com (NOCK's code-server host, see
+	// main.go's NOCK_CODE_SERVER_HOST wiring and its own doc comment for why that's
+	// a separate host rather than a /admin/nock/code subpath). Left empty (the
+	// zero value), the cookie stays host-only, exactly the prior behavior --
+	// this is an explicit, deliberate opt-in, not a default. The cookie is
+	// already HttpOnly, so this widening only affects which HOSTS the browser
+	// automatically attaches it to on requests, never JS-readability.
+	CookieDomain string
 }
 
 func (h *AdminLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +121,7 @@ func (h *AdminLoginHandler) login(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "iduna_session",
 		Value:    token,
+		Domain:   h.CookieDomain,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -126,6 +138,7 @@ func (h *AdminLoginHandler) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:   "iduna_session",
 		Value:  "",
+		Domain: h.CookieDomain,
 		Path:   "/",
 		MaxAge: -1,
 	})

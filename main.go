@@ -133,7 +133,7 @@ func main() {
 	}
 	adminH := &handlers.AdminHandler{Store: iamStore, DB: db, DriveSlurp: driveSlurpH}
 	adminH.Init()
-	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer}
+	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer, CookieDomain: os.Getenv("IDUNA_ADMIN_COOKIE_DOMAIN")}
 	applesH := &handlers.ApplesHandler{Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
@@ -625,10 +625,28 @@ func main() {
 	// i can use my same login flow from back office into NOCK." No fork of code-server: it runs
 	// unmodified, standalone, with its own auth disabled (ops/systemd/nock-code-server.service,
 	// 127.0.0.1:8892) -- this route's own RequireCookieAuth+iduna.admin chain, identical to every
-	// other /admin/nock/* route above, is the real, only gate. See nock_code_proxy.go's own doc
-	// comment for why the full path is forwarded unchanged (no prefix stripping).
+	// other /admin/nock/* route above, is the real, only gate.
+	//
+	// CORRECTED (2026-09-21, live click-through testing): mounting this under a /admin/nock/code
+	// *subpath* does NOT work -- checked directly against the real running code-server instance,
+	// not assumed. Its own server-side router only recognizes fixed ROOT-level paths (/, /login,
+	// /_static/*, /stable-<hash>/static/*, /manifest.json, ...) with no base-path/prefix support
+	// at all (confirmed: /admin/nock/code/ -> 404, /_static/... at root -> 200, the identical
+	// nested path under the subpath prefix -> 404). This is the exact same class of bug this
+	// file's own /news/ location comment already names for newssite ("root-relative links...
+	// broke under this subpath proxy... moved to its own subdomain") -- same fix here: a
+	// dedicated, root-mounted host (console.okemily.com, DNS/nginx/cert in
+	// IDUNA/ops/sudo-queue-console-okemily-nginx.sh) so code-server sees every request at the
+	// real root it expects. Go's http.ServeMux (1.22+) host-specific pattern below matches ONLY
+	// requests with this exact Host header, and -- being host-specific -- takes priority over
+	// every hostless "/..." pattern in this file for that host, so console.okemily.com serves
+	// nothing but this proxy. NewNockCodeProxyHandler itself needed no change: it already forwards
+	// the full incoming path unchanged, which is exactly correct once the mount point IS root.
 	nockCodeProxy := handlers.NewNockCodeProxyHandler("http://127.0.0.1:8892")
-	mux.Handle("/admin/nock/code/", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockCodeProxy)))
+	nockCodeProxyProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockCodeProxy))
+	if codeServerHost := getenv("NOCK_CODE_SERVER_HOST", ""); codeServerHost != "" {
+		mux.Handle(codeServerHost+"/", nockCodeProxyProtected)
+	}
 
 	// NOCK texture library (founder real-time, 2026-09-12: "we are making a texture generator
 	// and manager so it needs to have CRUD and all that and also we are gonna want to save them

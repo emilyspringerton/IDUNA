@@ -15,13 +15,17 @@ package handlers
 // a deliberately different choice there since IDUNA's own cookie session wasn't wired into that
 // broker).
 //
-// Deliberately forwards the FULL incoming path (including the /admin/nock/code prefix) UNCHANGED
-// -- checked directly against real, working code-server reverse-proxy examples before assuming:
-// code-server auto-detects its own base path from the request path itself, so stripping the
-// prefix here would break its own asset/websocket URLs. httputil.ReverseProxy's default Director
-// also leaves the Host header untouched (matches code-server's own documented `Host: $host`
-// expectation) and its own stdlib WebSocket upgrade handling (Go 1.12+) needs no special-casing
-// here, unlike PRRJECT_FATBABY's own hand-rolled broker.
+// Forwards the FULL incoming path UNCHANGED, with no prefix stripping. This handler is correct
+// mounted at a host's real root (see main.go's NOCK_CODE_SERVER_HOST-gated registration) -- it is
+// NOT safe to mount under a path prefix like /admin/nock/code/. CORRECTED (2026-09-21, live
+// click-through testing): an earlier version of this comment claimed "code-server auto-detects
+// its own base path from the request path itself" -- checked directly against the real running
+// instance and that's false. code-server's own server-side router only recognizes fixed
+// root-level paths (/, /login, /_static/*, /stable-<hash>/static/*, ...) with no prefix/base-path
+// support at all; a request forwarded unchanged under any subpath 404s. httputil.ReverseProxy's
+// default Director leaves the Host header untouched (matches code-server's own documented
+// `Host: $host` expectation) and its own stdlib WebSocket upgrade handling (Go 1.12+) needs no
+// special-casing here, unlike PRRJECT_FATBABY's own hand-rolled broker.
 import (
 	"net/http/httputil"
 	"net/url"
