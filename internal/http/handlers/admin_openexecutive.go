@@ -89,6 +89,22 @@ founder after the original account's AI Studio prepayment credits ran out with n
 from here.</p>
 </div>
 
+<div class="section-card">
+<h2>The real interface: <a href="https://exec.okemily.com" target="_blank" rel="noopener noreferrer">exec.okemily.com</a></h2>
+<p>This page is a Back Office admin tool (status + credential provisioning), not the product itself
+-- that's the link above. Both <code>openexecutive-api.service</code> (FastAPI backend, real,
+running) and <code>openexecutive-ui.service</code> (Next.js UI, real, running) are live as systemd
+user services; nginx vhost + cert are queued (<code>sudo-queue/87-exec-okemily-ui.sh</code>).</p>
+<p><strong>One real, human-only step left</strong>: the UI's own login (Auth.js/NextAuth + Google --
+a deliberately separate credential from IDUNA's own session, since OpenExecutive is designed to run
+standalone without IDUNA at all) needs a real Google Cloud OAuth Client (Web application) --
+<code>AUTH_GOOGLE_ID</code>/<code>AUTH_GOOGLE_SECRET</code> in
+<code>packages/ui/.env.local</code>, currently blank. Create one at
+<a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">console.cloud.google.com/apis/credentials</a>
+with authorized redirect URI <code>https://exec.okemily.com/api/auth/callback/google</code>, then
+restart <code>openexecutive-ui.service</code>. Everything else is already done.</p>
+</div>
+
 {{if .Error}}<div class="err section-card">{{.Error}}</div>{{end}}
 
 {{if .Provisioned}}
