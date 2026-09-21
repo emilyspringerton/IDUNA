@@ -516,3 +516,95 @@ func TestTicketsConsume_AtomicAndGated(t *testing.T) {
 		t.Fatalf("tickets read: %d %v", code, m4)
 	}
 }
+
+// --- Redeem codes + daily freebie (S508) --------------------------------------------------
+
+func seedClaimCode(t *testing.T, db *sql.DB, code, game string, tickets, founder int) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO game_claim_codes (code, game, tickets, founder_flag) VALUES (?,?,?,?)`,
+		code, game, tickets, founder); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRedeem_GrantsTicketsAndFounderFlagOnce(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, tok := e.register(t, "deadweight", "Ada")
+	seedClaimCode(t, e.db, "FOUNDER1PACK", "deadweight", 10, 1)
+
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "founder1pack"})
+	if code != 200 {
+		t.Fatalf("redeem: %d %s", code, raw)
+	}
+	// register() already grants the daily-freebie 1 ticket, so the balance after redeeming a
+	// 10-ticket code is 11, not 10.
+	if m["tickets_granted"].(float64) != 10 || m["founder"] != true || m["tickets"].(float64) != 11 {
+		t.Fatalf("unexpected redeem response: %v", m)
+	}
+	var isFounder int
+	_ = e.db.QueryRow(`SELECT is_founder FROM players WHERE player_id=?`, pid).Scan(&isFounder)
+	if isFounder != 1 {
+		t.Errorf("is_founder not set")
+	}
+
+	// Same code again must fail -- already used.
+	code2, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "FOUNDER1PACK"})
+	if code2 != 400 {
+		t.Fatalf("re-redeem should 400, got %d", code2)
+	}
+
+	// Unknown code, no auth, wrong game -- all real refusals.
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "NOSUCHCODE12"}); c != 400 {
+		t.Errorf("unknown code: %d", c)
+	}
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", "", map[string]string{"code": "FOUNDER1PACK"}); c != 401 {
+		t.Errorf("anon redeem: %d", c)
+	}
+	botTok := e.agentToken(t, "deadweight.bot.play")
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", botTok, map[string]string{"code": "FOUNDER1PACK"}); c != 403 {
+		t.Errorf("agent-token redeem should be refused: %d", c)
+	}
+}
+
+func TestRedeem_RefillCodeAddsToExistingBalance(t *testing.T) {
+	e := newGameEnv(t)
+	_, _, tok := e.register(t, "deadweight", "Ada")
+	seedClaimCode(t, e.db, "STARTER10TIX", "deadweight", 10, 0)
+	seedClaimCode(t, e.db, "REFILL5TIX01", "deadweight", 5, 0)
+
+	// register() already grants the daily-freebie 1 ticket -- baseline is 1, not 0.
+	_, m1, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "STARTER10TIX"})
+	if m1["tickets"].(float64) != 11 {
+		t.Fatalf("first redeem: %v", m1)
+	}
+	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "REFILL5TIX01"})
+	if m2["tickets"].(float64) != 16 || m2["founder"] != false {
+		t.Fatalf("refill should stack onto existing balance: %v", m2)
+	}
+}
+
+func TestDailyFreebie_GrantedOnRegisterNotDoubledOnImmediateRelogin(t *testing.T) {
+	e := newGameEnv(t)
+	pid, secret, _ := e.register(t, "deadweight", "Ada")
+
+	var tickets int
+	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=? AND game='deadweight'`, pid).Scan(&tickets)
+	if tickets != 1 {
+		t.Fatalf("expected 1 free ticket granted on first register, got %d", tickets)
+	}
+
+	// Logging back in moments later must NOT grant a second freebie.
+	_, m, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
+	if m["tickets"].(float64) != 1 {
+		t.Fatalf("immediate re-login should not grant a second daily ticket: %v", m)
+	}
+
+	// Force the clock back 25h and confirm the NEXT login grants exactly one more.
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET last_free_ticket_at = datetime('now', '-25 hours') WHERE player_id=?`, pid); err != nil {
+		t.Fatal(err)
+	}
+	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
+	if m2["tickets"].(float64) != 2 {
+		t.Fatalf("expected the daily freebie to fire once the 24h window passed, got %v", m2)
+	}
+}

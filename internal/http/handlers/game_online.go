@@ -6,6 +6,7 @@ package handlers
 // DEADWEIGHT/docs/IDUNA_CONTRACT.md for the wire contract.
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -84,6 +85,11 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.ticketsRead(w, r, cfg, parts[2])
 	case len(parts) == 3 && parts[1] == "tickets" && parts[2] == "consume" && r.Method == http.MethodPost:
 		h.ticketsConsume(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "redeem" && r.Method == http.MethodPost:
+		if !h.allow(w, r) {
+			return
+		}
+		h.redeem(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "verify" && r.Method == http.MethodPost:
 		h.verify(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "match-result" && r.Method == http.MethodPost:
@@ -219,8 +225,11 @@ func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
+	h.grantDailyFreebieIfDue(r.Context(), cfg, playerID)
+	tickets := h.ticketBalance(r.Context(), cfg, playerID)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"player_id": playerID, "guest_secret": secret, "display_name": name, "token": tok, "expires_at": exp,
+		"tickets": tickets,
 	})
 }
 
@@ -252,8 +261,11 @@ func (h *GameOnlineHandler) guestLogin(w http.ResponseWriter, r *http.Request, c
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
+	h.grantDailyFreebieIfDue(r.Context(), cfg, req.PlayerID)
+	tickets := h.ticketBalance(r.Context(), cfg, req.PlayerID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": req.PlayerID, "display_name": name, "token": tok, "expires_at": exp,
+		"tickets": tickets,
 	})
 }
 
@@ -384,7 +396,10 @@ func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, c
 			return
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO game_player_tickets (player_id, game, tickets) VALUES (?,?,?)`,
+			// last_free_ticket_at is seeded to now, not left NULL -- the starter grant itself
+			// counts as "today's freebie" so an immediate re-login can't double-dip an extra
+			// ticket before the 24h window naturally closes.
+			`INSERT INTO game_player_tickets (player_id, game, tickets, last_free_ticket_at) VALUES (?,?,?,CURRENT_TIMESTAMP)`,
 			playerID, cfg.Slug, steamStarterTickets); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, "registration failed")
 			return
@@ -402,13 +417,47 @@ func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, c
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
-	tickets := 0
-	_ = h.DB.QueryRowContext(ctx,
-		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, playerID, cfg.Slug).Scan(&tickets)
+	if !isNew {
+		// A brand-new account already got its starter grant above -- the daily freebie is for
+		// RETURNING players, same "every player needs to receive 1 free Draft Ticket every 24
+		// hours" rule guest accounts get via grantDailyFreebieIfDue elsewhere.
+		h.grantDailyFreebieIfDue(ctx, cfg, playerID)
+	}
+	tickets := h.ticketBalance(ctx, cfg, playerID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": playerID, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": tickets, "is_new": isNew,
 	})
+}
+
+// ticketBalance reads a player's current ticket count, defaulting to 0 for a player with no row
+// yet (same convention ticketsRead's own public endpoint already uses).
+func (h *GameOnlineHandler) ticketBalance(ctx context.Context, cfg games.Config, playerID string) int {
+	tickets := 0
+	_ = h.DB.QueryRowContext(ctx,
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, playerID, cfg.Slug).Scan(&tickets)
+	return tickets
+}
+
+// grantDailyFreebieIfDue is the "daily cron" (S508, founder: "implement a server-side daily
+// cron/check... 1 free Draft Ticket every 24 hours to active accounts") -- implemented as a
+// lazy, on-activity UPSERT rather than a real cron daemon: no new systemd timer/service to run
+// and go down independently, and it can never "miss a day" the way a cron that isn't running
+// would -- the grant simply lands the next time the player does anything real (register, login,
+// or a match-server verify), which is the actual definition of "active" this rule cares about.
+// A single atomic UPSERT (no read-then-write race): the INSERT branch seeds a fresh row at 1
+// ticket for a player who has never had one (this doubles as the free-to-play path's very first
+// ticket, no Steam purchase or claim code required), the DO UPDATE branch only fires when the
+// existing row's last_free_ticket_at is NULL or more than 24h old.
+func (h *GameOnlineHandler) grantDailyFreebieIfDue(ctx context.Context, cfg games.Config, playerID string) {
+	_, _ = h.DB.ExecContext(ctx, `
+		INSERT INTO game_player_tickets (player_id, game, tickets, last_free_ticket_at)
+		VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+		ON CONFLICT(player_id, game) DO UPDATE SET
+			tickets = tickets + 1,
+			last_free_ticket_at = CURRENT_TIMESTAMP
+		WHERE last_free_ticket_at IS NULL OR last_free_ticket_at < datetime('now', '-1 day')`,
+		playerID, cfg.Slug)
 }
 
 func (h *GameOnlineHandler) ticketsRead(w http.ResponseWriter, r *http.Request, cfg games.Config, playerID string) {
@@ -477,6 +526,96 @@ func (h *GameOnlineHandler) ticketsConsume(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tickets": remaining})
 }
 
+var claimCodeRe = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
+
+// redeem is the Itch.io "Redeem Code" box's own endpoint (S508) -- a real player token (guest or
+// steam, cfg.PlayPerm), not an agent, since only the player themselves can spend their own code.
+// Atomic on the claim itself (single UPDATE ... WHERE used_by_player_id IS NULL, RowsAffected
+// check), same discipline ticketsConsume already established for real spendable state -- two
+// concurrent redeem attempts on the same code can never both succeed.
+func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, _ := claims["player_id"].(string)
+	if pid == "" {
+		mmoWriteError(w, http.StatusForbidden, "redeem needs a player token, not an agent token")
+		return
+	}
+	if g, _ := claims["game"].(string); g != cfg.Slug || !hasPerm(claims, cfg.PlayPerm) {
+		mmoWriteError(w, http.StatusForbidden, "token is not valid for this game")
+		return
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	if !claimCodeRe.MatchString(code) {
+		mmoWriteError(w, http.StatusBadRequest, "invalid code format")
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE game_claim_codes SET used_by_player_id = ?, used_at = CURRENT_TIMESTAMP
+		 WHERE code = ? AND game = ? AND used_by_player_id IS NULL`, pid, code, cfg.Slug)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Same response whether the code never existed or was already claimed -- don't help an
+		// attacker distinguish "wrong guess" from "somebody else got there first."
+		mmoWriteError(w, http.StatusBadRequest, "invalid or already-used code")
+		return
+	}
+	var ticketsGranted, founderFlag int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT tickets, founder_flag FROM game_claim_codes WHERE code = ? AND game = ?`, code, cfg.Slug).
+		Scan(&ticketsGranted, &founderFlag); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if ticketsGranted > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tickets) VALUES (?, ?, ?)
+			 ON CONFLICT(player_id, game) DO UPDATE SET tickets = tickets + excluded.tickets`,
+			pid, cfg.Slug, ticketsGranted); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	if founderFlag != 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE players SET is_founder = 1 WHERE player_id = ?`, pid); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	var balance int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&balance); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "tickets_granted": ticketsGranted, "founder": founderFlag != 0, "tickets": balance,
+	})
+}
+
 func hasPerm(claims map[string]any, perm string) bool {
 	arr, _ := claims["permissions"].([]any)
 	for _, p := range arr {
@@ -518,6 +657,10 @@ func (h *GameOnlineHandler) verify(w http.ResponseWriter, r *http.Request, cfg g
 			mmoWriteError(w, http.StatusUnauthorized, "unknown player")
 			return
 		}
+		// Daily freebie (S508): every real connection attempt is "active" enough to be worth
+		// checking -- fire-and-forget, same nil-safe/non-blocking spirit the event log already
+		// uses elsewhere, since a grant failure here must never break a real match connect.
+		h.grantDailyFreebieIfDue(r.Context(), cfg, pid)
 		writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "kind": "human", "game": cfg.Slug})
 		return
 	}
