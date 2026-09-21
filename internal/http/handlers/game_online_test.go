@@ -530,9 +530,9 @@ func seedClaimCode(t *testing.T, db *sql.DB, code, game string, tickets, founder
 func TestRedeem_GrantsTicketsAndFounderFlagOnce(t *testing.T) {
 	e := newGameEnv(t)
 	pid, _, tok := e.register(t, "deadweight", "Ada")
-	seedClaimCode(t, e.db, "FOUNDER1PACK", "deadweight", 10, 1)
+	seedClaimCode(t, e.db, "FOUND-1ER1P-ACK00-1AAAA-ABBBB", "deadweight", 10, 1)
 
-	code, m, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "founder1pack"})
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "found-1er1p-ack00-1aaaa-abbbb"})
 	if code != 200 {
 		t.Fatalf("redeem: %d %s", code, raw)
 	}
@@ -548,36 +548,59 @@ func TestRedeem_GrantsTicketsAndFounderFlagOnce(t *testing.T) {
 	}
 
 	// Same code again must fail -- already used.
-	code2, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "FOUNDER1PACK"})
+	code2, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "FOUND-1ER1P-ACK00-1AAAA-ABBBB"})
 	if code2 != 400 {
 		t.Fatalf("re-redeem should 400, got %d", code2)
 	}
 
 	// Unknown code, no auth, wrong game -- all real refusals.
-	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "NOSUCHCODE12"}); c != 400 {
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "NOSUC-HCODE-12XXX-XXXXX-XXXXX"}); c != 400 {
 		t.Errorf("unknown code: %d", c)
 	}
-	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", "", map[string]string{"code": "FOUNDER1PACK"}); c != 401 {
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", "", map[string]string{"code": "FOUND-1ER1P-ACK00-1AAAA-ABBBB"}); c != 401 {
 		t.Errorf("anon redeem: %d", c)
 	}
 	botTok := e.agentToken(t, "deadweight.bot.play")
-	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", botTok, map[string]string{"code": "FOUNDER1PACK"}); c != 403 {
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", botTok, map[string]string{"code": "FOUND-1ER1P-ACK00-1AAAA-ABBBB"}); c != 403 {
 		t.Errorf("agent-token redeem should be refused: %d", c)
+	}
+}
+
+func TestRedeem_PasteTolerant_DashlessAndWhitespace(t *testing.T) {
+	e := newGameEnv(t)
+	_, _, tok := e.register(t, "deadweight", "Ada")
+	seedClaimCode(t, e.db, "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE", "deadweight", 3, 0)
+	seedClaimCode(t, e.db, "FFFFF-GGGGG-HHHHH-JJJJJ-KKKKK", "deadweight", 4, 0)
+
+	// Pasted without dashes -- re-grouped into the real 5x5 code, not rejected.
+	if c, m, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "aaaaabbbbbcccccdddddeeeee"}); c != 200 {
+		t.Fatalf("dashless paste should be accepted: %d %s", c, raw)
+	} else if m["tickets_granted"].(float64) != 3 {
+		t.Fatalf("dashless paste: %v", m)
+	}
+	// Pasted with leading/trailing whitespace (the real, common paste artifact) -- still accepted.
+	if c, m, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "  FFFFF-GGGGG-HHHHH-JJJJJ-KKKKK\n"}); c != 200 {
+		t.Fatalf("whitespace-wrapped paste should be accepted: %d %s", c, raw)
+	} else if m["tickets_granted"].(float64) != 4 {
+		t.Fatalf("whitespace paste: %v", m)
+	}
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "too-short"}); c != 400 {
+		t.Errorf("malformed code should 400, got %d", c)
 	}
 }
 
 func TestRedeem_RefillCodeAddsToExistingBalance(t *testing.T) {
 	e := newGameEnv(t)
 	_, _, tok := e.register(t, "deadweight", "Ada")
-	seedClaimCode(t, e.db, "STARTER10TIX", "deadweight", 10, 0)
-	seedClaimCode(t, e.db, "REFILL5TIX01", "deadweight", 5, 0)
+	seedClaimCode(t, e.db, "START-10TIX-XXXXX-YYYYY-ZZZZZ", "deadweight", 10, 0)
+	seedClaimCode(t, e.db, "REFIL-L5TIX-01XXX-XXXXW-WWWWW", "deadweight", 5, 0)
 
 	// register() already tops tickets up to tier_alpha's cap (20) -- baseline is 20, not 0.
-	_, m1, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "STARTER10TIX"})
+	_, m1, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "START-10TIX-XXXXX-YYYYY-ZZZZZ"})
 	if m1["tickets"].(float64) != 30 {
 		t.Fatalf("first redeem: %v", m1)
 	}
-	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "REFILL5TIX01"})
+	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "REFIL-L5TIX-01XXX-XXXXW-WWWWW"})
 	if m2["tickets"].(float64) != 35 || m2["founder"] != false {
 		t.Fatalf("refill should stack onto existing balance: %v", m2)
 	}
@@ -615,10 +638,10 @@ func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *te
 func TestDailyTopUp_NeverLowersABalanceAboveTheCap(t *testing.T) {
 	e := newGameEnv(t)
 	pid, secret, _ := e.register(t, "deadweight", "Ada")
-	seedClaimCode(t, e.db, "BIGWINFOUND", "deadweight", 50, 0)
+	seedClaimCode(t, e.db, "BIGWI-NFOUN-DXXXX-XVVVV-VVVVV", "deadweight", 50, 0)
 	_, mlog, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
 	tok := mlog["token"].(string)
-	_, mr, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "BIGWINFOUND"})
+	_, mr, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "BIGWI-NFOUN-DXXXX-XVVVV-VVVVV"})
 	if mr["tickets"].(float64) != 70 {
 		t.Fatalf("redeem: %v %s", mr, raw)
 	}
@@ -632,6 +655,29 @@ func TestDailyTopUp_NeverLowersABalanceAboveTheCap(t *testing.T) {
 }
 
 // --- Guest -> email upgrade, uncapped draft runs (S508c) --------------------------------------
+
+func TestAccountState_DerivedFromCredentialsNotAColumn(t *testing.T) {
+	e := newGameEnv(t)
+	_, _, tok := e.register(t, "deadweight", "Ada")
+
+	// Fresh registration: Guest.
+	_, mv, _ := e.do("POST", "/api/v1/games/deadweight/verify", tok, nil)
+	if mv["account_state"] != "guest" {
+		t.Fatalf("fresh guest account should report account_state=guest, got %v", mv)
+	}
+
+	// After linking email: Base -- derived live, no stored column to get out of sync.
+	_, mu, _ := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", tok,
+		map[string]string{"email": "state@example.com", "password": "correcthorsebattery"})
+	if mu["account_state"] != "base" {
+		t.Fatalf("guest-upgrade response should report account_state=base, got %v", mu)
+	}
+	newTok := mu["token"].(string)
+	_, mv2, _ := e.do("POST", "/api/v1/games/deadweight/verify", newTok, nil)
+	if mv2["account_state"] != "base" {
+		t.Fatalf("verify after upgrade should report account_state=base, got %v", mv2)
+	}
+}
 
 func TestGuestUpgrade_SamePlayerIDCarriesOverTicketsAndStats(t *testing.T) {
 	e := newGameEnv(t)

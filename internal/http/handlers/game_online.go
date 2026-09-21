@@ -275,7 +275,7 @@ func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request
 	tickets := h.ticketBalance(r.Context(), cfg, playerID)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"player_id": playerID, "guest_secret": secret, "display_name": name, "token": tok, "expires_at": exp,
-		"tickets": tickets,
+		"tickets": tickets, "account_state": h.accountState(r.Context(), playerID),
 	})
 }
 
@@ -311,7 +311,7 @@ func (h *GameOnlineHandler) guestLogin(w http.ResponseWriter, r *http.Request, c
 	tickets := h.ticketBalance(r.Context(), cfg, req.PlayerID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": req.PlayerID, "display_name": name, "token": tok, "expires_at": exp,
-		"tickets": tickets,
+		"tickets": tickets, "account_state": h.accountState(r.Context(), req.PlayerID),
 	})
 }
 
@@ -397,7 +397,7 @@ func (h *GameOnlineHandler) guestUpgrade(w http.ResponseWriter, r *http.Request,
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "token": tok, "expires_at": exp})
+	writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "token": tok, "expires_at": exp, "account_state": "base"})
 }
 
 // emailLogin is the returning half of guestUpgrade -- same game-scoped player-token shape every
@@ -432,7 +432,7 @@ func (h *GameOnlineHandler) emailLogin(w http.ResponseWriter, r *http.Request, c
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
-		"tickets": h.ticketBalance(ctx, cfg, pid),
+		"tickets": h.ticketBalance(ctx, cfg, pid), "account_state": "base", // logged in via credentials, always base
 	})
 }
 
@@ -594,7 +594,7 @@ func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, c
 	tickets := h.ticketBalance(ctx, cfg, playerID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": playerID, "display_name": name, "token": tok, "expires_at": exp,
-		"tickets": tickets, "is_new": isNew,
+		"tickets": tickets, "is_new": isNew, "account_state": h.accountState(ctx, playerID),
 	})
 }
 
@@ -605,6 +605,19 @@ func (h *GameOnlineHandler) ticketBalance(ctx context.Context, cfg games.Config,
 	_ = h.DB.QueryRowContext(ctx,
 		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, playerID, cfg.Slug).Scan(&tickets)
 	return tickets
+}
+
+// accountState is S508d's real "identity" axis (Guest/Base), deliberately kept SEPARATE from
+// account_tier (the monetization axis, unchanged): "Compute this dynamically on the server. If a
+// player_id has no corresponding row in player_credentials, they are a Guest. If they have
+// credentials, they are Base." No new column -- this is a live query, always exactly correct, and
+// a guest-upgrade needs zero extra bookkeeping to flip it.
+func (h *GameOnlineHandler) accountState(ctx context.Context, playerID string) string {
+	var one int
+	if err := h.DB.QueryRowContext(ctx, `SELECT 1 FROM player_credentials WHERE player_id = ?`, playerID).Scan(&one); err == nil {
+		return "base"
+	}
+	return "guest"
 }
 
 // defaultAccountTier / tierCaps -- S508c, founder real-time, superseding S508b's flat "+1
@@ -731,7 +744,10 @@ func (h *GameOnlineHandler) ticketsConsume(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tickets": remaining})
 }
 
-var claimCodeRe = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
+// claimCodeRe -- S508d: 5 blocks of 5 uppercase-alphanumeric, dash-separated (25 chars + 4
+// dashes = 29 total), e.g. "DF4XT-QMBGT-F7D49-XXXXX-XXXXX". Matches cmd/gen-claim-codes' own
+// generated format exactly.
+var claimCodeRe = regexp.MustCompile(`^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$`)
 
 // redeem is the Itch.io "Redeem Code" box's own endpoint (S508) -- a real player token (guest or
 // steam, cfg.PlayPerm), not an agent, since only the player themselves can spend their own code.
@@ -759,7 +775,21 @@ func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg g
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	// Paste-tolerant: strips ALL whitespace (not just leading/trailing -- a paste from a chat
+	// client or store page can carry stray spaces/newlines around or inside the code).
+	code := strings.ToUpper(strings.Join(strings.Fields(req.Code), ""))
+	if len(code) == 25 {
+		// A pasted code missing its dashes (25 bare chars) is re-grouped rather than rejected --
+		// the dashes are a readability aid, not part of the code's actual identity.
+		var b strings.Builder
+		for i, c := range code {
+			if i > 0 && i%5 == 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(c)
+		}
+		code = b.String()
+	}
 	if !claimCodeRe.MatchString(code) {
 		mmoWriteError(w, http.StatusBadRequest, "invalid code format")
 		return
@@ -881,7 +911,10 @@ func (h *GameOnlineHandler) verify(w http.ResponseWriter, r *http.Request, cfg g
 		// checking -- fire-and-forget, same nil-safe/non-blocking spirit the event log already
 		// uses elsewhere, since a grant failure here must never break a real match connect.
 		h.topUpTicketsIfDue(r.Context(), cfg, pid)
-		writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "kind": "human", "game": cfg.Slug})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"player_id": pid, "display_name": name, "kind": "human", "game": cfg.Slug,
+			"account_state": h.accountState(r.Context(), pid),
+		})
 		return
 	}
 	// Bot agent token.
