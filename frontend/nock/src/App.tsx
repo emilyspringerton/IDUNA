@@ -1257,8 +1257,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays']
+type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'code'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'code']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1366,6 +1366,9 @@ export default function App() {
           <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
             Sprays
           </button>
+          <button className={tab === 'code' ? 'active' : ''} onClick={() => setTab('code')}>
+            Code
+          </button>
         </nav>
       </header>
 
@@ -1405,6 +1408,20 @@ export default function App() {
         <ShankpitWidgets />
       ) : tab === 'sprays' ? (
         <Sprays />
+      ) : tab === 'code' ? (
+        <div className="layout-single" style={{ height: 'calc(100vh - 120px)' }}>
+          <p style={{ margin: '0 0 8px' }}>
+            <a href="/admin/nock/code/" target="_blank" rel="noopener noreferrer">
+              Open in a new tab
+            </a>{' '}
+            if the embedded editor below feels cramped.
+          </p>
+          <iframe
+            title="VS Code"
+            src="/admin/nock/code/"
+            style={{ width: '100%', height: '100%', border: 'none' }}
+          />
+        </div>
       ) : (
         <div className="layout">
           <aside className="project-list">
