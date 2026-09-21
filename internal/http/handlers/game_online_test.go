@@ -214,7 +214,7 @@ func TestGuestFlow_RegisterLoginVerifyMatchStats(t *testing.T) {
 
 // TestGuest_EmptyNameAutoGeneratesLoreName -- S512: "Do not ask the player to choose a username
 // on boot... automatically assign them a lore-friendly display name (e.g., Runner-A7B2 or
-// Asset-99X)." Real 20-ticket grant checked in the same pass since both land on the same fresh-
+// Asset-99X)." Real 25-ticket grant checked in the same pass since both land on the same fresh-
 // guest response. Only 3 iterations -- the per-IP signup cap (game_signup_log, 3/24h) would 429
 // a 4th real registration from this test's own shared RemoteAddr.
 func TestGuest_EmptyNameAutoGeneratesLoreName(t *testing.T) {
@@ -233,8 +233,8 @@ func TestGuest_EmptyNameAutoGeneratesLoreName(t *testing.T) {
 			t.Fatalf("auto-generated name %q collided across %d calls", name, i+1)
 		}
 		seen[name] = true
-		if m["tickets"].(float64) != 20 {
-			t.Fatalf("auto-named guest should still get the real 20-ticket grant, got %v", m)
+		if m["tickets"].(float64) != 25 {
+			t.Fatalf("auto-named guest should still get the real 25-ticket grant, got %v", m)
 		}
 	}
 }
@@ -569,7 +569,7 @@ func TestRedeem_GrantsTicketsAndFounderFlagOnce(t *testing.T) {
 	}
 	// S516: a founder-flag code instantly bumps the balance to the Premium/founder daily cap
 	// (9999, effectively unlimited) in the same response -- not just the code's own 10-ticket
-	// grant added to whatever register() had already topped up (20, pre-cutoff/grandfathered).
+	// grant added to whatever register() had already topped up (25, pre-cutoff/grandfathered).
 	if m["tickets_granted"].(float64) != 10 || m["founder"] != true || m["tickets"].(float64) != 9999 {
 		t.Fatalf("unexpected redeem response: %v", m)
 	}
@@ -627,13 +627,13 @@ func TestRedeem_RefillCodeAddsToExistingBalance(t *testing.T) {
 	seedClaimCode(t, e.db, "START-10TIX-XXXXX-YYYYY-ZZZZZ", "deadweight", 10, 0)
 	seedClaimCode(t, e.db, "REFIL-L5TIX-01XXX-XXXXW-WWWWW", "deadweight", 5, 0)
 
-	// register() already tops tickets up to tier_alpha's cap (20) -- baseline is 20, not 0.
+	// register() already tops tickets up to tier_alpha's cap (25) -- baseline is 25, not 0.
 	_, m1, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "START-10TIX-XXXXX-YYYYY-ZZZZZ"})
-	if m1["tickets"].(float64) != 30 {
+	if m1["tickets"].(float64) != 35 {
 		t.Fatalf("first redeem: %v", m1)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "REFIL-L5TIX-01XXX-XXXXW-WWWWW"})
-	if m2["tickets"].(float64) != 35 || m2["founder"] != false {
+	if m2["tickets"].(float64) != 40 || m2["founder"] != false {
 		t.Fatalf("refill should stack onto existing balance: %v", m2)
 	}
 }
@@ -645,13 +645,13 @@ func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *te
 	var tickets int
 	var tier string
 	_ = e.db.QueryRow(`SELECT tickets, tier FROM game_player_tickets WHERE player_id=? AND game='deadweight'`, pid).Scan(&tickets, &tier)
-	if tickets != 20 || tier != "tier_alpha" {
-		t.Fatalf("expected tickets topped up to tier_alpha's cap (20) on first register, got tickets=%d tier=%s", tickets, tier)
+	if tickets != 25 || tier != "tier_alpha" {
+		t.Fatalf("expected tickets topped up to tier_alpha's cap (25) on first register, got tickets=%d tier=%s", tickets, tier)
 	}
 
 	// Logging back in moments later must NOT top up again (already at cap, nothing to raise).
 	_, m, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m["tickets"].(float64) != 20 {
+	if m["tickets"].(float64) != 25 {
 		t.Fatalf("immediate re-login should not change the balance: %v", m)
 	}
 
@@ -662,8 +662,8 @@ func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *te
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m2["tickets"].(float64) != 20 {
-		t.Fatalf("expected the daily top-up to raise a below-cap balance back to 20, got %v", m2)
+	if m2["tickets"].(float64) != 25 {
+		t.Fatalf("expected the daily top-up to raise a below-cap balance back to 25, got %v", m2)
 	}
 }
 
@@ -695,13 +695,13 @@ func TestDailyTopUp_FixedUTCMidnightNotRollingWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m2["tickets"].(float64) != 20 {
+	if m2["tickets"].(float64) != 25 {
 		t.Fatalf("a prior UTC calendar date should grant back to the cap: got %v", m2)
 	}
 }
 
 // TestDailyTopUp_ThreeTierRule -- S516, founder real-time: "Premium ($15 Override Code =
-// Unlimited), Protofounders (Grandfathered = 20 tickets/day), and Late Free (After cutoff = 1
+// Unlimited), Protofounders (Grandfathered = 25 tickets/day), and Late Free (After cutoff = 1
 // ticket/day)." Cap is computed from real player attributes (is_founder, registered_at), not a
 // stored/manually-flipped tier column -- this test drives registered_at directly to exercise all
 // three branches, including founder overriding a Late-Free registration date.
@@ -712,7 +712,7 @@ func TestDailyTopUp_ThreeTierRule(t *testing.T) {
 		founder          bool
 		wantCap          int
 	}{
-		{"grandfathered", true, false, 20},
+		{"grandfathered", true, false, 25},
 		{"late_free", false, false, 1},
 		{"founder_overrides_late_free_date", false, true, 9999},
 		{"founder_overrides_grandfathered_date_too", true, true, 9999},
@@ -753,14 +753,14 @@ func TestDailyTopUp_NeverLowersABalanceAboveTheCap(t *testing.T) {
 	_, mlog, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
 	tok := mlog["token"].(string)
 	_, mr, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "BIGWI-NFOUN-DXXXX-XVVVV-VVVVV"})
-	if mr["tickets"].(float64) != 70 {
+	if mr["tickets"].(float64) != 75 {
 		t.Fatalf("redeem: %v %s", mr, raw)
 	}
 	if _, err := e.db.Exec(`UPDATE game_player_tickets SET last_ticket_topup_at = datetime('now', '-25 hours') WHERE player_id=?`, pid); err != nil {
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m2["tickets"].(float64) != 70 {
+	if m2["tickets"].(float64) != 75 {
 		t.Fatalf("daily top-up must never lower a balance already above the tier cap, got %v", m2)
 	}
 }
@@ -808,10 +808,10 @@ func TestGuestUpgrade_SamePlayerIDCarriesOverTicketsAndStats(t *testing.T) {
 	}
 	newTok := m["token"].(string)
 
-	// The new token still reads the SAME ticket balance (grandfathered cap = 20 from register(),
+	// The new token still reads the SAME ticket balance (grandfathered cap = 25 from register(),
 	// S516 -- registered_at is "now," well before the cutoff).
 	code2, m2, _ := e.do("GET", "/api/v1/games/deadweight/players/"+pid+"/tickets", "", nil)
-	if code2 != 200 || m2["tickets"].(float64) != 20 {
+	if code2 != 200 || m2["tickets"].(float64) != 25 {
 		t.Fatalf("tickets should carry over unchanged: %d %v", code2, m2)
 	}
 	// S516 "Claim Account" preservation: registered_at (account_created_date) must be untouched
@@ -886,7 +886,7 @@ func draftRunStartReq(e *gameEnv, t *testing.T, tok string) (int, map[string]any
 
 func TestUncappedDraftRun_ConsumesOneTicketThenResumesFree(t *testing.T) {
 	e := newGameEnv(t)
-	pid, _, tok := e.register(t, "deadweight", "Ada") // 20 tickets (tier_alpha)
+	pid, _, tok := e.register(t, "deadweight", "Ada") // 25 tickets (tier_alpha)
 
 	code, m := draftRunStartReq(e, t, tok)
 	if code != 200 || m["resumed"] != false || m["ticket_spent"] != true {
@@ -894,8 +894,8 @@ func TestUncappedDraftRun_ConsumesOneTicketThenResumesFree(t *testing.T) {
 	}
 	var tickets int
 	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=?`, pid).Scan(&tickets)
-	if tickets != 19 {
-		t.Fatalf("expected 19 tickets after starting a run, got %d", tickets)
+	if tickets != 24 {
+		t.Fatalf("expected 24 tickets after starting a run, got %d", tickets)
 	}
 
 	// Calling start again while the run is still active must NOT spend a second ticket.
@@ -904,7 +904,7 @@ func TestUncappedDraftRun_ConsumesOneTicketThenResumesFree(t *testing.T) {
 		t.Fatalf("resuming an active run should not spend a ticket: %d %v", code2, m2)
 	}
 	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=?`, pid).Scan(&tickets)
-	if tickets != 19 {
+	if tickets != 24 {
 		t.Fatalf("resume must not change the ticket balance, got %d", tickets)
 	}
 
@@ -979,11 +979,11 @@ func TestUncappedDraftRun_NoWinCapEndsStrictlyAtThreeLosses(t *testing.T) {
 	}
 
 	// S510: the auto-end cash-out actually grants tickets now -- 12 wins is the 10-14 band
-	// (+3 tickets). Started with 20 (tier_alpha), spent 1 to start, so 19 before cash-out.
+	// (+3 tickets). Started with 25 (tier_alpha), spent 1 to start, so 24 before cash-out.
 	var tickets int
 	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=?`, pid0).Scan(&tickets)
-	if tickets != 22 {
-		t.Fatalf("expected 19+3=22 tickets after a 12-win cash-out, got %d", tickets)
+	if tickets != 27 {
+		t.Fatalf("expected 24+3=27 tickets after a 12-win cash-out, got %d", tickets)
 	}
 
 	// A fresh run needs a fresh ticket -- the row still exists (active=0) but that's not an
@@ -1037,7 +1037,7 @@ func TestDraftRunReward_MatchesFounderTable(t *testing.T) {
 // the 3rd loss, at whatever win count the run holds).
 func TestDraftRun_SaveDeckStateAndAbort(t *testing.T) {
 	e := newGameEnv(t)
-	pid, _, tok := e.register(t, "deadweight", "Ada") // 20 tickets (tier_alpha)
+	pid, _, tok := e.register(t, "deadweight", "Ada") // 25 tickets (tier_alpha)
 
 	// No active run yet.
 	code, m, raw := e.do("GET", "/api/v1/games/deadweight/draft-run", tok, nil)
@@ -1080,9 +1080,9 @@ func TestDraftRun_SaveDeckStateAndAbort(t *testing.T) {
 	if m["wins"].(float64) != 7 || m["tickets_granted"].(float64) != 1 {
 		t.Fatalf("expected 7 wins / +1 ticket, got %v", m)
 	}
-	// Started with 20, spent 1 on the run (19), gained 1 back on abort (20).
-	if m["tickets"].(float64) != 20 {
-		t.Fatalf("expected balance back to 20, got %v", m)
+	// Started with 25, spent 1 on the run (24), gained 1 back on abort (25).
+	if m["tickets"].(float64) != 25 {
+		t.Fatalf("expected balance back to 25, got %v", m)
 	}
 
 	// Run is gone -- a second abort must refuse, and state must read back inactive with no deck.

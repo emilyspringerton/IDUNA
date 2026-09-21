@@ -676,7 +676,10 @@ var grandfatherCutoff = time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 
 const (
 	founderDailyCap     = 9999 // "Premium" -- effectively unlimited, never literally uncapped (keeps the same UPDATE/compare code path)
-	grandfatherDailyCap = 20   // "Protofounder" -- registered before the cutoff
+	grandfatherDailyCap = 25   // "Protofounder" -- registered before the cutoff (S522: bumped from
+	// 20, founder real-time, Itch launch finalization: "boot directly into the menu as a Guest
+	// with 25 daily tickets" / "explicitly grants exactly 25 tickets for players joining during
+	// this phase")
 	lateFreeDailyCap    = 1    // "Late Free" -- registered on/after the cutoff
 )
 
