@@ -643,8 +643,19 @@ func main() {
 	// nothing but this proxy. NewNockCodeProxyHandler itself needed no change: it already forwards
 	// the full incoming path unchanged, which is exactly correct once the mount point IS root.
 	nockCodeProxy := handlers.NewNockCodeProxyHandler("http://127.0.0.1:8892")
-	nockCodeProxyProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockCodeProxy))
 	if codeServerHost := getenv("NOCK_CODE_SERVER_HOST", ""); codeServerHost != "" {
+		// A relative "/admin/login" redirect target (correct for every other RequireCookieAuth
+		// use in this file, where the login page IS reachable on the same host) causes an
+		// infinite redirect loop here: console.okemily.com's only registered route is this very
+		// catch-all, so an unauthenticated browser hitting "/" gets redirected to
+		// "https://console.okemily.com/admin/login" (relative -> resolved against the CURRENT
+		// host), which is itself caught by the same catch-all, which redirects again, forever.
+		// Found live (2026-09-21, real browser -- curl's own default Accept header doesn't
+		// include text/html, so it takes RequireCookieAuth's other, non-redirecting branch and
+		// never hit this). Fix: an ABSOLUTE login URL pointing at the real host that actually
+		// serves /admin/login.
+		codeServerLoginURL := getenv("NOCK_CODE_SERVER_LOGIN_URL", "/admin/login")
+		nockCodeProxyProtected := middleware.RequireCookieAuth(keys, iamStore, codeServerLoginURL, handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockCodeProxy))
 		mux.Handle(codeServerHost+"/", nockCodeProxyProtected)
 	}
 
