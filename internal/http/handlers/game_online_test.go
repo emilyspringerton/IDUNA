@@ -666,31 +666,36 @@ func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *te
 	}
 }
 
-// TestDailyTopUp_RollingWindowNotUTCMidnight -- founder real-time (S512): "it should grant 20
-// tickets per day and it is based on their last redeem not at midnight so if they log in and get
-// their tickets for the day at 4pm they have to wait until after 4pm tomorrow to get more just so
-// it doesnt make all the players log on at exactly midnight to get their tickets." Already true
-// (topUpTicketsIfDue gates on `last_ticket_topup_at < now - 1 day`, a rolling per-player window,
-// never a UTC calendar-day check) -- this test pins the distinction down explicitly: 23 hours
-// since a player's OWN last top-up must never grant again, no matter how many UTC day boundaries
-// happen to fall inside that window.
-func TestDailyTopUp_RollingWindowNotUTCMidnight(t *testing.T) {
+// TestDailyTopUp_FixedUTCMidnightNotRollingWindow -- S515, founder/exec real-time, reversing
+// S512's own rolling-window version same day: "we need it to be tickets at utc midnight... You
+// stick to a Fixed Daily Reset (e.g., Midnight UTC)... it checks the calendar day, not a strict
+// 24-hour countdown." A rolling per-player window drifts a player's reset time later every day
+// they log in late and skip a day; a fixed UTC calendar-day reset is the same real time for
+// everyone and never drifts. Two deterministic checks (wall-clock-independent, unlike testing "23
+// hours ago" which may or may not cross a real UTC midnight depending on when the suite runs):
+// still-today never tops up no matter the balance, and any earlier calendar date always does.
+func TestDailyTopUp_FixedUTCMidnightNotRollingWindow(t *testing.T) {
 	e := newGameEnv(t)
 	pid, secret, _ := e.register(t, "deadweight", "Ada")
-	if _, err := e.db.Exec(`UPDATE game_player_tickets SET tickets = 3, last_ticket_topup_at = datetime('now', '-23 hours') WHERE player_id=?`, pid); err != nil {
+
+	// Still today (UTC) -- even "start of today" (the earliest timestamp that's still today's
+	// date) must not grant again.
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET tickets = 3, last_ticket_topup_at = datetime('now', 'start of day') WHERE player_id=?`, pid); err != nil {
 		t.Fatal(err)
 	}
 	_, m, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
 	if m["tickets"].(float64) != 3 {
-		t.Fatalf("23h since this player's own last top-up must NOT grant again (a UTC-midnight check would have): got %v", m)
+		t.Fatalf("same UTC calendar day must NOT grant again: got %v", m)
 	}
-	// Push it just past the real 24h mark from THIS player's own last top-up -- now it grants.
-	if _, err := e.db.Exec(`UPDATE game_player_tickets SET last_ticket_topup_at = datetime('now', '-25 hours') WHERE player_id=?`, pid); err != nil {
+
+	// A prior calendar date (exactly 24h earlier is always the previous UTC date, regardless of
+	// time of day) -- now it grants, on the calendar-day boundary alone.
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET last_ticket_topup_at = datetime('now', '-1 day') WHERE player_id=?`, pid); err != nil {
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
 	if m2["tickets"].(float64) != 20 {
-		t.Fatalf("25h since this player's own last top-up should grant back to the cap: got %v", m2)
+		t.Fatalf("a prior UTC calendar date should grant back to the cap: got %v", m2)
 	}
 }
 

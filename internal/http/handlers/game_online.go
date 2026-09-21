@@ -683,6 +683,14 @@ func tierCap(tier string) int {
 // no new systemd timer/service to run and go down independently, and it can never "miss a day"
 // the way a cron that isn't running would.
 //
+// S515 (founder/exec real-time, reversing S512's own rolling-24h version same day): a FIXED UTC
+// calendar-day reset, not a rolling "24h since this player's own last top-up" window. The rolling
+// version was deliberately chosen to stop everyone logging in at exactly midnight -- reversed
+// because a rolling window drifts a player's own reset time later every day they log in late and
+// skip a day, which reads as an arbitrary, ever-moving wall rather than a predictable "new day,
+// tickets refreshed" habit. The date(...) < date('now') comparison below is the whole fix: it
+// checks the calendar date (UTC, SQLite's default for 'now'), not elapsed hours.
+//
 // Real, deliberate deviation from the literal ask ("top up their Draft Tickets to their tier's
 // maximum limit"): this only RAISES a balance up to the tier cap, never lowers one already above
 // it (GREATEST semantics, not a strict overwrite). A strict SET-to-cap would actively deduct
@@ -693,7 +701,7 @@ func (h *GameOnlineHandler) topUpTicketsIfDue(ctx context.Context, cfg games.Con
 	var tickets, due int
 	var tier string
 	err := h.DB.QueryRowContext(ctx,
-		`SELECT tickets, tier, (last_ticket_topup_at IS NULL OR last_ticket_topup_at < datetime('now', '-1 day'))
+		`SELECT tickets, tier, (last_ticket_topup_at IS NULL OR date(last_ticket_topup_at) < date('now'))
 		 FROM game_player_tickets WHERE player_id = ? AND game = ?`,
 		playerID, cfg.Slug).Scan(&tickets, &tier, &due)
 	if err == sql.ErrNoRows {
