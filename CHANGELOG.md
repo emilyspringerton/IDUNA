@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-21
+- Add Game Claim Codes back office tool (/admin/game-claim-codes) -- mint a DEADWEIGHT Premium key or batch codes without shelling in to cmd/gen-claim-codes (sess-20260920-1908-24cb3558)
 - S512: guest-register auto-generates lore-friendly names when display_name is empty; confirmed+regression-tested rolling 24h ticket top-up window (not UTC midnight) (sess-20260920-1908-24cb3558)
 - S510: draft-run/* converted to player-token-direct auth (redeem's own pattern), real cash-out ticket reward table + Abort & Extract + deck persistence for DEADWEIGHT's Draft Hub (sess-20260920-1908-24cb3558)
 
