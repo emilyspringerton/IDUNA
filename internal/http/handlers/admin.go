@@ -22,12 +22,13 @@ import (
 // AdminHandler serves the Back Office admin UI.
 // All routes require iduna.admin permission (enforced at the mux level via middleware).
 type AdminHandler struct {
-	Store       store.IAMStore
-	Mailinglist *mailinglist.Store // optional -- nil is handled gracefully (dashboard just omits the signup stats card)
-	DB          *sql.DB            // raw truestore handle, for player/character queries not exposed via IAMStore (dragonsnshit account creation, GM tools)
-	DriveSlurp  *DriveSlurpHandler // OAuth-based Drive browse+slurp feature, S187-03/S188-05/S189-10
-	EventLog    userlog.EventLog   // optional (S226-03); nil skips event emission entirely
-	mux         *http.ServeMux
+	Store         store.IAMStore
+	Mailinglist   *mailinglist.Store    // optional -- nil is handled gracefully (dashboard just omits the signup stats card)
+	DB            *sql.DB               // raw truestore handle, for player/character queries not exposed via IAMStore (dragonsnshit account creation, GM tools)
+	DriveSlurp    *DriveSlurpHandler    // OAuth-based Drive browse+slurp feature, S187-03/S188-05/S189-10
+	EventLog      userlog.EventLog      // optional (S226-03); nil skips event emission entirely
+	OpenExecutive *OpenExecutiveHandler // S506 -- reused for the /admin/openexecutive status+provision page, same core logic as the JSON API
+	mux           *http.ServeMux
 }
 
 // Init registers routes on the handler's internal mux. Call once after construction.
@@ -55,6 +56,8 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/dragonsnshit/create", h.dragonsnshitCreate)
 	h.mux.HandleFunc("/admin/gm", h.gmSearch)
 	h.mux.HandleFunc("/admin/gm/", h.gmAccountAction)
+	h.mux.HandleFunc("/admin/openexecutive", h.openExecutiveStatus)
+	h.mux.HandleFunc("/admin/openexecutive/provision", h.openExecutiveProvision)
 	h.mux.HandleFunc("/admin/promptoverse-queue", h.promptoverseQueue)
 	h.mux.HandleFunc("/admin/promptoverse-queue/remove", h.promptoverseQueueRemove)
 	h.mux.HandleFunc("/admin/drive-slurp", h.DriveSlurp.page)
@@ -506,6 +509,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/drive-slurp">Drive Slurp</a>
   <a href="/admin/kanban">Kanban</a>
   <a href="/admin/nock">NOCK / BRAWLPIT Levels</a>
+  <a href="/admin/openexecutive">OpenExecutive</a>
   <a href="/admin/gfd-items">GFD Items</a>
   <a href="/admin/gfd-mob-drops">GFD Mob Drops</a>
   <a href="/admin/gfd-mob-spawns">GFD Mob Spawns</a>

@@ -131,14 +131,14 @@ func main() {
 		RedirectURI:        getenv("DRIVE_SLURP_OAUTH_REDIRECT_URI", baseURL+"/admin/drive-slurp/oauth/callback"),
 		IdunaRoot:          getenv("IDUNA_ROOT", "."),
 	}
-	adminH := &handlers.AdminHandler{Store: iamStore, DB: db, DriveSlurp: driveSlurpH}
+	openexecutiveH := handlers.NewOpenExecutiveHandler(iamStore, baseURL)
+	adminH := &handlers.AdminHandler{Store: iamStore, DB: db, DriveSlurp: driveSlurpH, OpenExecutive: openexecutiveH}
 	adminH.Init()
 	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer, CookieDomain: os.Getenv("IDUNA_ADMIN_COOKIE_DOMAIN")}
 	applesH := &handlers.ApplesHandler{Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
 	heimdalH := &handlers.HeimdalHandler{Store: iamStore}
-	openexecutiveH := handlers.NewOpenExecutiveHandler(iamStore)
 
 	// Subscriptions (Emily+ gate) — S23-04. StripeWebhookSecret wired explicitly here (was
 	// previously left unset, silently falling back to stripeWebhook's own os.Getenv lookup at
