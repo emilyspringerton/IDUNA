@@ -910,6 +910,16 @@ func main() {
 	mux.Handle("/admin/gfd-registration/api/waitlist/", gfdRegistrationAdminProtected)
 	mux.Handle("/admin/gfd-registration", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GfdRegistrationPageHandler{})))
 
+	// Game Claim Codes (founder real-time, 2026-09-21: "give me iduna back office tools to craft
+	// a DEADWEIGHT Premium key so i can make one to test - simple form just like GFD tools").
+	// Same INSERT cmd/gen-claim-codes already does, just a web form over it.
+	gameClaimCodesH := &handlers.GameClaimCodesHandler{DB: db}
+	gameClaimCodesAdminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(gameClaimCodesH))
+	mux.Handle("/admin/game-claim-codes/api/games", gameClaimCodesAdminProtected)
+	mux.Handle("/admin/game-claim-codes/api/generate", gameClaimCodesAdminProtected)
+	mux.Handle("/admin/game-claim-codes/api/codes", gameClaimCodesAdminProtected)
+	mux.Handle("/admin/game-claim-codes", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.GameClaimCodesPageHandler{})))
+
 	// Real, general per-user settings home (WOTAN-24412) + the first real setting, high
 	// contrast (ACCESSABILITY-14441). Deliberately RequireCookieAuth ALONE, no
 	// RequirePermission wrapper -- unlike every admin/devportal page above, this is for ANY
