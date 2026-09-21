@@ -602,8 +602,7 @@ func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, c
 		if _, err := tx.ExecContext(ctx,
 			// last_ticket_topup_at is seeded to now, not left NULL -- the starter grant itself
 			// counts as "today's top-up" so an immediate re-login can't double-dip before the
-			// 24h window naturally closes. tier defaults to defaultAccountTier via the column's
-			// own DEFAULT, not repeated here.
+			// UTC calendar day rolls over (see topUpTicketsIfDue / effectiveDailyCap, S516).
 			`INSERT INTO game_player_tickets (player_id, game, tickets, last_ticket_topup_at) VALUES (?,?,?,CURRENT_TIMESTAMP)`,
 			playerID, cfg.Slug, steamStarterTickets); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, "registration failed")
@@ -657,25 +656,38 @@ func (h *GameOnlineHandler) accountState(ctx context.Context, playerID string) s
 	return "guest"
 }
 
-// defaultAccountTier / tierCaps -- S508c, founder real-time, superseding S508b's flat "+1
-// ticket/day": "Add an account_tier enum... tier_alpha (Caps at 20), tier_premium (Caps at 5),
-// tier_free (Caps at 1)... Hardcode the default registration tier to tier_alpha. (We will flip
-// the default to tier_free manually on Sept 30)." Hardcoded exactly as asked -- the flip is a
-// one-line change to this const on that date, not a config value, per the founder's own explicit
-// "manually" instruction.
-const defaultAccountTier = "tier_alpha" // TODO(founder, 2026-09-30): flip to "tier_free"
+// grandfatherCutoff / effectiveDailyCap -- S516, founder real-time: replaces S508c's
+// defaultAccountTier/tierCaps (a manually-flipped column default -- "we will flip the default to
+// tier_free manually on Sept 30") with a computed-per-player rule that needs zero server
+// intervention on cutover day. The three tiers are unchanged in spirit (Premium/Protofounder/
+// Late-Free = the old tier_premium/tier_alpha/tier_free caps), but the CAP now derives directly
+// from two real, permanent player attributes -- is_founder and registered_at (already exactly
+// "account_created_date," no new column needed) -- instead of a stored tier string that had to be
+// set correctly at registration time and never drifts on its own. `registered_at < cutoff` is a
+// player fact that's true forever the moment they register; nothing has to happen on the cutover
+// date itself. The old defaultAccountTier TODO is dead as of this change -- there's no longer a
+// default to flip.
+//
+// The cutoff date matches the one already named in that TODO (2026-09-30, a Wednesday) rather
+// than a freshly recomputed "next Wednesday" from today -- reusing the already-communicated,
+// already-planned transition date instead of silently shortening the grandfather window by a
+// week.
+var grandfatherCutoff = time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 
-var tierCaps = map[string]int{
-	"tier_alpha":   20,
-	"tier_premium": 5,
-	"tier_free":    1,
-}
+const (
+	founderDailyCap     = 9999 // "Premium" -- effectively unlimited, never literally uncapped (keeps the same UPDATE/compare code path)
+	grandfatherDailyCap = 20   // "Protofounder" -- registered before the cutoff
+	lateFreeDailyCap    = 1    // "Late Free" -- registered on/after the cutoff
+)
 
-func tierCap(tier string) int {
-	if c, ok := tierCaps[tier]; ok {
-		return c
+func effectiveDailyCap(isFounder bool, registeredAt time.Time) int {
+	if isFounder {
+		return founderDailyCap
 	}
-	return tierCaps["tier_free"] // an unrecognized/empty tier gets the safest (lowest) cap, never the most generous
+	if registeredAt.Before(grandfatherCutoff) {
+		return grandfatherDailyCap
+	}
+	return lateFreeDailyCap
 }
 
 // topUpTicketsIfDue is the "daily cron/check" (S508c) -- implemented as a lazy, on-activity
@@ -691,32 +703,37 @@ func tierCap(tier string) int {
 // tickets refreshed" habit. The date(...) < date('now') comparison below is the whole fix: it
 // checks the calendar date (UTC, SQLite's default for 'now'), not elapsed hours.
 //
-// Real, deliberate deviation from the literal ask ("top up their Draft Tickets to their tier's
-// maximum limit"): this only RAISES a balance up to the tier cap, never lowers one already above
-// it (GREATEST semantics, not a strict overwrite). A strict SET-to-cap would actively deduct
-// tickets a player redeemed via a paid claim code, which would be a real revenue-trust-breaking
-// bug disguised as "topping up" -- named here as a correction to the literal spec, not a silent
-// reinterpretation.
+// Real, deliberate deviation from the literal ask ("set tickets to N"): this only RAISES a
+// balance up to the computed cap, never lowers one already above it (GREATEST semantics, not a
+// strict overwrite). A strict SET-to-cap would actively deduct tickets a player redeemed via a
+// paid claim code, which would be a real revenue-trust-breaking bug disguised as "topping up" --
+// named here as a correction to the literal spec, not a silent reinterpretation.
 func (h *GameOnlineHandler) topUpTicketsIfDue(ctx context.Context, cfg games.Config, playerID string) {
+	var isFounder int
+	var registeredAt time.Time
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT is_founder, registered_at FROM players WHERE player_id = ? AND game = ?`,
+		playerID, cfg.Slug).Scan(&isFounder, &registeredAt); err != nil {
+		return // the player row must already exist by the time this is called; nothing to do otherwise
+	}
+	dailyCap := effectiveDailyCap(isFounder != 0, registeredAt)
+
 	var tickets, due int
-	var tier string
 	err := h.DB.QueryRowContext(ctx,
-		`SELECT tickets, tier, (last_ticket_topup_at IS NULL OR date(last_ticket_topup_at) < date('now'))
+		`SELECT tickets, (last_ticket_topup_at IS NULL OR date(last_ticket_topup_at) < date('now'))
 		 FROM game_player_tickets WHERE player_id = ? AND game = ?`,
-		playerID, cfg.Slug).Scan(&tickets, &tier, &due)
+		playerID, cfg.Slug).Scan(&tickets, &due)
 	if err == sql.ErrNoRows {
 		_, _ = h.DB.ExecContext(ctx,
-			`INSERT INTO game_player_tickets (player_id, game, tickets, tier, last_ticket_topup_at)
-			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-			playerID, cfg.Slug, tierCap(defaultAccountTier), defaultAccountTier)
+			`INSERT INTO game_player_tickets (player_id, game, tickets, last_ticket_topup_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+			playerID, cfg.Slug, dailyCap)
 		return
 	}
 	if err != nil || due == 0 {
 		return
 	}
-	maxTickets := tierCap(tier)
-	if tickets < maxTickets {
-		tickets = maxTickets
+	if tickets < dailyCap {
+		tickets = dailyCap
 	}
 	_, _ = h.DB.ExecContext(ctx,
 		`UPDATE game_player_tickets SET tickets = ?, last_ticket_topup_at = CURRENT_TIMESTAMP WHERE player_id = ? AND game = ?`,
@@ -878,6 +895,19 @@ func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg g
 	}
 	if founderFlag != 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE players SET is_founder = 1 WHERE player_id = ?`, pid); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		// S516: "Upon successful redemption, instantly trigger the refresh logic so their UI
+		// updates to Unlimited without requiring a game restart" -- rather than a separate
+		// refresh call, this response's own "tickets" field (read below, after this bump) already
+		// carries the final Unlimited balance back to the client in the same round-trip. GREATEST
+		// semantics (never lowers), same as the daily top-up itself, and idempotent on a re-run.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tickets, last_ticket_topup_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+			 ON CONFLICT(player_id, game) DO UPDATE SET
+			   tickets = MAX(tickets, excluded.tickets), last_ticket_topup_at = excluded.last_ticket_topup_at`,
+			pid, cfg.Slug, founderDailyCap); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

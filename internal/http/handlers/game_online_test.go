@@ -567,9 +567,10 @@ func TestRedeem_GrantsTicketsAndFounderFlagOnce(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("redeem: %d %s", code, raw)
 	}
-	// register() already tops tickets up to tier_alpha's cap (20), so the balance after
-	// redeeming a 10-ticket code is 30, not 10.
-	if m["tickets_granted"].(float64) != 10 || m["founder"] != true || m["tickets"].(float64) != 30 {
+	// S516: a founder-flag code instantly bumps the balance to the Premium/founder daily cap
+	// (9999, effectively unlimited) in the same response -- not just the code's own 10-ticket
+	// grant added to whatever register() had already topped up (20, pre-cutoff/grandfathered).
+	if m["tickets_granted"].(float64) != 10 || m["founder"] != true || m["tickets"].(float64) != 9999 {
 		t.Fatalf("unexpected redeem response: %v", m)
 	}
 	var isFounder int
@@ -699,6 +700,52 @@ func TestDailyTopUp_FixedUTCMidnightNotRollingWindow(t *testing.T) {
 	}
 }
 
+// TestDailyTopUp_ThreeTierRule -- S516, founder real-time: "Premium ($15 Override Code =
+// Unlimited), Protofounders (Grandfathered = 20 tickets/day), and Late Free (After cutoff = 1
+// ticket/day)." Cap is computed from real player attributes (is_founder, registered_at), not a
+// stored/manually-flipped tier column -- this test drives registered_at directly to exercise all
+// three branches, including founder overriding a Late-Free registration date.
+func TestDailyTopUp_ThreeTierRule(t *testing.T) {
+	cases := []struct {
+		name             string
+		registeredBefore bool // true = before grandfatherCutoff, false = on/after
+		founder          bool
+		wantCap          int
+	}{
+		{"grandfathered", true, false, 20},
+		{"late_free", false, false, 1},
+		{"founder_overrides_late_free_date", false, true, 9999},
+		{"founder_overrides_grandfathered_date_too", true, true, 9999},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newGameEnv(t)
+			pid, secret, _ := e.register(t, "deadweight", "P")
+			regAt := "2020-01-01T00:00:00Z" // real, before the 2026-09-30 cutoff
+			if !c.registeredBefore {
+				regAt = "2026-10-15T00:00:00Z" // real, on/after the cutoff
+			}
+			if _, err := e.db.Exec(`UPDATE players SET registered_at = ? WHERE player_id = ?`, regAt, pid); err != nil {
+				t.Fatal(err)
+			}
+			if c.founder {
+				if _, err := e.db.Exec(`UPDATE players SET is_founder = 1 WHERE player_id = ?`, pid); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Force the daily top-up to actually run (it already ran once inside register()
+			// against the real registration date, before this test rewrote it).
+			if _, err := e.db.Exec(`UPDATE game_player_tickets SET tickets = 0, last_ticket_topup_at = datetime('now', '-25 hours') WHERE player_id = ?`, pid); err != nil {
+				t.Fatal(err)
+			}
+			_, m, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
+			if got := int(m["tickets"].(float64)); got != c.wantCap {
+				t.Fatalf("registeredBefore=%v founder=%v: got %d tickets, want %d", c.registeredBefore, c.founder, got, c.wantCap)
+			}
+		})
+	}
+}
+
 func TestDailyTopUp_NeverLowersABalanceAboveTheCap(t *testing.T) {
 	e := newGameEnv(t)
 	pid, secret, _ := e.register(t, "deadweight", "Ada")
@@ -746,6 +793,10 @@ func TestAccountState_DerivedFromCredentialsNotAColumn(t *testing.T) {
 func TestGuestUpgrade_SamePlayerIDCarriesOverTicketsAndStats(t *testing.T) {
 	e := newGameEnv(t)
 	pid, _, tok := e.register(t, "deadweight", "Ada")
+	var registeredAtBefore string
+	if err := e.db.QueryRow(`SELECT registered_at FROM players WHERE player_id=?`, pid).Scan(&registeredAtBefore); err != nil {
+		t.Fatal(err)
+	}
 
 	code, m, raw := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", tok,
 		map[string]string{"email": "ada@example.com", "password": "correcthorsebattery"})
@@ -757,10 +808,21 @@ func TestGuestUpgrade_SamePlayerIDCarriesOverTicketsAndStats(t *testing.T) {
 	}
 	newTok := m["token"].(string)
 
-	// The new token still reads the SAME ticket balance (tier_alpha cap = 20 from register()).
+	// The new token still reads the SAME ticket balance (grandfathered cap = 20 from register(),
+	// S516 -- registered_at is "now," well before the cutoff).
 	code2, m2, _ := e.do("GET", "/api/v1/games/deadweight/players/"+pid+"/tickets", "", nil)
 	if code2 != 200 || m2["tickets"].(float64) != 20 {
 		t.Fatalf("tickets should carry over unchanged: %d %v", code2, m2)
+	}
+	// S516 "Claim Account" preservation: registered_at (account_created_date) must be untouched
+	// by the upgrade -- it's the whole basis for grandfather status, and if it moved, an upgrade
+	// could accidentally demote a grandfathered player to Late Free.
+	var registeredAtAfter string
+	if err := e.db.QueryRow(`SELECT registered_at FROM players WHERE player_id=?`, pid).Scan(&registeredAtAfter); err != nil {
+		t.Fatal(err)
+	}
+	if registeredAtAfter != registeredAtBefore {
+		t.Fatalf("registered_at must not change on guest-upgrade: before=%q after=%q", registeredAtBefore, registeredAtAfter)
 	}
 
 	// email-login now works and returns the same player_id + a usable token.
