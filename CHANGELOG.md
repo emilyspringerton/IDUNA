@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-21
+
+- Add /admin/openexecutive Back Office page (status + working M2M provisioning), fix a real openexec.read/openexec.admin permission-registration gap that had silently broken the provision endpoint since it was added, fix hardcoded-localhost JWKSUrl, move NOCK's code-server off a broken /admin/nock/code subpath onto a dedicated console.okemily.com host, disable VS Code workspace trust (sess-20260920-1908-24cb3558)
+
+
 ## 2026-09-20
 
 - OpenExecutive M2M credential provisioning via IDUNA IAM (M2M auth, one-time secret reveal) (sess-20260920-1908-24cb3558)
