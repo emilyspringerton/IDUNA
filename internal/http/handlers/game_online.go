@@ -12,8 +12,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -72,6 +75,15 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.guestLogin(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "steam-login" && r.Method == http.MethodPost:
+		if !h.allow(w, r) {
+			return
+		}
+		h.steamLogin(w, r, cfg)
+	case len(parts) == 4 && parts[1] == "players" && parts[3] == "tickets" && r.Method == http.MethodGet:
+		h.ticketsRead(w, r, cfg, parts[2])
+	case len(parts) == 3 && parts[1] == "tickets" && parts[2] == "consume" && r.Method == http.MethodPost:
+		h.ticketsConsume(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "verify" && r.Method == http.MethodPost:
 		h.verify(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "match-result" && r.Method == http.MethodPost:
@@ -136,9 +148,18 @@ func (h *GameOnlineHandler) issuer() string {
 }
 
 func (h *GameOnlineHandler) guestToken(cfg games.Config, playerID, name string) (string, int64, error) {
+	return h.playerToken(cfg, "guest", playerID, name)
+}
+
+// playerToken is guestToken generalized over the sub prefix ("guest" or "steam") -- the token
+// shape/claims/permissions/TTL are identical either way, matching the founder's own "IDUNA
+// INTEGRATED WOTAN INTEGRATED THE STEAM WILL HANDLE THE ACCOUNTS WE INTEGRATE WITH IT" framing:
+// Steam is just another provider feeding the same IDUNA player-token pipeline guest accounts
+// already use, not a separate auth system.
+func (h *GameOnlineHandler) playerToken(cfg games.Config, subPrefix, playerID, name string) (string, int64, error) {
 	exp := time.Now().UTC().Add(guestTokenTTL)
 	tok, err := authjwt.Sign(h.Keys, map[string]any{
-		"sub":          "guest:" + playerID,
+		"sub":          subPrefix + ":" + playerID,
 		"player_id":    playerID,
 		"display_name": name,
 		"game":         cfg.Slug,
@@ -234,6 +255,226 @@ func (h *GameOnlineHandler) guestLogin(w http.ResponseWriter, r *http.Request, c
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": req.PlayerID, "display_name": name, "token": tok, "expires_at": exp,
 	})
+}
+
+// --- Steam auth (S507) -------------------------------------------------------------------
+//
+// Server-side validation only needs plain HTTPS (Steam's own ISteamUserAuth/AuthenticateUserTicket
+// Web API) -- no Steamworks SDK is needed here. The SDK is a client-only dependency (the game
+// client calls ISteamUser::GetAuthSessionTicket to produce the hex ticket this endpoint accepts);
+// it is proprietary/Valve-partner-gated and genuinely not present in this sandbox, so the client
+// side of Phase 1 (DEADWEIGHT/core/iduna.c's dwi_steam_login, wiring the real SDK call) is real,
+// scoped, separate work for the founder's own machine with real Steamworks access -- named
+// honestly rather than faked, same class of external gap as OpenExecutive's own real GCP project
+// requirement.
+
+type SteamAuthResult struct {
+	SteamID         string
+	VACBanned       bool
+	PublisherBanned bool
+}
+
+// SteamAuthenticateFn is a package var so tests can substitute a fake Steam Web API response
+// without a real network call / real Steam credentials.
+var SteamAuthenticateFn = steamAuthenticateReal
+
+func steamAuthenticateReal(apiKey, appID, ticketHex string) (*SteamAuthResult, error) {
+	url := fmt.Sprintf(
+		"https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=%s&appid=%s&ticket=%s",
+		apiKey, appID, ticketHex)
+	resp, err := http.Get(url) //nolint:gosec // key/appid/ticket are urlencoded-safe (hex/digits) at the call sites
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Response struct {
+			Params *struct {
+				Result          string `json:"result"`
+				SteamID         string `json:"steamid"`
+				VACBanned       bool   `json:"vacbanned"`
+				PublisherBanned bool   `json:"publisherbanned"`
+			} `json:"params"`
+			Error *struct {
+				ErrorCode int    `json:"errorcode"`
+				ErrorDesc string `json:"errordesc"`
+			} `json:"error"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("malformed Steam Web API response: %w", err)
+	}
+	if parsed.Response.Error != nil || parsed.Response.Params == nil || parsed.Response.Params.Result != "OK" {
+		return nil, fmt.Errorf("steam ticket rejected")
+	}
+	return &SteamAuthResult{
+		SteamID:         parsed.Response.Params.SteamID,
+		VACBanned:       parsed.Response.Params.VACBanned,
+		PublisherBanned: parsed.Response.Params.PublisherBanned,
+	}, nil
+}
+
+const steamStarterTickets = 1 // founder: "grant them 1 free Draft Ticket" on first-ever shadow-account creation
+
+func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	if cfg.SteamAppID == "" {
+		mmoWriteError(w, http.StatusNotFound, "steam auth is not configured for this game yet")
+		return
+	}
+	apiKey := os.Getenv("STEAM_WEB_API_KEY")
+	if apiKey == "" {
+		mmoWriteError(w, http.StatusNotImplemented, "steam web api key not configured on this server")
+		return
+	}
+	var req struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.Ticket == "" {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON / missing ticket")
+		return
+	}
+	if _, err := hex.DecodeString(req.Ticket); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "ticket must be hex-encoded")
+		return
+	}
+	result, err := SteamAuthenticateFn(apiKey, cfg.SteamAppID, req.Ticket)
+	if err != nil {
+		mmoWriteError(w, http.StatusUnauthorized, "steam ticket validation failed")
+		return
+	}
+	if result.VACBanned || result.PublisherBanned {
+		mmoWriteError(w, http.StatusForbidden, "banned account")
+		return
+	}
+	providerSub := result.SteamID
+	ctx := r.Context()
+
+	var playerID, name string
+	err = h.DB.QueryRowContext(ctx,
+		`SELECT player_id, display_name FROM players WHERE provider = 'steam' AND provider_sub = ? AND game = ?`,
+		providerSub, cfg.Slug).Scan(&playerID, &name)
+	isNew := err == sql.ErrNoRows
+	if err != nil && !isNew {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if isNew {
+		// Shadow-account provisioning -- founder: "If it does not exist, silently create a new
+		// user row tied to this SteamID64, grant them 1 free Draft Ticket." No real Steam
+		// persona name is fetched here (that's a separate ISteamUser/GetPlayerSummaries call,
+		// real, named, not-yet-built gap) -- a placeholder derived from the SteamID64 tail, same
+		// spirit as guest accounts' own "no email, no recovery" minimal-identity design; the
+		// player can rename later via whatever display-name-update path this game adds.
+		playerID = uuid.New().String()
+		name = "Steam" + providerSub[max(0, len(providerSub)-4):]
+		tx, err := h.DB.BeginTx(ctx, nil)
+		if err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO players (player_id, display_name, provider, provider_sub, game) VALUES (?,?,?,?,?)`,
+			playerID, name, "steam", providerSub, cfg.Slug); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "registration failed")
+			return
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tickets) VALUES (?,?,?)`,
+			playerID, cfg.Slug, steamStarterTickets); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "registration failed")
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "registration failed")
+			return
+		}
+	} else {
+		_, _ = h.DB.ExecContext(ctx, `UPDATE players SET last_seen=CURRENT_TIMESTAMP WHERE player_id=?`, playerID)
+	}
+
+	tok, exp, err := h.playerToken(cfg, "steam", playerID, name)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+	tickets := 0
+	_ = h.DB.QueryRowContext(ctx,
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, playerID, cfg.Slug).Scan(&tickets)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player_id": playerID, "display_name": name, "token": tok, "expires_at": exp,
+		"tickets": tickets, "is_new": isNew,
+	})
+}
+
+func (h *GameOnlineHandler) ticketsRead(w http.ResponseWriter, r *http.Request, cfg games.Config, playerID string) {
+	tickets := 0
+	err := h.DB.QueryRowContext(r.Context(),
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, playerID, cfg.Slug).Scan(&tickets)
+	if err != nil && err != sql.ErrNoRows {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// A player with no row yet (never granted/spent any) legitimately has 0, not a 404 -- same
+	// COALESCE-to-default convention game_player_stats' own stats() handler already uses.
+	writeJSON(w, http.StatusOK, map[string]any{"player_id": playerID, "tickets": tickets})
+}
+
+func (h *GameOnlineHandler) ticketsConsume(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	if !hasPerm(claims, cfg.TicketsWritePerm) {
+		mmoWriteError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var req struct {
+		PlayerID string `json:"player_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.PlayerID == "" {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON / missing player_id")
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback()
+	// Atomic decrement gated in the WHERE clause -- no read-then-write race between two
+	// concurrent draft-queue requests for the same player (unlike LeagueManager's own Elo
+	// read-modify-write, which accepted that race as low-probability; a ticket is real spendable
+	// inventory, so this path doesn't get to accept it).
+	res, err := tx.ExecContext(ctx,
+		`UPDATE game_player_tickets SET tickets = tickets - 1, updated_at = CURRENT_TIMESTAMP
+		 WHERE player_id = ? AND game = ? AND tickets > 0`, req.PlayerID, cfg.Slug)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		mmoWriteError(w, http.StatusPaymentRequired, "insufficient tickets")
+		return
+	}
+	var remaining int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, req.PlayerID, cfg.Slug).
+		Scan(&remaining); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tickets": remaining})
 }
 
 func hasPerm(claims map[string]any, perm string) bool {

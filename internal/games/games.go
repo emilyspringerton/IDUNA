@@ -4,6 +4,8 @@
 // permissions/agents), not a new handler.
 package games
 
+import "os"
+
 // Config describes one game's online-service surface.
 type Config struct {
 	Slug string
@@ -17,6 +19,15 @@ type Config struct {
 	CheckpointsWritePerm string
 	// CheckpointBlobDir is where this game's registry blobs live on disk.
 	CheckpointBlobDir string
+	// TicketsWritePerm lets the game server (never a bot) consume a player's ticket balance
+	// before allocating a paid match instance (S507, DEADWEIGHT Steam F2P onboarding).
+	TicketsWritePerm string
+	// SteamAppID gates steam-login for this game: empty means Steam auth is not configured for
+	// it (404s, same "not wired up yet" honesty as every other optional integration in this
+	// repo -- see game_online.go's steamLogin). Read from env at process start (see games.go's
+	// own init()), never hardcoded, since a real Steam App ID doesn't exist until the founder's
+	// own Steamworks partner account issues one.
+	SteamAppID string
 }
 
 // Registry is keyed by slug. Guest accounts and match results are enabled for every entry;
@@ -29,5 +40,11 @@ var Registry = map[string]Config{
 		MatchWritePerm:       "deadweight.match.write",
 		CheckpointsWritePerm: "deadweight.checkpoints.write",
 		CheckpointBlobDir:    "./var/deadweight-checkpoints",
+		TicketsWritePerm:     "deadweight.tickets.write",
+		// DEADWEIGHT_STEAM_APPID: unset until the founder's own Steamworks partner account
+		// issues a real App ID (Valve-gated, human-only step -- same class of external
+		// dependency as OpenExecutive's own real GCP Vertex AI project gap). steam-login 404s
+		// for this game until it's set.
+		SteamAppID: os.Getenv("DEADWEIGHT_STEAM_APPID"),
 	},
 }

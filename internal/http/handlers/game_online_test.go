@@ -392,3 +392,127 @@ func TestGameCheckpoints_ScopedRegistryAndBrawlpitUnchanged(t *testing.T) {
 		t.Errorf("unknown game registry: %d", c)
 	}
 }
+
+// --- Steam auth + ticket ledger (S507) ---------------------------------------------------
+
+func steamGames() map[string]games.Config {
+	m := testGames()
+	dw := m["deadweight"]
+	dw.SteamAppID = "480" // test app id, no real Steam credentials involved
+	dw.TicketsWritePerm = "deadweight.tickets.write"
+	m["deadweight"] = dw
+	return m
+}
+
+func newSteamEnv(t *testing.T) *gameEnv {
+	t.Helper()
+	keys, err := authjwt.GenerateKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := newGameDB(t)
+	return &gameEnv{h: &handlers.GameOnlineHandler{DB: db, Keys: keys, Games: steamGames()}, keys: keys, db: db}
+}
+
+func TestSteamLogin_NotConfiguredWithoutAppID(t *testing.T) {
+	e := newGameEnv(t) // testGames() leaves deadweight.SteamAppID empty
+	code, _, _ := e.do("POST", "/api/v1/games/deadweight/steam-login", "", map[string]string{"ticket": "aabbcc"})
+	if code != 404 {
+		t.Fatalf("expected 404 with no SteamAppID configured, got %d", code)
+	}
+}
+
+func TestSteamLogin_NotConfiguredWithoutAPIKey(t *testing.T) {
+	t.Setenv("STEAM_WEB_API_KEY", "")
+	e := newSteamEnv(t)
+	code, _, _ := e.do("POST", "/api/v1/games/deadweight/steam-login", "", map[string]string{"ticket": "aabbcc"})
+	if code != 501 {
+		t.Fatalf("expected 501 with no STEAM_WEB_API_KEY, got %d", code)
+	}
+}
+
+func TestSteamLogin_ShadowProvisionsAndGrantsOneTicket(t *testing.T) {
+	t.Setenv("STEAM_WEB_API_KEY", "fake-test-key")
+	e := newSteamEnv(t)
+
+	orig := handlers.SteamAuthenticateFn
+	t.Cleanup(func() { handlers.SteamAuthenticateFn = orig })
+	handlers.SteamAuthenticateFn = func(apiKey, appID, ticketHex string) (*handlers.SteamAuthResult, error) {
+		if apiKey != "fake-test-key" || appID != "480" {
+			t.Errorf("unexpected steam call: key=%s appid=%s ticket=%s", apiKey, appID, ticketHex)
+		}
+		return &handlers.SteamAuthResult{SteamID: "76561198000000123"}, nil
+	}
+
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/steam-login", "", map[string]string{"ticket": "aabbcc"})
+	if code != 200 {
+		t.Fatalf("steam-login: %d %s", code, raw)
+	}
+	pid, _ := m["player_id"].(string)
+	if pid == "" || m["token"] == "" || m["is_new"] != true {
+		t.Fatalf("unexpected first-login response: %v", m)
+	}
+	if m["tickets"].(float64) != 1 {
+		t.Errorf("expected 1 starter ticket, got %v", m["tickets"])
+	}
+	var provider, providerSub string
+	_ = e.db.QueryRow(`SELECT provider, provider_sub FROM players WHERE player_id=?`, pid).Scan(&provider, &providerSub)
+	if provider != "steam" || providerSub != "76561198000000123" {
+		t.Errorf("shadow account not provisioned correctly: provider=%s sub=%s", provider, providerSub)
+	}
+
+	// Re-login with the same SteamID64 must NOT grant a second ticket and must return the same player_id.
+	code2, m2, _ := e.do("POST", "/api/v1/games/deadweight/steam-login", "", map[string]string{"ticket": "ddeeff"})
+	if code2 != 200 || m2["player_id"] != pid || m2["is_new"] != false || m2["tickets"].(float64) != 1 {
+		t.Fatalf("re-login should reuse the shadow account with no extra ticket: %d %v", code2, m2)
+	}
+}
+
+func TestSteamLogin_BannedAccountRejected(t *testing.T) {
+	t.Setenv("STEAM_WEB_API_KEY", "fake-test-key")
+	e := newSteamEnv(t)
+	orig := handlers.SteamAuthenticateFn
+	t.Cleanup(func() { handlers.SteamAuthenticateFn = orig })
+	handlers.SteamAuthenticateFn = func(apiKey, appID, ticketHex string) (*handlers.SteamAuthResult, error) {
+		return &handlers.SteamAuthResult{SteamID: "76561198000000999", VACBanned: true}, nil
+	}
+	code, _, _ := e.do("POST", "/api/v1/games/deadweight/steam-login", "", map[string]string{"ticket": "aabbcc"})
+	if code != 403 {
+		t.Fatalf("expected 403 for VAC banned account, got %d", code)
+	}
+}
+
+func TestTicketsConsume_AtomicAndGated(t *testing.T) {
+	t.Setenv("STEAM_WEB_API_KEY", "fake-test-key")
+	e := newSteamEnv(t)
+	orig := handlers.SteamAuthenticateFn
+	t.Cleanup(func() { handlers.SteamAuthenticateFn = orig })
+	handlers.SteamAuthenticateFn = func(apiKey, appID, ticketHex string) (*handlers.SteamAuthResult, error) {
+		return &handlers.SteamAuthResult{SteamID: "76561198000000456"}, nil
+	}
+	_, m, _ := e.do("POST", "/api/v1/games/deadweight/steam-login", "", map[string]string{"ticket": "aabbcc"})
+	pid := m["player_id"].(string)
+
+	// unauthenticated / wrong permission both refused
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/tickets/consume", "", map[string]string{"player_id": pid}); c != 401 {
+		t.Errorf("anon consume: %d", c)
+	}
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/tickets/consume", e.agentToken(t, "deadweight.match.write"), map[string]string{"player_id": pid}); c != 403 {
+		t.Errorf("wrong-perm consume: %d", c)
+	}
+
+	serverTok := e.agentToken(t, "deadweight.tickets.write")
+	code, m2, _ := e.do("POST", "/api/v1/games/deadweight/tickets/consume", serverTok, map[string]string{"player_id": pid})
+	if code != 200 || m2["tickets"].(float64) != 0 {
+		t.Fatalf("first consume should succeed and leave 0: %d %v", code, m2)
+	}
+	code, m3, _ := e.do("POST", "/api/v1/games/deadweight/tickets/consume", serverTok, map[string]string{"player_id": pid})
+	if code != http.StatusPaymentRequired {
+		t.Fatalf("second consume with 0 tickets should 402, got %d %v", code, m3)
+	}
+
+	code, m4, _ := e.do("GET", "/api/v1/games/deadweight/players/"+pid+"/tickets", "", nil)
+	if code != 200 || m4["tickets"].(float64) != 0 {
+		t.Fatalf("tickets read: %d %v", code, m4)
+	}
+}
