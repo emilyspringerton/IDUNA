@@ -536,9 +536,9 @@ func TestRedeem_GrantsTicketsAndFounderFlagOnce(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("redeem: %d %s", code, raw)
 	}
-	// register() already grants the daily-freebie 1 ticket, so the balance after redeeming a
-	// 10-ticket code is 11, not 10.
-	if m["tickets_granted"].(float64) != 10 || m["founder"] != true || m["tickets"].(float64) != 11 {
+	// register() already tops tickets up to tier_alpha's cap (20), so the balance after
+	// redeeming a 10-ticket code is 30, not 10.
+	if m["tickets_granted"].(float64) != 10 || m["founder"] != true || m["tickets"].(float64) != 30 {
 		t.Fatalf("unexpected redeem response: %v", m)
 	}
 	var isFounder int
@@ -572,39 +572,244 @@ func TestRedeem_RefillCodeAddsToExistingBalance(t *testing.T) {
 	seedClaimCode(t, e.db, "STARTER10TIX", "deadweight", 10, 0)
 	seedClaimCode(t, e.db, "REFILL5TIX01", "deadweight", 5, 0)
 
-	// register() already grants the daily-freebie 1 ticket -- baseline is 1, not 0.
+	// register() already tops tickets up to tier_alpha's cap (20) -- baseline is 20, not 0.
 	_, m1, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "STARTER10TIX"})
-	if m1["tickets"].(float64) != 11 {
+	if m1["tickets"].(float64) != 30 {
 		t.Fatalf("first redeem: %v", m1)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "REFILL5TIX01"})
-	if m2["tickets"].(float64) != 16 || m2["founder"] != false {
+	if m2["tickets"].(float64) != 35 || m2["founder"] != false {
 		t.Fatalf("refill should stack onto existing balance: %v", m2)
 	}
 }
 
-func TestDailyFreebie_GrantedOnRegisterNotDoubledOnImmediateRelogin(t *testing.T) {
+func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *testing.T) {
 	e := newGameEnv(t)
 	pid, secret, _ := e.register(t, "deadweight", "Ada")
 
 	var tickets int
-	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=? AND game='deadweight'`, pid).Scan(&tickets)
-	if tickets != 1 {
-		t.Fatalf("expected 1 free ticket granted on first register, got %d", tickets)
+	var tier string
+	_ = e.db.QueryRow(`SELECT tickets, tier FROM game_player_tickets WHERE player_id=? AND game='deadweight'`, pid).Scan(&tickets, &tier)
+	if tickets != 20 || tier != "tier_alpha" {
+		t.Fatalf("expected tickets topped up to tier_alpha's cap (20) on first register, got tickets=%d tier=%s", tickets, tier)
 	}
 
-	// Logging back in moments later must NOT grant a second freebie.
+	// Logging back in moments later must NOT top up again (already at cap, nothing to raise).
 	_, m, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m["tickets"].(float64) != 1 {
-		t.Fatalf("immediate re-login should not grant a second daily ticket: %v", m)
+	if m["tickets"].(float64) != 20 {
+		t.Fatalf("immediate re-login should not change the balance: %v", m)
 	}
 
-	// Force the clock back 25h and confirm the NEXT login grants exactly one more.
-	if _, err := e.db.Exec(`UPDATE game_player_tickets SET last_free_ticket_at = datetime('now', '-25 hours') WHERE player_id=?`, pid); err != nil {
+	// Spend some tickets, force the clock back 25h, confirm the next login tops back up to the
+	// cap -- and NEVER above it, even though the GREATEST-not-overwrite semantics also mean a
+	// balance already above the cap (e.g. from a claim code) is never reduced.
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET tickets = 3, last_ticket_topup_at = datetime('now', '-25 hours') WHERE player_id=?`, pid); err != nil {
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m2["tickets"].(float64) != 2 {
-		t.Fatalf("expected the daily freebie to fire once the 24h window passed, got %v", m2)
+	if m2["tickets"].(float64) != 20 {
+		t.Fatalf("expected the daily top-up to raise a below-cap balance back to 20, got %v", m2)
 	}
+}
+
+func TestDailyTopUp_NeverLowersABalanceAboveTheCap(t *testing.T) {
+	e := newGameEnv(t)
+	pid, secret, _ := e.register(t, "deadweight", "Ada")
+	seedClaimCode(t, e.db, "BIGWINFOUND", "deadweight", 50, 0)
+	_, mlog, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
+	tok := mlog["token"].(string)
+	_, mr, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "BIGWINFOUND"})
+	if mr["tickets"].(float64) != 70 {
+		t.Fatalf("redeem: %v %s", mr, raw)
+	}
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET last_ticket_topup_at = datetime('now', '-25 hours') WHERE player_id=?`, pid); err != nil {
+		t.Fatal(err)
+	}
+	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
+	if m2["tickets"].(float64) != 70 {
+		t.Fatalf("daily top-up must never lower a balance already above the tier cap, got %v", m2)
+	}
+}
+
+// --- Guest -> email upgrade, uncapped draft runs (S508c) --------------------------------------
+
+func TestGuestUpgrade_SamePlayerIDCarriesOverTicketsAndStats(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, tok := e.register(t, "deadweight", "Ada")
+
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", tok,
+		map[string]string{"email": "ada@example.com", "password": "correcthorsebattery"})
+	if code != 200 {
+		t.Fatalf("guest-upgrade: %d %s", code, raw)
+	}
+	if m["player_id"] != pid {
+		t.Fatalf("upgrade must keep the same player_id, got %v want %s", m["player_id"], pid)
+	}
+	newTok := m["token"].(string)
+
+	// The new token still reads the SAME ticket balance (tier_alpha cap = 20 from register()).
+	code2, m2, _ := e.do("GET", "/api/v1/games/deadweight/players/"+pid+"/tickets", "", nil)
+	if code2 != 200 || m2["tickets"].(float64) != 20 {
+		t.Fatalf("tickets should carry over unchanged: %d %v", code2, m2)
+	}
+
+	// email-login now works and returns the same player_id + a usable token.
+	code3, m3, _ := e.do("POST", "/api/v1/games/deadweight/email-login", "",
+		map[string]string{"email": "ADA@EXAMPLE.COM", "password": "correcthorsebattery"})
+	if code3 != 200 || m3["player_id"] != pid {
+		t.Fatalf("email-login: %d %v", code3, m3)
+	}
+	loginTok := m3["token"].(string)
+	if code4, mv, _ := e.do("POST", "/api/v1/games/deadweight/verify", loginTok, nil); code4 != 200 || mv["player_id"] != pid {
+		t.Fatalf("email-login token should verify as the same player: %d %v", code4, mv)
+	}
+
+	// wrong password refused
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/email-login", "", map[string]string{"email": "ada@example.com", "password": "wrongwrongwrong"}); c != 401 {
+		t.Errorf("wrong password: %d", c)
+	}
+	_ = newTok
+}
+
+func TestGuestUpgrade_RequiresPlayerTokenAndValidEmail(t *testing.T) {
+	e := newGameEnv(t)
+	_, _, tok := e.register(t, "deadweight", "Ada")
+
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", "", map[string]string{"email": "a@b.com", "password": "longenoughpass"}); c != 401 {
+		t.Errorf("anon upgrade: %d", c)
+	}
+	botTok := e.agentToken(t, "deadweight.bot.play")
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", botTok, map[string]string{"email": "a@b.com", "password": "longenoughpass"}); c != 403 {
+		t.Errorf("agent-token upgrade: %d", c)
+	}
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", tok, map[string]string{"email": "not-an-email", "password": "longenoughpass"}); c != 400 {
+		t.Errorf("invalid email: %d", c)
+	}
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", tok, map[string]string{"email": "a@b.com", "password": "short"}); c != 400 {
+		t.Errorf("short password: %d", c)
+	}
+}
+
+func TestSignupRateLimit_ThreePerIPPerDay(t *testing.T) {
+	e := newGameEnv(t)
+	for i := 0; i < 3; i++ {
+		code, _, raw := e.do("POST", "/api/v1/games/deadweight/guest-register", "", map[string]string{"display_name": "P"})
+		if code != 201 {
+			t.Fatalf("signup %d should succeed: %d %s", i, code, raw)
+		}
+	}
+	code, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-register", "", map[string]string{"display_name": "P4"})
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("4th signup from the same IP within 24h should be refused, got %d", code)
+	}
+}
+
+func draftRunStartReq(e *gameEnv, t *testing.T, pid string) (int, map[string]any) {
+	t.Helper()
+	code, m, _ := e.do("POST", "/api/v1/games/deadweight/draft-run/start", e.agentToken(t, "deadweight.tickets.write"), map[string]string{"player_id": pid})
+	return code, m
+}
+
+func TestUncappedDraftRun_ConsumesOneTicketThenResumesFree(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, _ := e.register(t, "deadweight", "Ada") // 20 tickets (tier_alpha)
+
+	code, m := draftRunStartReq(e, t, pid)
+	if code != 200 || m["resumed"] != false || m["ticket_spent"] != true {
+		t.Fatalf("first draft-run/start should spend a ticket: %d %v", code, m)
+	}
+	var tickets int
+	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=?`, pid).Scan(&tickets)
+	if tickets != 19 {
+		t.Fatalf("expected 19 tickets after starting a run, got %d", tickets)
+	}
+
+	// Calling start again while the run is still active must NOT spend a second ticket.
+	code2, m2 := draftRunStartReq(e, t, pid)
+	if code2 != 200 || m2["resumed"] != true || m2["ticket_spent"] != false {
+		t.Fatalf("resuming an active run should not spend a ticket: %d %v", code2, m2)
+	}
+	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=?`, pid).Scan(&tickets)
+	if tickets != 19 {
+		t.Fatalf("resume must not change the ticket balance, got %d", tickets)
+	}
+}
+
+func TestUncappedDraftRun_InsufficientTicketsRefused(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, _ := e.register(t, "deadweight", "Ada")
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET tickets = 0 WHERE player_id=?`, pid); err != nil {
+		t.Fatal(err)
+	}
+	code, _ := draftRunStartReq(e, t, pid)
+	if code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 with 0 tickets, got %d", code)
+	}
+}
+
+func TestUncappedDraftRun_NoWinCapEndsStrictlyAtThreeLosses(t *testing.T) {
+	e := newGameEnv(t)
+	pid0, _, _ := e.register(t, "deadweight", "Ada")
+	pid1, _, _ := e.register(t, "deadweight", "Bob")
+	if code, _ := draftRunStartReq(e, t, pid0); code != 200 {
+		t.Fatal("start run for pid0")
+	}
+
+	serverTok := e.agentToken(t, "deadweight.match.write")
+	report := func(matchID int64, winner int) int {
+		body := map[string]any{
+			"match_id": matchID, "seed": matchID, "seat0_player_id": pid0, "seat1_player_id": pid1,
+			"winner": winner, "rounds": 5, "reason": "hull", "mode": 2,
+		}
+		code, _, _ := e.do("POST", "/api/v1/games/deadweight/match-result", serverTok, body)
+		return code
+	}
+
+	// pid0 racks up 12 wins (well past any Hearthstone-style 12-win cap) with no cap enforced.
+	for i := int64(1); i <= 12; i++ {
+		if c := report(i, 0); c != 200 {
+			t.Fatalf("match %d report: %d", i, c)
+		}
+	}
+	var wins, losses, active int
+	_ = e.db.QueryRow(`SELECT wins, losses, active FROM game_draft_runs WHERE player_id=?`, pid0).Scan(&wins, &losses, &active)
+	if wins != 12 || losses != 0 || active != 1 {
+		t.Fatalf("expected 12 wins, 0 losses, still active: wins=%d losses=%d active=%d", wins, losses, active)
+	}
+
+	// 3 losses in a row end the run and post the final win count to the leaderboard.
+	for i := int64(13); i <= 15; i++ {
+		if c := report(i, 1); c != 200 { // seat1 (pid1) wins -> pid0 takes a loss
+			t.Fatalf("match %d report: %d", i, c)
+		}
+	}
+	_ = e.db.QueryRow(`SELECT wins, losses, active FROM game_draft_runs WHERE player_id=?`, pid0).Scan(&wins, &losses, &active)
+	if wins != 0 || losses != 0 || active != 0 {
+		t.Fatalf("run should be wiped after 3 losses: wins=%d losses=%d active=%d", wins, losses, active)
+	}
+
+	code, _, raw := e.do("GET", "/api/v1/games/deadweight/draft-runs/leaderboard", "", nil)
+	if code != 200 {
+		t.Fatalf("leaderboard: %d %s", code, raw)
+	}
+	arr := m2arr(t, raw)
+	if len(arr) != 1 || arr[0]["wins"].(float64) != 12 || arr[0]["player_id"] != pid0 {
+		t.Fatalf("expected one leaderboard entry with 12 wins for pid0: %v", arr)
+	}
+
+	// A fresh run needs a fresh ticket -- the row still exists (active=0) but that's not an
+	// active run, so the next start spends a new ticket rather than resuming for free.
+	code2, m2r := draftRunStartReq(e, t, pid0)
+	if code2 != 200 || m2r["resumed"] != false || m2r["ticket_spent"] != true {
+		t.Fatalf("starting a new run after the previous one ended should spend a fresh ticket: %d %v", code2, m2r)
+	}
+}
+
+func m2arr(t *testing.T, raw []byte) []map[string]any {
+	t.Helper()
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		t.Fatalf("expected a JSON array: %v (%s)", err, raw)
+	}
+	return arr
 }

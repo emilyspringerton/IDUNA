@@ -29,6 +29,7 @@ import (
 	"iduna/internal/http/middleware"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const guestTokenTTL = 24 * time.Hour
@@ -90,6 +91,17 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.redeem(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "guest-upgrade" && r.Method == http.MethodPost:
+		h.guestUpgrade(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "email-login" && r.Method == http.MethodPost:
+		if !h.allow(w, r) {
+			return
+		}
+		h.emailLogin(w, r, cfg)
+	case len(parts) == 3 && parts[1] == "draft-run" && parts[2] == "start" && r.Method == http.MethodPost:
+		h.draftRunStart(w, r, cfg)
+	case len(parts) == 3 && parts[1] == "draft-runs" && parts[2] == "leaderboard" && r.Method == http.MethodGet:
+		h.draftRunLeaderboard(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "verify" && r.Method == http.MethodPost:
 		h.verify(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "match-result" && r.Method == http.MethodPost:
@@ -177,6 +189,26 @@ func (h *GameOnlineHandler) playerToken(cfg games.Config, subPrefix, playerID, n
 	return tok, exp.Unix(), err
 }
 
+const maxSignupsPerIPPerDay = 3 // founder: "Max 3 new accounts per IP address per 24 hours. No email verification required yet."
+
+// requestIP mirrors allow()'s own X-Forwarded-For-then-RemoteAddr resolution -- kept as a
+// separate helper since the 24h signup cap (a DB-backed count, not the per-minute token bucket
+// allow() checks) needs the same IP under a different mechanism.
+func requestIP(r *http.Request) string {
+	ip := r.Header.Get("X-Forwarded-For")
+	if i := strings.IndexByte(ip, ','); i >= 0 {
+		ip = ip[:i]
+	}
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		ip = r.RemoteAddr
+		if i := strings.LastIndexByte(ip, ':'); i >= 0 {
+			ip = ip[:i]
+		}
+	}
+	return ip
+}
+
 func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request, cfg games.Config) {
 	var req struct {
 		DisplayName string `json:"display_name"`
@@ -188,6 +220,15 @@ func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request
 	name, ok := cleanDisplayName(req.DisplayName)
 	if !ok {
 		mmoWriteError(w, http.StatusBadRequest, "display_name must be 1-16 printable characters")
+		return
+	}
+	ip := requestIP(r)
+	var recentSignups int
+	_ = h.DB.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM game_signup_log WHERE ip = ? AND game = ? AND created_at > datetime('now', '-1 day')`,
+		ip, cfg.Slug).Scan(&recentSignups)
+	if recentSignups >= maxSignupsPerIPPerDay {
+		mmoWriteError(w, http.StatusTooManyRequests, "too many new accounts from this address today")
 		return
 	}
 	secretBytes := make([]byte, 32)
@@ -216,6 +257,11 @@ func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusInternalServerError, "registration failed")
 		return
 	}
+	if _, err := tx.ExecContext(r.Context(),
+		`INSERT INTO game_signup_log (ip, game) VALUES (?, ?)`, ip, cfg.Slug); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "registration failed")
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "registration failed")
 		return
@@ -225,7 +271,7 @@ func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
-	h.grantDailyFreebieIfDue(r.Context(), cfg, playerID)
+	h.topUpTicketsIfDue(r.Context(), cfg, playerID)
 	tickets := h.ticketBalance(r.Context(), cfg, playerID)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"player_id": playerID, "guest_secret": secret, "display_name": name, "token": tok, "expires_at": exp,
@@ -261,11 +307,132 @@ func (h *GameOnlineHandler) guestLogin(w http.ResponseWriter, r *http.Request, c
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
-	h.grantDailyFreebieIfDue(r.Context(), cfg, req.PlayerID)
+	h.topUpTicketsIfDue(r.Context(), cfg, req.PlayerID)
 	tickets := h.ticketBalance(r.Context(), cfg, req.PlayerID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": req.PlayerID, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": tickets,
+	})
+}
+
+var gameOnlineEmailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+// guestUpgrade is "Link Email (Save Progress)" (S508c) -- adds email/password credentials to an
+// ALREADY-EXISTING player (any provider carrying a real player_id claim, not just "guest"; a
+// Steam player linking an email is the same real operation), rather than creating a second,
+// disconnected player row the way a naive "register a new email account" would. The player_id
+// never changes, so every ticket/stat/founder-flag/draft-run row already keyed to it carries over
+// automatically with zero migration -- this is the entire reason it's a real, separate endpoint
+// instead of routing through the existing, generic PlayerEmailAuthHandler (player_email_auth.go),
+// which always mints a brand-new player_id and has no "upgrade this identity in place" concept.
+func (h *GameOnlineHandler) guestUpgrade(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, _ := claims["player_id"].(string)
+	if pid == "" {
+		mmoWriteError(w, http.StatusForbidden, "upgrade needs a player token, not an agent token")
+		return
+	}
+	if g, _ := claims["game"].(string); g != cfg.Slug || !hasPerm(claims, cfg.PlayPerm) {
+		mmoWriteError(w, http.StatusForbidden, "token is not valid for this game")
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	if !gameOnlineEmailRe.MatchString(req.Email) {
+		mmoWriteError(w, http.StatusBadRequest, "invalid email")
+		return
+	}
+	if len(req.Password) < 8 {
+		mmoWriteError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	ctx := r.Context()
+	var name string
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT display_name FROM players WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&name); err != nil {
+		mmoWriteError(w, http.StatusNotFound, "unknown player")
+		return
+	}
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO player_credentials (player_id, email, password_hash) VALUES (?, ?, ?)`,
+		pid, req.Email, string(hash)); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			mmoWriteError(w, http.StatusConflict, "email already registered, or this account already has one linked")
+			return
+		}
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE players SET email = ? WHERE player_id = ?`, req.Email, pid); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	tok, exp, err := h.playerToken(cfg, "email", pid, name)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "token": tok, "expires_at": exp})
+}
+
+// emailLogin is the returning half of guestUpgrade -- same game-scoped player-token shape every
+// other login path here issues (permissions/game/player_id claims), unlike the generic
+// PlayerEmailAuthHandler's own token shape (see guestUpgrade's doc comment).
+func (h *GameOnlineHandler) emailLogin(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	ctx := r.Context()
+	var pid, name, hash string
+	err := h.DB.QueryRowContext(ctx,
+		`SELECT pc.player_id, p.display_name, pc.password_hash FROM player_credentials pc
+		 JOIN players p ON p.player_id = pc.player_id WHERE pc.email = ? AND p.game = ?`,
+		req.Email, cfg.Slug).Scan(&pid, &name, &hash)
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		mmoWriteError(w, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+	_, _ = h.DB.ExecContext(ctx, `UPDATE players SET last_seen=CURRENT_TIMESTAMP WHERE player_id=?`, pid)
+	h.topUpTicketsIfDue(ctx, cfg, pid)
+	tok, exp, err := h.playerToken(cfg, "email", pid, name)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
+		"tickets": h.ticketBalance(ctx, cfg, pid),
 	})
 }
 
@@ -396,10 +563,11 @@ func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, c
 			return
 		}
 		if _, err := tx.ExecContext(ctx,
-			// last_free_ticket_at is seeded to now, not left NULL -- the starter grant itself
-			// counts as "today's freebie" so an immediate re-login can't double-dip an extra
-			// ticket before the 24h window naturally closes.
-			`INSERT INTO game_player_tickets (player_id, game, tickets, last_free_ticket_at) VALUES (?,?,?,CURRENT_TIMESTAMP)`,
+			// last_ticket_topup_at is seeded to now, not left NULL -- the starter grant itself
+			// counts as "today's top-up" so an immediate re-login can't double-dip before the
+			// 24h window naturally closes. tier defaults to defaultAccountTier via the column's
+			// own DEFAULT, not repeated here.
+			`INSERT INTO game_player_tickets (player_id, game, tickets, last_ticket_topup_at) VALUES (?,?,?,CURRENT_TIMESTAMP)`,
 			playerID, cfg.Slug, steamStarterTickets); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, "registration failed")
 			return
@@ -421,7 +589,7 @@ func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, c
 		// A brand-new account already got its starter grant above -- the daily freebie is for
 		// RETURNING players, same "every player needs to receive 1 free Draft Ticket every 24
 		// hours" rule guest accounts get via grantDailyFreebieIfDue elsewhere.
-		h.grantDailyFreebieIfDue(ctx, cfg, playerID)
+		h.topUpTicketsIfDue(ctx, cfg, playerID)
 	}
 	tickets := h.ticketBalance(ctx, cfg, playerID)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -439,25 +607,62 @@ func (h *GameOnlineHandler) ticketBalance(ctx context.Context, cfg games.Config,
 	return tickets
 }
 
-// grantDailyFreebieIfDue is the "daily cron" (S508, founder: "implement a server-side daily
-// cron/check... 1 free Draft Ticket every 24 hours to active accounts") -- implemented as a
-// lazy, on-activity UPSERT rather than a real cron daemon: no new systemd timer/service to run
-// and go down independently, and it can never "miss a day" the way a cron that isn't running
-// would -- the grant simply lands the next time the player does anything real (register, login,
-// or a match-server verify), which is the actual definition of "active" this rule cares about.
-// A single atomic UPSERT (no read-then-write race): the INSERT branch seeds a fresh row at 1
-// ticket for a player who has never had one (this doubles as the free-to-play path's very first
-// ticket, no Steam purchase or claim code required), the DO UPDATE branch only fires when the
-// existing row's last_free_ticket_at is NULL or more than 24h old.
-func (h *GameOnlineHandler) grantDailyFreebieIfDue(ctx context.Context, cfg games.Config, playerID string) {
-	_, _ = h.DB.ExecContext(ctx, `
-		INSERT INTO game_player_tickets (player_id, game, tickets, last_free_ticket_at)
-		VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-		ON CONFLICT(player_id, game) DO UPDATE SET
-			tickets = tickets + 1,
-			last_free_ticket_at = CURRENT_TIMESTAMP
-		WHERE last_free_ticket_at IS NULL OR last_free_ticket_at < datetime('now', '-1 day')`,
-		playerID, cfg.Slug)
+// defaultAccountTier / tierCaps -- S508c, founder real-time, superseding S508b's flat "+1
+// ticket/day": "Add an account_tier enum... tier_alpha (Caps at 20), tier_premium (Caps at 5),
+// tier_free (Caps at 1)... Hardcode the default registration tier to tier_alpha. (We will flip
+// the default to tier_free manually on Sept 30)." Hardcoded exactly as asked -- the flip is a
+// one-line change to this const on that date, not a config value, per the founder's own explicit
+// "manually" instruction.
+const defaultAccountTier = "tier_alpha" // TODO(founder, 2026-09-30): flip to "tier_free"
+
+var tierCaps = map[string]int{
+	"tier_alpha":   20,
+	"tier_premium": 5,
+	"tier_free":    1,
+}
+
+func tierCap(tier string) int {
+	if c, ok := tierCaps[tier]; ok {
+		return c
+	}
+	return tierCaps["tier_free"] // an unrecognized/empty tier gets the safest (lowest) cap, never the most generous
+}
+
+// topUpTicketsIfDue is the "daily cron/check" (S508c) -- implemented as a lazy, on-activity
+// UPSERT rather than a real cron daemon, same reasoning S508b's own version already established:
+// no new systemd timer/service to run and go down independently, and it can never "miss a day"
+// the way a cron that isn't running would.
+//
+// Real, deliberate deviation from the literal ask ("top up their Draft Tickets to their tier's
+// maximum limit"): this only RAISES a balance up to the tier cap, never lowers one already above
+// it (GREATEST semantics, not a strict overwrite). A strict SET-to-cap would actively deduct
+// tickets a player redeemed via a paid claim code, which would be a real revenue-trust-breaking
+// bug disguised as "topping up" -- named here as a correction to the literal spec, not a silent
+// reinterpretation.
+func (h *GameOnlineHandler) topUpTicketsIfDue(ctx context.Context, cfg games.Config, playerID string) {
+	var tickets, due int
+	var tier string
+	err := h.DB.QueryRowContext(ctx,
+		`SELECT tickets, tier, (last_ticket_topup_at IS NULL OR last_ticket_topup_at < datetime('now', '-1 day'))
+		 FROM game_player_tickets WHERE player_id = ? AND game = ?`,
+		playerID, cfg.Slug).Scan(&tickets, &tier, &due)
+	if err == sql.ErrNoRows {
+		_, _ = h.DB.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tickets, tier, last_ticket_topup_at)
+			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+			playerID, cfg.Slug, tierCap(defaultAccountTier), defaultAccountTier)
+		return
+	}
+	if err != nil || due == 0 {
+		return
+	}
+	maxTickets := tierCap(tier)
+	if tickets < maxTickets {
+		tickets = maxTickets
+	}
+	_, _ = h.DB.ExecContext(ctx,
+		`UPDATE game_player_tickets SET tickets = ?, last_ticket_topup_at = CURRENT_TIMESTAMP WHERE player_id = ? AND game = ?`,
+		tickets, playerID, cfg.Slug)
 }
 
 func (h *GameOnlineHandler) ticketsRead(w http.ResponseWriter, r *http.Request, cfg games.Config, playerID string) {
@@ -580,9 +785,10 @@ func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg g
 		return
 	}
 	var ticketsGranted, founderFlag int
+	var tierGrant sql.NullString
 	if err := tx.QueryRowContext(ctx,
-		`SELECT tickets, founder_flag FROM game_claim_codes WHERE code = ? AND game = ?`, code, cfg.Slug).
-		Scan(&ticketsGranted, &founderFlag); err != nil {
+		`SELECT tickets, founder_flag, tier FROM game_claim_codes WHERE code = ? AND game = ?`, code, cfg.Slug).
+		Scan(&ticketsGranted, &founderFlag, &tierGrant); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -601,6 +807,19 @@ func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg g
 			return
 		}
 	}
+	if tierGrant.Valid && tierGrant.String != "" {
+		// A tier grant (e.g. a Founder pack bumping tier_free -> tier_premium) needs a real
+		// tickets row to update the tier column on -- upsert the same way the tickets branch
+		// above does, so a code that ONLY grants a tier (0 tickets) still works for a
+		// brand-new player with no row yet.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tier) VALUES (?, ?, ?)
+			 ON CONFLICT(player_id, game) DO UPDATE SET tier = excluded.tier`,
+			pid, cfg.Slug, tierGrant.String); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
 	var balance int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&balance); err != nil {
@@ -613,6 +832,7 @@ func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg g
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "tickets_granted": ticketsGranted, "founder": founderFlag != 0, "tickets": balance,
+		"tier": tierGrant.String,
 	})
 }
 
@@ -660,7 +880,7 @@ func (h *GameOnlineHandler) verify(w http.ResponseWriter, r *http.Request, cfg g
 		// Daily freebie (S508): every real connection attempt is "active" enough to be worth
 		// checking -- fire-and-forget, same nil-safe/non-blocking spirit the event log already
 		// uses elsewhere, since a grant failure here must never break a real match connect.
-		h.grantDailyFreebieIfDue(r.Context(), cfg, pid)
+		h.topUpTicketsIfDue(r.Context(), cfg, pid)
 		writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "kind": "human", "game": cfg.Slug})
 		return
 	}
@@ -830,11 +1050,174 @@ func (h *GameOnlineHandler) matchResult(w http.ResponseWriter, r *http.Request, 
 			}
 		}
 	}
+	// Uncapped Draft Run progress (S508c) -- founder real-time: "1 Ticket = 1 Draft Run... Matches
+	// do not consume tickets. The run ends, and the deck is wiped, strictly when
+	// active_run_losses == 3. There is no win cap." Mode 2 = DW_MODE_DRAFT (protocol.h). A no-op
+	// for any player with no active run (e.g. bot_bot matches, or a match reported after the run
+	// already ended) -- the UPDATE below simply affects 0 rows. Deliberate, named design choice:
+	// a draw (winner==2) advances NEITHER wins nor losses -- it doesn't end the run, but also
+	// doesn't score toward the leaderboard win count. Worth the founder's own explicit
+	// confirmation if that's not the intended read of "ends strictly at 3 losses."
+	if !dup && req.Mode == dwModeDraft {
+		if req.Winner == 0 || req.Winner == 1 {
+			winner, loser := req.Seat0, req.Seat1
+			if req.Winner == 1 {
+				winner, loser = req.Seat1, req.Seat0
+			}
+			if err := h.draftRunWin(ctx, tx, cfg, winner); err != nil {
+				mmoWriteError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if err := h.draftRunLoss(ctx, tx, cfg, loser); err != nil {
+				mmoWriteError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": dup, "seat0": a, "seat1": b})
+}
+
+const dwModeDraft = 2 // matches DEADWEIGHT/core/protocol.h's DW_MODE_DRAFT
+
+func (h *GameOnlineHandler) draftRunWin(ctx context.Context, tx *sql.Tx, cfg games.Config, playerID string) error {
+	_, err := tx.ExecContext(ctx,
+		`UPDATE game_draft_runs SET wins = wins + 1 WHERE player_id = ? AND game = ? AND active = 1`,
+		playerID, cfg.Slug)
+	return err
+}
+
+func (h *GameOnlineHandler) draftRunLoss(ctx context.Context, tx *sql.Tx, cfg games.Config, playerID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE game_draft_runs SET losses = losses + 1 WHERE player_id = ? AND game = ? AND active = 1`,
+		playerID, cfg.Slug); err != nil {
+		return err
+	}
+	var wins, losses int
+	err := tx.QueryRowContext(ctx,
+		`SELECT wins, losses FROM game_draft_runs WHERE player_id = ? AND game = ? AND active = 1`,
+		playerID, cfg.Slug).Scan(&wins, &losses)
+	if err == sql.ErrNoRows {
+		return nil // no active run for this player -- the UPDATE above was a real no-op
+	}
+	if err != nil || losses < 3 {
+		return err
+	}
+	// Run over: post the final win count to the leaderboard, wipe the run (and, by extension,
+	// the deck -- the client's own existing draft-requeue flow already treats "no active run" as
+	// needing a fresh draft).
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO game_draft_run_results (player_id, game, wins) VALUES (?, ?, ?)`,
+		playerID, cfg.Slug, wins); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx,
+		`UPDATE game_draft_runs SET active = 0, wins = 0, losses = 0 WHERE player_id = ? AND game = ?`,
+		playerID, cfg.Slug)
+	return err
+}
+
+func (h *GameOnlineHandler) draftRunLeaderboard(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	limit := 20
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 100 {
+		limit = v
+	}
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT res.player_id, p.display_name, res.wins, res.ended_at
+		 FROM game_draft_run_results res JOIN players p ON p.player_id = res.player_id
+		 WHERE res.game = ? ORDER BY res.wins DESC, res.ended_at ASC LIMIT ?`, cfg.Slug, limit)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+	type entry struct {
+		PlayerID    string `json:"player_id"`
+		DisplayName string `json:"display_name"`
+		Wins        int    `json:"wins"`
+		EndedAt     string `json:"ended_at"`
+	}
+	out := []entry{}
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.PlayerID, &e.DisplayName, &e.Wins, &e.EndedAt); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		out = append(out, e)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// draftRunStart is "1 Ticket = 1 Draft Run" (S508c): DEADWEIGHT-SERVER-agent-gated (same
+// TicketsWritePerm ticketsConsume already uses -- a player can never call this directly, same
+// forgery-separation established throughout this file), idempotent resume of an already-active
+// run (no ticket spent), or atomically spends 1 ticket to start a fresh one.
+func (h *GameOnlineHandler) draftRunStart(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	if !hasPerm(claims, cfg.TicketsWritePerm) {
+		mmoWriteError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var req struct {
+		PlayerID string `json:"player_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.PlayerID == "" {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON / missing player_id")
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback()
+	var wins, losses, active int
+	err = tx.QueryRowContext(ctx,
+		`SELECT wins, losses, active FROM game_draft_runs WHERE player_id = ? AND game = ?`, req.PlayerID, cfg.Slug).
+		Scan(&wins, &losses, &active)
+	if err != nil && err != sql.ErrNoRows {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if active == 1 {
+		if err := tx.Commit(); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "resumed": true, "wins": wins, "losses": losses, "ticket_spent": false})
+		return
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE game_player_tickets SET tickets = tickets - 1, updated_at = CURRENT_TIMESTAMP
+		 WHERE player_id = ? AND game = ? AND tickets > 0`, req.PlayerID, cfg.Slug)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		mmoWriteError(w, http.StatusPaymentRequired, "insufficient tickets")
+		return
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO game_draft_runs (player_id, game, active, wins, losses, started_at) VALUES (?, ?, 1, 0, 0, CURRENT_TIMESTAMP)
+		 ON CONFLICT(player_id, game) DO UPDATE SET active = 1, wins = 0, losses = 0, started_at = CURRENT_TIMESTAMP`,
+		req.PlayerID, cfg.Slug); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "resumed": false, "wins": 0, "losses": 0, "ticket_spent": true})
 }
 
 func (h *GameOnlineHandler) stats(w http.ResponseWriter, r *http.Request, cfg games.Config, pid string) {
