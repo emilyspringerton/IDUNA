@@ -16,17 +16,27 @@
 # Bound to 127.0.0.1 ONLY -- IDUNA's own in-process proxy is the sole real path to this service;
 # it must never be reachable directly. No --abs-proxy-base-path flag: that controls code-server's
 # own UNRELATED "absproxy" feature (proxying dev servers running INSIDE a workspace out through
-# code-server), not code-server's own sub-path hosting -- checked directly against real working
-# nginx reverse-proxy examples before assuming. code-server auto-detects its own base path from
-# the incoming request path itself; the proxy (nock_code_proxy.go) forwards the full
-# /admin/nock/code/... path through UNCHANGED (no prefix stripping), matching that real,
-# documented pattern.
+# code-server), not code-server's own app-level routing.
+#
+# CORRECTED (2026-09-21, live testing): code-server does NOT auto-detect an arbitrary base path
+# from the request path -- its own server-side router only recognizes fixed root-level paths, with
+# no prefix support at all. It's mounted at a dedicated, root-mounted host instead
+# (console.okemily.com, see main.go's NOCK_CODE_SERVER_HOST wiring and
+# IDUNA/ops/nginx/console-okemily.conf's own header comment for the full story), not a
+# /admin/nock/code subpath.
+#
+# --disable-workspace-trust: without it, every fresh browser session opens this workspace in VS
+# Code's "Restricted Mode" (extensions/tasks disabled) until manually trusted -- real friction with
+# no real security benefit here, since IDUNA's own admin-permission gate is what actually decides
+# who can reach this at all; workspace trust is meant to guard against opening an UNKNOWN folder
+# from disk, not a re-decision this deployment needs on every session for its own single,
+# always-the-same /home/fatbaby workspace.
 #
 # Deploy:
 #   mkdir -p ~/.config/systemd/user
 #   cp ops/systemd/nock-code-server.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now nock-code-server.service
+#   systemctl --user restart nock-code-server.service
 
 [Unit]
 Description=code-server (VS Code) -- NOCK tools, gated entirely by IDUNA's own admin cookie auth
@@ -41,6 +51,7 @@ ExecStart=/home/fatbaby/.local/bin/code-server \
     --auth=none \
     --disable-telemetry \
     --disable-update-check \
+    --disable-workspace-trust \
     /home/fatbaby
 Restart=on-failure
 RestartSec=2

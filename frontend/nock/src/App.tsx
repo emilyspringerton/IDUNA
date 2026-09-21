@@ -1422,20 +1422,18 @@ export default function App() {
       ) : tab === 'sprays' ? (
         <Sprays />
       ) : tab === 'code' ? (
-        <div className="layout-single" style={{ height: 'calc(100vh - 120px)' }}>
-          <p style={{ margin: '0 0 8px' }}>
+        <div className="layout-single">
+          {/* A plain link, not an iframe: VS Code's own UI (menus, the command palette,
+             keyboard shortcuts) assumes it owns the top-level browser tab -- framed inside NOCK,
+             several of its own dialogs and focus-trapping behaviors fight the surrounding page.
+             It's also gated by the same Back Office login as everything else here, so there's no
+             real isolation benefit to keeping it embedded. */}
+          <p>
             <a href={codeServerUrl()} target="_blank" rel="noopener noreferrer">
-              Open in a new tab
+              Open the code editor
             </a>{' '}
-            if the embedded editor below feels cramped. It runs on a dedicated host, gated by the
-            same Back Office login -- log in there once if you land on a login page inside the
-            frame below.
+            ({codeServerUrl()}, same Back Office login).
           </p>
-          <iframe
-            title="VS Code"
-            src={codeServerUrl()}
-            style={{ width: '100%', height: '100%', border: 'none' }}
-          />
         </div>
       ) : (
         <div className="layout">
