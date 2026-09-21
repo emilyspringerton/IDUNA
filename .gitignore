@@ -16,3 +16,9 @@ sdk/python/.pytest_cache/
 
 # Local pre-rollout DB backups (SSH Transport & Identity spec Stage 5) -- never committed.
 var-backups/
+
+# Generated claim-code batches (cmd/gen-claim-codes output) -- real, plaintext, redeemable
+# inventory (S508d, "$X worth of digital inventory"), same sensitivity class as an agent secret.
+# Never committed; the founder uploads these directly to Itch's own key-upload feature.
+batch_*_keys.txt
+*_keys.txt

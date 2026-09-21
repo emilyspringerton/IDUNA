@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -750,17 +751,19 @@ func TestSignupRateLimit_ThreePerIPPerDay(t *testing.T) {
 	}
 }
 
-func draftRunStartReq(e *gameEnv, t *testing.T, pid string) (int, map[string]any) {
+// draftRunStartReq -- S510: draft-run/* now takes the PLAYER's own token (see draftRunStart's
+// doc comment in game_online.go for why), not the DEADWEIGHT-SERVER agent token.
+func draftRunStartReq(e *gameEnv, t *testing.T, tok string) (int, map[string]any) {
 	t.Helper()
-	code, m, _ := e.do("POST", "/api/v1/games/deadweight/draft-run/start", e.agentToken(t, "deadweight.tickets.write"), map[string]string{"player_id": pid})
+	code, m, _ := e.do("POST", "/api/v1/games/deadweight/draft-run/start", tok, nil)
 	return code, m
 }
 
 func TestUncappedDraftRun_ConsumesOneTicketThenResumesFree(t *testing.T) {
 	e := newGameEnv(t)
-	pid, _, _ := e.register(t, "deadweight", "Ada") // 20 tickets (tier_alpha)
+	pid, _, tok := e.register(t, "deadweight", "Ada") // 20 tickets (tier_alpha)
 
-	code, m := draftRunStartReq(e, t, pid)
+	code, m := draftRunStartReq(e, t, tok)
 	if code != 200 || m["resumed"] != false || m["ticket_spent"] != true {
 		t.Fatalf("first draft-run/start should spend a ticket: %d %v", code, m)
 	}
@@ -771,7 +774,7 @@ func TestUncappedDraftRun_ConsumesOneTicketThenResumesFree(t *testing.T) {
 	}
 
 	// Calling start again while the run is still active must NOT spend a second ticket.
-	code2, m2 := draftRunStartReq(e, t, pid)
+	code2, m2 := draftRunStartReq(e, t, tok)
 	if code2 != 200 || m2["resumed"] != true || m2["ticket_spent"] != false {
 		t.Fatalf("resuming an active run should not spend a ticket: %d %v", code2, m2)
 	}
@@ -779,15 +782,22 @@ func TestUncappedDraftRun_ConsumesOneTicketThenResumesFree(t *testing.T) {
 	if tickets != 19 {
 		t.Fatalf("resume must not change the ticket balance, got %d", tickets)
 	}
+
+	// An agent token (not a player token) must be refused -- same forgery-separation every other
+	// player-self-service endpoint in this file enforces.
+	botTok := e.agentToken(t, "deadweight.tickets.write")
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/draft-run/start", botTok, nil); c != 403 {
+		t.Errorf("agent-token draft-run/start should be refused: %d", c)
+	}
 }
 
 func TestUncappedDraftRun_InsufficientTicketsRefused(t *testing.T) {
 	e := newGameEnv(t)
-	pid, _, _ := e.register(t, "deadweight", "Ada")
+	pid, _, tok := e.register(t, "deadweight", "Ada")
 	if _, err := e.db.Exec(`UPDATE game_player_tickets SET tickets = 0 WHERE player_id=?`, pid); err != nil {
 		t.Fatal(err)
 	}
-	code, _ := draftRunStartReq(e, t, pid)
+	code, _ := draftRunStartReq(e, t, tok)
 	if code != http.StatusPaymentRequired {
 		t.Fatalf("expected 402 with 0 tickets, got %d", code)
 	}
@@ -795,9 +805,9 @@ func TestUncappedDraftRun_InsufficientTicketsRefused(t *testing.T) {
 
 func TestUncappedDraftRun_NoWinCapEndsStrictlyAtThreeLosses(t *testing.T) {
 	e := newGameEnv(t)
-	pid0, _, _ := e.register(t, "deadweight", "Ada")
+	pid0, _, tok0 := e.register(t, "deadweight", "Ada")
 	pid1, _, _ := e.register(t, "deadweight", "Bob")
-	if code, _ := draftRunStartReq(e, t, pid0); code != 200 {
+	if code, _ := draftRunStartReq(e, t, tok0); code != 200 {
 		t.Fatal("start run for pid0")
 	}
 
@@ -843,11 +853,132 @@ func TestUncappedDraftRun_NoWinCapEndsStrictlyAtThreeLosses(t *testing.T) {
 		t.Fatalf("expected one leaderboard entry with 12 wins for pid0: %v", arr)
 	}
 
+	// S510: the auto-end cash-out actually grants tickets now -- 12 wins is the 10-14 band
+	// (+3 tickets). Started with 20 (tier_alpha), spent 1 to start, so 19 before cash-out.
+	var tickets int
+	_ = e.db.QueryRow(`SELECT tickets FROM game_player_tickets WHERE player_id=?`, pid0).Scan(&tickets)
+	if tickets != 22 {
+		t.Fatalf("expected 19+3=22 tickets after a 12-win cash-out, got %d", tickets)
+	}
+
 	// A fresh run needs a fresh ticket -- the row still exists (active=0) but that's not an
 	// active run, so the next start spends a new ticket rather than resuming for free.
-	code2, m2r := draftRunStartReq(e, t, pid0)
+	code2, m2r := draftRunStartReq(e, t, tok0)
 	if code2 != 200 || m2r["resumed"] != false || m2r["ticket_spent"] != true {
 		t.Fatalf("starting a new run after the previous one ended should spend a fresh ticket: %d %v", code2, m2r)
+	}
+}
+
+// TestDraftRunReward_MatchesFounderTable -- S510 "Cash-Out Logic": every explicit band the
+// founder gave, plus the named 25+ scaling formula, checked end-to-end through the real abort
+// endpoint (an external test package can't reach the unexported draftRunReward directly, and
+// going through the real HTTP path is the stronger check anyway).
+func TestDraftRunReward_MatchesFounderTable(t *testing.T) {
+	cases := []struct{ wins, want int }{
+		{0, 0}, {5, 0}, {6, 1}, {9, 1}, {10, 3}, {14, 3}, {15, 8}, {19, 8}, {20, 13}, {24, 13}, {25, 18},
+	}
+	e := newGameEnv(t)
+	serverTok := e.agentToken(t, "deadweight.match.write")
+	pidBot, _, _ := e.register(t, "deadweight", "Bot")
+	var matchID int64
+	for _, c := range cases {
+		// register()'s own anti-abuse cap (3 new accounts / IP / 24h, all real requests in this
+		// test share httptest's blank RemoteAddr) would otherwise refuse this table test's own
+		// 11 registrations -- clear the log between them since that's not what this test covers.
+		_, _ = e.db.Exec(`DELETE FROM game_signup_log`)
+		seat0, _, tok := e.register(t, "deadweight", fmt.Sprintf("P%d", c.wins))
+		if code, _ := draftRunStartReq(e, t, tok); code != 200 {
+			t.Fatalf("wins=%d: start run", c.wins)
+		}
+		for i := 0; i < c.wins; i++ {
+			matchID++
+			body := map[string]any{"match_id": matchID, "seed": matchID, "seat0_player_id": seat0, "seat1_player_id": pidBot, "winner": 0, "rounds": 5, "reason": "hull", "mode": 2}
+			if code, _, raw := e.do("POST", "/api/v1/games/deadweight/match-result", serverTok, body); code != 200 {
+				t.Fatalf("wins=%d win %d: report %d %s", c.wins, i, code, raw)
+			}
+		}
+		code, m, raw := e.do("POST", "/api/v1/games/deadweight/draft-run/abort", tok, nil)
+		if code != 200 {
+			t.Fatalf("wins=%d: abort %d %s", c.wins, code, raw)
+		}
+		if got := int(m["tickets_granted"].(float64)); got != c.want {
+			t.Errorf("wins=%d: tickets_granted = %d, want %d", c.wins, got, c.want)
+		}
+	}
+}
+
+// TestDraftRun_SaveDeckStateAndAbort -- S510: the real Draft Hub path (draft finished -> deck
+// saved -> boot-time resume reads it back -> voluntary Abort & Extract cashes out early, before
+// the 3rd loss, at whatever win count the run holds).
+func TestDraftRun_SaveDeckStateAndAbort(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, tok := e.register(t, "deadweight", "Ada") // 20 tickets (tier_alpha)
+
+	// No active run yet.
+	code, m, raw := e.do("GET", "/api/v1/games/deadweight/draft-run", tok, nil)
+	if code != 200 || m["active"] != false {
+		t.Fatalf("expected inactive state pre-start: %d %s", code, raw)
+	}
+
+	if code, _ := draftRunStartReq(e, t, tok); code != 200 {
+		t.Fatal("start run")
+	}
+
+	deck := []int{1, 2, 3, 4, 5}
+	if code, _, raw := e.do("POST", "/api/v1/games/deadweight/draft-run/deck", tok, map[string]any{"deck": deck}); code != 200 {
+		t.Fatalf("save deck: %d %s", code, raw)
+	}
+
+	code, m, raw = e.do("GET", "/api/v1/games/deadweight/draft-run", tok, nil)
+	if code != 200 || m["active"] != true {
+		t.Fatalf("expected active state after start: %d %s", code, raw)
+	}
+	gotDeck := m["deck"].([]any)
+	if len(gotDeck) != len(deck) {
+		t.Fatalf("expected saved deck to round-trip, got %v", m["deck"])
+	}
+
+	// Win 7 (lands in the 6-9 band, +1 ticket), then bail out voluntarily rather than risk the
+	// 3rd loss.
+	serverTok := e.agentToken(t, "deadweight.match.write")
+	pid2, _, _ := e.register(t, "deadweight", "Bob")
+	for i := int64(1); i <= 7; i++ {
+		body := map[string]any{"match_id": i, "seed": i, "seat0_player_id": pid, "seat1_player_id": pid2, "winner": 0, "rounds": 5, "reason": "hull", "mode": 2}
+		if c, _, _ := e.do("POST", "/api/v1/games/deadweight/match-result", serverTok, body); c != 200 {
+			t.Fatalf("match %d report: %d", i, c)
+		}
+	}
+	code, m, raw = e.do("POST", "/api/v1/games/deadweight/draft-run/abort", tok, nil)
+	if code != 200 {
+		t.Fatalf("abort: %d %s", code, raw)
+	}
+	if m["wins"].(float64) != 7 || m["tickets_granted"].(float64) != 1 {
+		t.Fatalf("expected 7 wins / +1 ticket, got %v", m)
+	}
+	// Started with 20, spent 1 on the run (19), gained 1 back on abort (20).
+	if m["tickets"].(float64) != 20 {
+		t.Fatalf("expected balance back to 20, got %v", m)
+	}
+
+	// Run is gone -- a second abort must refuse, and state must read back inactive with no deck.
+	if code, _, _ := e.do("POST", "/api/v1/games/deadweight/draft-run/abort", tok, nil); code != 400 {
+		t.Fatalf("second abort should refuse: %d", code)
+	}
+	code, m, raw = e.do("GET", "/api/v1/games/deadweight/draft-run", tok, nil)
+	if code != 200 || m["active"] != false || len(m["deck"].([]any)) != 0 {
+		t.Fatalf("expected inactive/empty-deck state after abort: %d %s", code, raw)
+	}
+
+	// Agent token must be refused on every draft-run/* self-service route.
+	botTok := e.agentToken(t, "deadweight.tickets.write")
+	if c, _, _ := e.do("GET", "/api/v1/games/deadweight/draft-run", botTok, nil); c != 403 {
+		t.Errorf("agent-token draft-run state should be refused: %d", c)
+	}
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/draft-run/deck", botTok, map[string]any{"deck": deck}); c != 403 {
+		t.Errorf("agent-token save-deck should be refused: %d", c)
+	}
+	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/draft-run/abort", botTok, nil); c != 403 {
+		t.Errorf("agent-token abort should be refused: %d", c)
 	}
 }
 

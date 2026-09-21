@@ -100,6 +100,12 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.emailLogin(w, r, cfg)
 	case len(parts) == 3 && parts[1] == "draft-run" && parts[2] == "start" && r.Method == http.MethodPost:
 		h.draftRunStart(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "draft-run" && r.Method == http.MethodGet:
+		h.draftRunState(w, r, cfg)
+	case len(parts) == 3 && parts[1] == "draft-run" && parts[2] == "deck" && r.Method == http.MethodPost:
+		h.draftRunSaveDeck(w, r, cfg)
+	case len(parts) == 3 && parts[1] == "draft-run" && parts[2] == "abort" && r.Method == http.MethodPost:
+		h.draftRunAbort(w, r, cfg)
 	case len(parts) == 3 && parts[1] == "draft-runs" && parts[2] == "leaderboard" && r.Method == http.MethodGet:
 		h.draftRunLeaderboard(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "verify" && r.Method == http.MethodPost:
@@ -1139,18 +1145,60 @@ func (h *GameOnlineHandler) draftRunLoss(ctx context.Context, tx *sql.Tx, cfg ga
 	if err != nil || losses < 3 {
 		return err
 	}
-	// Run over: post the final win count to the leaderboard, wipe the run (and, by extension,
-	// the deck -- the client's own existing draft-requeue flow already treats "no active run" as
-	// needing a fresh draft).
+	// Run over (3rd Burned Proxy): cash out at the current win count, same real reward table and
+	// leaderboard/reset logic "Abort & Extract" uses -- the only difference between the two paths
+	// is what triggered them.
+	_, err = h.cashOutDraftRun(ctx, tx, cfg, playerID, wins)
+	return err
+}
+
+// draftRunReward is the founder's own cash-out table (S510, "Cash-Out Logic"): 0 tickets under 6
+// wins, then a band per 5-win tier, with the 25+ band following the founder's own named scaling
+// formula (3 + 5*floor((wins-10)/5)) rather than a fixed cap -- verified it reproduces every
+// explicit band the founder gave (6-9:+1, 10-14:+3, 15-19:+8, 20-24:+13, 25:+18) before trusting
+// it past 25.
+func draftRunReward(wins int) int {
+	switch {
+	case wins < 6:
+		return 0
+	case wins <= 9:
+		return 1
+	case wins <= 14:
+		return 3
+	case wins <= 19:
+		return 8
+	case wins <= 24:
+		return 13
+	default:
+		return 3 + 5*((wins-10)/5)
+	}
+}
+
+// cashOutDraftRun is the one real place a Draft Run ends, win count posted and tickets granted,
+// whether triggered by the 3rd loss (draftRunLoss above) or a voluntary "Abort & Extract"
+// (draftRunAbort below) -- same real reason redeem/ticketsConsume centralize their own atomic
+// balance updates instead of letting two call sites drift.
+func (h *GameOnlineHandler) cashOutDraftRun(ctx context.Context, tx *sql.Tx, cfg games.Config, playerID string, wins int) (int, error) {
+	reward := draftRunReward(wins)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO game_draft_run_results (player_id, game, wins) VALUES (?, ?, ?)`,
 		playerID, cfg.Slug, wins); err != nil {
-		return err
+		return 0, err
 	}
-	_, err = tx.ExecContext(ctx,
-		`UPDATE game_draft_runs SET active = 0, wins = 0, losses = 0 WHERE player_id = ? AND game = ?`,
-		playerID, cfg.Slug)
-	return err
+	if reward > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tickets) VALUES (?, ?, ?)
+			 ON CONFLICT(player_id, game) DO UPDATE SET tickets = tickets + excluded.tickets, updated_at = CURRENT_TIMESTAMP`,
+			playerID, cfg.Slug, reward); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE game_draft_runs SET active = 0, wins = 0, losses = 0, deck = NULL WHERE player_id = ? AND game = ?`,
+		playerID, cfg.Slug); err != nil {
+		return 0, err
+	}
+	return reward, nil
 }
 
 func (h *GameOnlineHandler) draftRunLeaderboard(w http.ResponseWriter, r *http.Request, cfg games.Config) {
@@ -1185,24 +1233,35 @@ func (h *GameOnlineHandler) draftRunLeaderboard(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, out)
 }
 
-// draftRunStart is "1 Ticket = 1 Draft Run" (S508c): DEADWEIGHT-SERVER-agent-gated (same
-// TicketsWritePerm ticketsConsume already uses -- a player can never call this directly, same
-// forgery-separation established throughout this file), idempotent resume of an already-active
-// run (no ticket spent), or atomically spends 1 ticket to start a fresh one.
+// draftPlayerClaims is the same "player's own token, scoped to this game" check redeem/
+// draftRunAbort/draftRunSaveDeck/draftRunState all share -- factored out here since S510
+// converted the whole draft-run/* family from DEADWEIGHT-SERVER-agent-only to player-token-direct
+// (see draftRunStart's own doc comment for why).
+func draftPlayerClaims(claims map[string]any, cfg games.Config) (pid string, ok bool) {
+	pid, _ = claims["player_id"].(string)
+	if pid == "" {
+		return "", false
+	}
+	g, _ := claims["game"].(string)
+	return pid, g == cfg.Slug && hasPerm(claims, cfg.PlayPerm)
+}
+
+// draftRunStart is "1 Ticket = 1 Draft Run" (S508c). S510 real-world correction: originally
+// DEADWEIGHT-SERVER-agent-gated (mirroring ticketsConsume) but never actually wired up from
+// dw_server's poll loop -- doing so needs a new async job type + wire messages, real, separate
+// work. Every action here only ever touches the CALLING player's own balance/run row (never
+// another player's, never a match-result win/loss -- those stay locked to the agent-authenticated
+// matchResult path), so it's the same trust level as redeem/guest-upgrade/email-login, which
+// already take the player's own token directly. Idempotent resume of an already-active run (no
+// ticket spent), or atomically spends 1 ticket to start a fresh one.
 func (h *GameOnlineHandler) draftRunStart(w http.ResponseWriter, r *http.Request, cfg games.Config) {
 	claims := h.bearerClaims(w, r)
 	if claims == nil {
 		return
 	}
-	if !hasPerm(claims, cfg.TicketsWritePerm) {
-		mmoWriteError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	var req struct {
-		PlayerID string `json:"player_id"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.PlayerID == "" {
-		mmoWriteError(w, http.StatusBadRequest, "invalid JSON / missing player_id")
+	pid, ok := draftPlayerClaims(claims, cfg)
+	if !ok {
+		mmoWriteError(w, http.StatusForbidden, "draft-run needs a player token, not an agent token")
 		return
 	}
 	ctx := r.Context()
@@ -1214,7 +1273,7 @@ func (h *GameOnlineHandler) draftRunStart(w http.ResponseWriter, r *http.Request
 	defer tx.Rollback()
 	var wins, losses, active int
 	err = tx.QueryRowContext(ctx,
-		`SELECT wins, losses, active FROM game_draft_runs WHERE player_id = ? AND game = ?`, req.PlayerID, cfg.Slug).
+		`SELECT wins, losses, active FROM game_draft_runs WHERE player_id = ? AND game = ?`, pid, cfg.Slug).
 		Scan(&wins, &losses, &active)
 	if err != nil && err != sql.ErrNoRows {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
@@ -1230,7 +1289,7 @@ func (h *GameOnlineHandler) draftRunStart(w http.ResponseWriter, r *http.Request
 	}
 	res, err := tx.ExecContext(ctx,
 		`UPDATE game_player_tickets SET tickets = tickets - 1, updated_at = CURRENT_TIMESTAMP
-		 WHERE player_id = ? AND game = ? AND tickets > 0`, req.PlayerID, cfg.Slug)
+		 WHERE player_id = ? AND game = ? AND tickets > 0`, pid, cfg.Slug)
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -1240,9 +1299,9 @@ func (h *GameOnlineHandler) draftRunStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO game_draft_runs (player_id, game, active, wins, losses, started_at) VALUES (?, ?, 1, 0, 0, CURRENT_TIMESTAMP)
-		 ON CONFLICT(player_id, game) DO UPDATE SET active = 1, wins = 0, losses = 0, started_at = CURRENT_TIMESTAMP`,
-		req.PlayerID, cfg.Slug); err != nil {
+		`INSERT INTO game_draft_runs (player_id, game, active, wins, losses, deck, started_at) VALUES (?, ?, 1, 0, 0, NULL, CURRENT_TIMESTAMP)
+		 ON CONFLICT(player_id, game) DO UPDATE SET active = 1, wins = 0, losses = 0, deck = NULL, started_at = CURRENT_TIMESTAMP`,
+		pid, cfg.Slug); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -1251,6 +1310,139 @@ func (h *GameOnlineHandler) draftRunStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "resumed": false, "wins": 0, "losses": 0, "ticket_spent": true})
+}
+
+// draftRunState is the real backing for the client's boot-time resume check ("if draft_active ==
+// true, route to SCREEN_DRAFT_HUB, not the draft picker or the queue") -- a plain read, player's
+// own token, no side effects.
+func (h *GameOnlineHandler) draftRunState(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, ok := draftPlayerClaims(claims, cfg)
+	if !ok {
+		mmoWriteError(w, http.StatusForbidden, "draft-run needs a player token, not an agent token")
+		return
+	}
+	var active, wins, losses int
+	var deckJSON sql.NullString
+	err := h.DB.QueryRowContext(r.Context(),
+		`SELECT active, wins, losses, deck FROM game_draft_runs WHERE player_id = ? AND game = ?`, pid, cfg.Slug).
+		Scan(&active, &wins, &losses, &deckJSON)
+	if err != nil && err != sql.ErrNoRows {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	var deck []int
+	if deckJSON.Valid && deckJSON.String != "" {
+		_ = json.Unmarshal([]byte(deckJSON.String), &deck)
+	}
+	if deck == nil {
+		deck = []int{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"active": active == 1, "wins": wins, "losses": losses, "deck": deck})
+}
+
+// draftRunSaveDeck persists the 23-card deck the client's local draft picker just finished, so a
+// boot-time resume (draftRunState above) and the leaderboard/audit trail have a real server-side
+// record of what was actually drafted, not just what dw_server happens to still hold in memory
+// for that one connection. Only a size/range check here, deliberately -- this handler is generic
+// across games.Registry and has no notion of DEADWEIGHT's own draft bucket rule (ten 1-ofs/five
+// 2-ofs/one 3-of). Real draft-legality is enforced where the deck is actually used to build a
+// match: dw_server's own dw_draft_deck_valid, checked again when this value round-trips back in
+// via DW_C_DRAFT_RESUME -- never trust a client-submitted deck array on either side alone.
+func (h *GameOnlineHandler) draftRunSaveDeck(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, ok := draftPlayerClaims(claims, cfg)
+	if !ok {
+		mmoWriteError(w, http.StatusForbidden, "draft-run needs a player token, not an agent token")
+		return
+	}
+	var req struct {
+		Deck []int `json:"deck"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || len(req.Deck) == 0 || len(req.Deck) > 64 {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON / deck size")
+		return
+	}
+	for _, c := range req.Deck {
+		if c < 0 || c > 255 {
+			mmoWriteError(w, http.StatusBadRequest, "invalid card id")
+			return
+		}
+	}
+	deckJSON, err := json.Marshal(req.Deck)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE game_draft_runs SET deck = ? WHERE player_id = ? AND game = ? AND active = 1`,
+		string(deckJSON), pid, cfg.Slug)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		mmoWriteError(w, http.StatusBadRequest, "no active draft run")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// draftRunAbort is "Abort & Extract" (S510): a voluntary cash-out before the 3rd loss, at
+// whatever win count the run currently sits at (including 0 -- a player is always free to bail).
+// Shares cashOutDraftRun with the 3-losses auto-end path so the reward table can't drift between
+// the two triggers.
+func (h *GameOnlineHandler) draftRunAbort(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, ok := draftPlayerClaims(claims, cfg)
+	if !ok {
+		mmoWriteError(w, http.StatusForbidden, "draft-run needs a player token, not an agent token")
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback()
+	var wins, losses, active int
+	err = tx.QueryRowContext(ctx,
+		`SELECT wins, losses, active FROM game_draft_runs WHERE player_id = ? AND game = ?`, pid, cfg.Slug).
+		Scan(&wins, &losses, &active)
+	if err == sql.ErrNoRows || active == 0 {
+		mmoWriteError(w, http.StatusBadRequest, "no active draft run")
+		return
+	}
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	reward, err := h.cashOutDraftRun(ctx, tx, cfg, pid, wins)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	var balance int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&balance); err != nil && err != sql.ErrNoRows {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wins": wins, "losses": losses, "tickets_granted": reward, "tickets": balance})
 }
 
 func (h *GameOnlineHandler) stats(w http.ResponseWriter, r *http.Request, cfg games.Config, pid string) {
