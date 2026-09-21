@@ -159,6 +159,28 @@ func cleanDisplayName(s string) (string, bool) {
 	return s, true
 }
 
+// guestNamePrefixes / randomGuestName -- S512, founder real-time: "Do not ask the player to
+// choose a username on boot... automatically assign them a lore-friendly display name (e.g.,
+// Runner-A7B2 or Asset-99X)... turns a UX shortcut into worldbuilding." Not a uniqueness
+// guarantee (a 4-char draw over a 33-symbol alphabet is collision-resistant enough for a display
+// label, not an identity key -- player_id is the real identity, same "no email, no recovery"
+// minimal-identity design guest accounts already use).
+var guestNamePrefixes = []string{"Runner", "Asset", "Ghost", "Cipher", "Wraith", "Node", "Relay", "Proxy"}
+
+func randomGuestName() string {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O/1/I -- avoids ambiguous glyphs in a UI label
+	pick := make([]byte, 5)
+	if _, err := rand.Read(pick); err != nil {
+		return "Runner-0000" // rand.Read failing is effectively unreachable (crypto/rand), but never leave a player nameless
+	}
+	prefix := guestNamePrefixes[int(pick[0])%len(guestNamePrefixes)]
+	suffix := make([]byte, 4)
+	for i, v := range pick[1:] {
+		suffix[i] = alphabet[int(v)%len(alphabet)]
+	}
+	return fmt.Sprintf("%s-%s", prefix, suffix)
+}
+
 func hashSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
@@ -223,10 +245,19 @@ func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	name, ok := cleanDisplayName(req.DisplayName)
-	if !ok {
-		mmoWriteError(w, http.StatusBadRequest, "display_name must be 1-16 printable characters")
-		return
+	// S512: an empty display_name is the real, expected zero-friction path (the release client no
+	// longer collects one at all) -- auto-assign a lore-friendly name rather than 400ing. A
+	// non-empty name (dev/test harnesses, dw_client --name, existing callers) is still honored.
+	var name string
+	if trimmed := strings.TrimSpace(req.DisplayName); trimmed == "" {
+		name = randomGuestName()
+	} else {
+		var ok bool
+		name, ok = cleanDisplayName(req.DisplayName)
+		if !ok {
+			mmoWriteError(w, http.StatusBadRequest, "display_name must be 1-16 printable characters")
+			return
+		}
 	}
 	ip := requestIP(r)
 	var recentSignups int

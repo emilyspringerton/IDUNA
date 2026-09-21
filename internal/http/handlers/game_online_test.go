@@ -212,6 +212,33 @@ func TestGuestFlow_RegisterLoginVerifyMatchStats(t *testing.T) {
 	}
 }
 
+// TestGuest_EmptyNameAutoGeneratesLoreName -- S512: "Do not ask the player to choose a username
+// on boot... automatically assign them a lore-friendly display name (e.g., Runner-A7B2 or
+// Asset-99X)." Real 20-ticket grant checked in the same pass since both land on the same fresh-
+// guest response. Only 3 iterations -- the per-IP signup cap (game_signup_log, 3/24h) would 429
+// a 4th real registration from this test's own shared RemoteAddr.
+func TestGuest_EmptyNameAutoGeneratesLoreName(t *testing.T) {
+	e := newGameEnv(t)
+	seen := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		code, m, raw := e.do("POST", "/api/v1/games/deadweight/guest-register", "", map[string]string{})
+		if code != 201 {
+			t.Fatalf("empty display_name should auto-generate, not error: %d %s", code, raw)
+		}
+		name, _ := m["display_name"].(string)
+		if name == "" || !strings.Contains(name, "-") {
+			t.Fatalf("expected an auto-generated lore name like Runner-A7B2, got %q", name)
+		}
+		if seen[name] {
+			t.Fatalf("auto-generated name %q collided across %d calls", name, i+1)
+		}
+		seen[name] = true
+		if m["tickets"].(float64) != 20 {
+			t.Fatalf("auto-named guest should still get the real 20-ticket grant, got %v", m)
+		}
+	}
+}
+
 func TestGuest_GameScopeIsolation(t *testing.T) {
 	e := newGameEnv(t)
 	_, secretO, tokO := e.register(t, "othergame", "Zed")
@@ -258,7 +285,10 @@ func TestGuest_GameScopeIsolation(t *testing.T) {
 
 func TestGuest_NameValidationAndRateLimit(t *testing.T) {
 	e := newGameEnv(t)
-	for _, bad := range []string{"", "   ", strings.Repeat("x", 17), "a\x00b"} {
+	// S512: an empty (or whitespace-only, which trims to empty) display_name is no longer a 400
+	// -- it's the real, expected zero-friction path now that the release client doesn't collect
+	// one at all. See TestGuest_EmptyNameAutoGeneratesLoreName below for that behavior.
+	for _, bad := range []string{strings.Repeat("x", 17), "a\x00b"} {
 		if c, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-register", "", map[string]string{"display_name": bad}); c != 400 {
 			t.Errorf("name %q: %d", bad, c)
 		}
@@ -633,6 +663,34 @@ func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *te
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
 	if m2["tickets"].(float64) != 20 {
 		t.Fatalf("expected the daily top-up to raise a below-cap balance back to 20, got %v", m2)
+	}
+}
+
+// TestDailyTopUp_RollingWindowNotUTCMidnight -- founder real-time (S512): "it should grant 20
+// tickets per day and it is based on their last redeem not at midnight so if they log in and get
+// their tickets for the day at 4pm they have to wait until after 4pm tomorrow to get more just so
+// it doesnt make all the players log on at exactly midnight to get their tickets." Already true
+// (topUpTicketsIfDue gates on `last_ticket_topup_at < now - 1 day`, a rolling per-player window,
+// never a UTC calendar-day check) -- this test pins the distinction down explicitly: 23 hours
+// since a player's OWN last top-up must never grant again, no matter how many UTC day boundaries
+// happen to fall inside that window.
+func TestDailyTopUp_RollingWindowNotUTCMidnight(t *testing.T) {
+	e := newGameEnv(t)
+	pid, secret, _ := e.register(t, "deadweight", "Ada")
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET tickets = 3, last_ticket_topup_at = datetime('now', '-23 hours') WHERE player_id=?`, pid); err != nil {
+		t.Fatal(err)
+	}
+	_, m, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
+	if m["tickets"].(float64) != 3 {
+		t.Fatalf("23h since this player's own last top-up must NOT grant again (a UTC-midnight check would have): got %v", m)
+	}
+	// Push it just past the real 24h mark from THIS player's own last top-up -- now it grants.
+	if _, err := e.db.Exec(`UPDATE game_player_tickets SET last_ticket_topup_at = datetime('now', '-25 hours') WHERE player_id=?`, pid); err != nil {
+		t.Fatal(err)
+	}
+	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
+	if m2["tickets"].(float64) != 20 {
+		t.Fatalf("25h since this player's own last top-up should grant back to the cap: got %v", m2)
 	}
 }
 
