@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-22
+- feat: BRAWLPIT player identity (games.Registry entry, brawlpit.play) + generalized BigOSignupPageHandler into reusable GameSignupPageHandler{Game,Title,Tagline} serving both /play/big_o and /play/brawlpit — closes SHANKPIT_OS_NORTHSTAR.md item 4 (sess-20260920-1908-24cb3558)
 - feat: BIG_O account-creation interface (/play/big_o) — public guest-register/login/link-email page riding the existing generic games.Registry API; big_o added to the registry (big_o.play permission only, no server/bot yet) (sess-20260920-1908-24cb3558)
 - feat: dynamic QR code registry (/admin/qr) — create/retarget/delete codes backed by qr_codes table; public /q/{slug} redirect + /q/{slug}.png live-rendered image (skip2/go-qrcode), gated admin CRUD via iduna.admin, live-verified end to end in production including retarget-without-reprint (sess-20260920-1908-24cb3558)
 - kanban: blank backlog_item_id auto-generates a T-prefixed ticket number server-side (card 82821821); fixed a real bug where a bare-digit auto-id would break the done/archive path since internal/backlog's item regex requires a leading letter (sess-20260920-1908-24cb3558)
