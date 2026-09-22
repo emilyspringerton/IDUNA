@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-22
+
+- DREXIT -- a door that is also a level exit, first class in the SHANKPIT level editor (Selected Cube inspector: one button attaches a door to the wall and a level exit at that same position). Also fixed a pre-existing goldenband.ts tsc build break that was silently blocking all NOCK frontend builds. (sess-20260920-1908-24cb3558)
+
+
 ## 2026-09-21
 - Bumped Protofounder daily ticket cap 20 -> 25 (founder spec); consolidated DEADWEIGHT admin pages (Game Claim Codes -> single DEADWEIGHT nav entry with Claim Codes/Players tabs); audited the guest-upgrade Claim Account endpoint against a formal spec, confirmed already correct (sess-20260920-1908-24cb3558)
 - Add Game Claim Codes back office tool (/admin/game-claim-codes) -- mint a DEADWEIGHT Premium key or batch codes without shelling in to cmd/gen-claim-codes (sess-20260920-1908-24cb3558)
