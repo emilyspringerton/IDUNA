@@ -485,7 +485,11 @@ func TestKanban_RequiresAuth(t *testing.T) {
 	}
 }
 
-func TestKanban_RejectsMissingBacklogItemID(t *testing.T) {
+// TestKanban_AutoGeneratesMissingBacklogItemID -- kanban card 82821821, founder real-time: "i
+// dont want to type ticket numbers if i dont want to ... sometimes its too much cognitive load".
+// A missing backlog_item_id is no longer a 400: it's auto-generated server-side, and the
+// resolved id is echoed back so a caller can see what got assigned.
+func TestKanban_AutoGeneratesMissingBacklogItemID(t *testing.T) {
 	keys, _ := jwt.GenerateKeys()
 	db := newTestKanbanDB(t)
 	token := makeAgentToken(t, keys, uuid.New().String(), nil)
@@ -496,7 +500,39 @@ func TestKanban_RejectsMissingBacklogItemID(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 for an auto-generated backlog_item_id, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ID            int64  `json:"id"`
+		BacklogItemID string `json:"backlog_item_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.BacklogItemID == "" {
+		t.Fatal("expected a non-empty auto-generated backlog_item_id")
+	}
+	// Must start with a letter -- internal/backlog.itemRe requires it (see
+	// generateRandomBacklogItemID's own doc comment for why a bare digit string breaks the
+	// BACKLOG.md sync/archive path).
+	if resp.BacklogItemID[0] < 'A' || resp.BacklogItemID[0] > 'Z' {
+		t.Fatalf("auto-generated backlog_item_id must start with an uppercase letter, got %q", resp.BacklogItemID)
+	}
+}
+
+func TestKanban_RejectsMissingTitle(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := kanbanHandlerWithAuth(keys, db)
+
+	body, _ := json.Marshal(map[string]string{"backlog_item_id": "S202-99"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/kanban/cards", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 for a missing backlog_item_id", rec.Code)
+		t.Fatalf("status = %d, want 400 for a missing title", rec.Code)
 	}
 }

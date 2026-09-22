@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -330,8 +331,22 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 	if onDefaultBoard && h.BacklogPath != "" {
 		body.BacklogItemID = resolveBareSectionID(h.BacklogPath, body.BacklogItemID)
 	}
-	if body.BacklogItemID == "" || len(body.BacklogItemID) > 32 {
-		http.Error(w, "backlog_item_id required, max 32 chars", http.StatusBadRequest)
+	// Kanban card 82821821 (founder real-time): "i dont want to type ticket numbers if i dont
+	// want to (sometimes i do want to and i use it like jira projects but sometimes its too much
+	// cognitive load)". A blank id is no longer rejected -- it's auto-generated server-side
+	// (same random-digit-string shape the founder was already hand-typing as a workaround, e.g.
+	// this very card's own "82821821"), while an explicitly-typed id (Jira-style prefix, a real
+	// BACKLOG.md section ref) still works exactly as before. Only the length ceiling still
+	// applies to an id a caller actually supplied.
+	if body.BacklogItemID == "" {
+		generated, err := h.generateRandomBacklogItemID(r.Context(), boardID)
+		if err != nil {
+			http.Error(w, "could not generate a ticket id", http.StatusInternalServerError)
+			return
+		}
+		body.BacklogItemID = generated
+	} else if len(body.BacklogItemID) > 32 {
+		http.Error(w, "backlog_item_id max 32 chars", http.StatusBadRequest)
 		return
 	}
 	if body.Title == "" {
@@ -430,6 +445,40 @@ func realSectionItemRe(section string) *regexp.Regexp {
 // A read failure (missing file, permission issue) or a section with zero existing real items
 // both fall back to "<section>-01" rather than erroring the whole create -- honest best-effort,
 // matching every other real backlog-file interaction in this handler.
+// generateRandomBacklogItemID mints a random ticket id (kanban card 82821821) for a create()
+// call that left backlog_item_id blank. Deliberately "T"-prefixed rather than a bare digit
+// string -- checked directly against this package's own real BACKLOG.md-sync partner,
+// internal/backlog.itemRe: that regex requires an id to START WITH A LETTER (widened once
+// already, 2026-09-02, for GFD-SYNC, but a leading digit was kept excluded on purpose, to avoid
+// a bolded numeric-leading title false-matching as an id). A bare-digit id -- exactly the shape
+// this card's own founder-typed workaround ids ("82821821", "21312343124") already have --
+// silently can never be found by ByID/ExtractItemRaw, which breaks BOTH the "done" kanban move
+// (archives+files an Apple) and removeCompletedCards' own auto-cleanup, permanently, invisibly.
+// Confirmed live: card 421 itself ("82821821") hit exactly this when moved to done
+// ("has no real BACKLOG.md line to archive -- skipping the file move"). Prefixing keeps every
+// future auto-generated id inside the one real id-shape the sync layer actually understands, so
+// this bug class doesn't get worse just because blank ids are now the common case.
+func (h *KanbanHandler) generateRandomBacklogItemID(ctx context.Context, boardID int64) (string, error) {
+	const maxAttempts = 20
+	for i := 0; i < maxAttempts; i++ {
+		var buf [4]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			return "", fmt.Errorf("generate random id: %w", err)
+		}
+		n := (uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])) % 100_000_000
+		candidate := fmt.Sprintf("T%08d", n)
+		var exists int
+		if err := h.DB.QueryRowContext(ctx,
+			`SELECT 1 FROM kanban_cards WHERE backlog_item_id = ? AND board_id = ? LIMIT 1`, candidate, boardID,
+		).Scan(&exists); err == sql.ErrNoRows {
+			return candidate, nil
+		} else if err != nil {
+			return "", fmt.Errorf("check id collision: %w", err)
+		}
+	}
+	return "", fmt.Errorf("could not find an unused random id after %d attempts", maxAttempts)
+}
+
 func resolveBareSectionID(backlogPath, rawID string) string {
 	m := bareSectionRe.FindStringSubmatch(rawID)
 	if m == nil {

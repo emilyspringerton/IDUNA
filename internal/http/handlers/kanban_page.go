@@ -204,8 +204,8 @@ const kanbanPageHTML = `<!doctype html>
     </div>
   </div>
   <form class="add-row" id="add-form">
-    <input type="text" name="backlog_item_id" placeholder="S202-27 (or just S202)" maxlength="32" required
-           title="A full id (S202-27) or just the section (S202) -- the item number is optional, a real unused one is auto-assigned">
+    <input type="text" name="backlog_item_id" placeholder="S202-27 (or leave blank to auto-generate)" maxlength="32"
+           title="A full id (S202-27) or just the section (S202) -- or leave this blank entirely and a random ticket number is assigned for you">
     <input type="text" name="title" placeholder="Short card title" maxlength="200" required>
     <button type="submit">+ Add card</button>
   </form>
@@ -599,7 +599,7 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
   const form = e.currentTarget;
   const backlogItemId = form.backlog_item_id.value.trim();
   const title = form.title.value.trim();
-  if (!backlogItemId || !title) return;
+  if (!title) return;
   try {
     const res = await fetch(API, {
       method: 'POST',
