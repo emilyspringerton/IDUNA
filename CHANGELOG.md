@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-22
+- feat: dynamic QR code registry (/admin/qr) — create/retarget/delete codes backed by qr_codes table; public /q/{slug} redirect + /q/{slug}.png live-rendered image (skip2/go-qrcode), gated admin CRUD via iduna.admin, live-verified end to end in production including retarget-without-reprint (sess-20260920-1908-24cb3558)
 - kanban: blank backlog_item_id auto-generates a T-prefixed ticket number server-side (card 82821821); fixed a real bug where a bare-digit auto-id would break the done/archive path since internal/backlog's item regex requires a leading letter (sess-20260920-1908-24cb3558)
 - New app-release registry (/api/v1/app-releases) with GPG signing + emily-session build provenance -- backs SHANKPIT's Apps page and any future bundled-game CI publish. Real GPG key generated (EINHORN_INDUSTRIAL App Releases), new least-privilege APP-RELEASES-CI agent. (sess-20260920-1908-24cb3558)
 
