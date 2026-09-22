@@ -203,6 +203,10 @@ Migrations live in `migrations/truestore/` named `YYYYMMDDNNNN_description.sql`.
 | `GET` | `/portal` | cookie (devportal.access) | Developer notebook portal (Jupyter/SARENA_NOTEBOOK) |
 | `GET/POST` | `/api/v1/blog/posts[/:slug]` | none (GET) / JWT (POST, blog.write) | okemily.com blog |
 | `GET/POST` | `/api/v1/apples/...` | JWT | Golden documentation log |
+| `GET` | `/admin/qr` | cookie (iduna.admin) | Dynamic QR code registry — create/retarget/delete codes, preview live-rendered images |
+| `GET/POST/PATCH/DELETE` | `/admin/qr/api/codes[/:slug]` | cookie (iduna.admin) | Same registry, JSON API |
+| `GET` | `/q/:slug` | none | The real redirect a phone camera/printed flyer hits — 302 to the code's current `target_url` |
+| `GET` | `/q/:slug.png` | none | The live-rendered QR image itself, embeddable/printable with no admin session |
 
 ---
 

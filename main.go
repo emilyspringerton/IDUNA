@@ -602,6 +602,20 @@ func main() {
 	mux.Handle("/admin/gfd-items/api/proposals", gfdItemProposalsProtected)
 	mux.Handle("/admin/gfd-items/api/proposals/", gfdItemProposalsProtected)
 
+	// Dynamic QR code registry (kanban card 21312343124: "QR CODE GENERATOR - IDUNA INTEGRATED
+	// ALLOW US TO UPDATE A URL ON IDUNA BACKEND qr.okemily.com") -- see internal/http/handlers/
+	// qr.go's own doc comment for the full design. Admin CRUD reuses iduna.admin, same gate as
+	// every other /admin/* page; the public redirect+image endpoints (/q/{slug}, /q/{slug}.png)
+	// are deliberately unauthenticated -- that's the surface a phone camera / a printed flyer
+	// actually hits.
+	qrH := &handlers.QRHandler{DB: db, BaseURL: baseURL}
+	qrAdminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(qrH))
+	mux.Handle("/admin/qr/api/codes", qrAdminProtected)
+	mux.Handle("/admin/qr/api/codes/", qrAdminProtected)
+	mux.Handle("/admin/qr", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.QRPageHandler{})))
+	qrRedirectH := &handlers.QRRedirectHandler{DB: db, BaseURL: baseURL}
+	mux.Handle("/q/", qrRedirectH)
+
 	// NOCK (founder real-time, 2026-09-12: "we are gonna need to build our own tools to create
 	// the textures... lets yolo it into iduna"). Deliberately NOT under GFD's own naming/scope --
 	// built for SHANKPIT's real texture needs first so it stays a genuinely reusable engine tool,
