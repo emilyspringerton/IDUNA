@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-22
+- feat: model repository git-lfs integration -- new internal/modelgit.Syncer syncs every new RL checkpoint blob (SHANKPIT/BRAWLPIT/DEADWEIGHT) into its sibling repo checkout, git-lfs-tracked; per-game on/off toggle (<GAME>_MODEL_GIT_DISABLED), on by default. Extracted internal/gitsync.PushWithRetry from apples.go for reuse. (sess-20260920-1908-24cb3558)
 - feat: BRAWLPIT player identity (games.Registry entry, brawlpit.play) + generalized BigOSignupPageHandler into reusable GameSignupPageHandler{Game,Title,Tagline} serving both /play/big_o and /play/brawlpit — closes SHANKPIT_OS_NORTHSTAR.md item 4 (sess-20260920-1908-24cb3558)
 - feat: BIG_O account-creation interface (/play/big_o) — public guest-register/login/link-email page riding the existing generic games.Registry API; big_o added to the registry (big_o.play permission only, no server/bot yet) (sess-20260920-1908-24cb3558)
 - feat: dynamic QR code registry (/admin/qr) — create/retarget/delete codes backed by qr_codes table; public /q/{slug} redirect + /q/{slug}.png live-rendered image (skip2/go-qrcode), gated admin CRUD via iduna.admin, live-verified end to end in production including retarget-without-reprint (sess-20260920-1908-24cb3558)
