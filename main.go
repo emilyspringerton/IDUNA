@@ -1122,10 +1122,14 @@ func main() {
 	mux.Handle("/api/v1/games/deadweight/card-stats", deckStatsH)
 	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
 
-	// Kanban card 123214231: "we need a big_o account creation interface off of iduna" -- a
-	// plain, public, unauthenticated web page (BIG_O has no native client yet to put this
-	// inside) driving the generic guest-register/guest-login/guest-upgrade API just above.
-	mux.Handle("/play/big_o", &handlers.BigOSignupPageHandler{})
+	// Kanban card 123214231 ("we need a big_o account creation interface off of iduna") and
+	// SHANKPIT_OS_NORTHSTAR.md item 4 ("BRAWLPIT has no player-facing IDUNA identity
+	// integration at all") -- plain, public, unauthenticated web pages (neither game has a
+	// native client with this UI yet) driving the generic guest-register/guest-login/guest-
+	// upgrade API just above. One reusable handler, two routes -- see GameSignupPageHandler's
+	// own doc comment.
+	mux.Handle("/play/big_o", &handlers.GameSignupPageHandler{Game: "big_o", Title: "BIG_O", Tagline: "A SHANKPIT Story — account creation"})
+	mux.Handle("/play/brawlpit", &handlers.GameSignupPageHandler{Game: "brawlpit", Title: "BRAWLPIT", Tagline: "Account creation"})
 	mux.Handle("/api/v1/game-checkpoints/", &handlers.GameCheckpointsRouter{DB: db, Keys: keys, EventLog: unifiedLog})
 
 	// User CRUD — requires JWT.

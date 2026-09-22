@@ -207,8 +207,8 @@ Migrations live in `migrations/truestore/` named `YYYYMMDDNNNN_description.sql`.
 | `GET/POST/PATCH/DELETE` | `/admin/qr/api/codes[/:slug]` | cookie (iduna.admin) | Same registry, JSON API |
 | `GET` | `/q/:slug` | none | The real redirect a phone camera/printed flyer hits — 302 to the code's current `target_url` |
 | `GET` | `/q/:slug.png` | none | The live-rendered QR image itself, embeddable/printable with no admin session |
-| `GET` | `/play/big_o` | none | Public BIG_O account-creation page — creates/resumes a guest account via `/api/v1/games/big_o/guest-*`, no native BIG_O client required |
-| `POST` | `/api/v1/games/{game}/guest-register` \| `guest-login` \| `guest-upgrade` | none / player JWT | Generic per-game guest-account flow (`internal/games.Registry`) — DEADWEIGHT and BIG_O both ride this same code path |
+| `GET` | `/play/big_o` \| `/play/brawlpit` | none | Public account-creation pages — create/resume a guest account via `/api/v1/games/{game}/guest-*`, no native client required for either game yet |
+| `POST` | `/api/v1/games/{game}/guest-register` \| `guest-login` \| `guest-upgrade` | none / player JWT | Generic per-game guest-account flow (`internal/games.Registry`) — DEADWEIGHT, BIG_O, and BRAWLPIT all ride this same code path |
 
 ---
 

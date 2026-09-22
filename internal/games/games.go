@@ -56,4 +56,12 @@ var Registry = map[string]Config{
 		Slug:     "big_o",
 		PlayPerm: "big_o.play",
 	},
+	// SHANKPIT_OS_NORTHSTAR.md item 4 ("genuinely new work"): BRAWLPIT had no player-facing
+	// identity at all before this -- brawlpit.checkpoints.write (202609131400) is a real,
+	// separate, already-live M2M-only permission, untouched here. Same "PlayPerm only, no
+	// bot/match perms yet" scoping as big_o above -- no server consumes those yet.
+	"brawlpit": {
+		Slug:     "brawlpit",
+		PlayPerm: "brawlpit.play",
+	},
 }
