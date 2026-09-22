@@ -47,4 +47,13 @@ var Registry = map[string]Config{
 		// for this game until it's set.
 		SteamAppID: os.Getenv("DEADWEIGHT_STEAM_APPID"),
 	},
+	// Kanban card 123214231: "we need a big_o account creation interface off of iduna". BIG_O
+	// itself is NORTHSTAR-only (no server/client code yet, see BIG_O/NORTHSTAR.md) -- only
+	// PlayPerm is wired so guest-register/guest-login/guest-upgrade work today; the rest stay
+	// empty on purpose (no bot/server exists yet to hold those permissions -- add them, mirroring
+	// deadweight's own row, once BIG_O has real server code to consume them).
+	"big_o": {
+		Slug:     "big_o",
+		PlayPerm: "big_o.play",
+	},
 }

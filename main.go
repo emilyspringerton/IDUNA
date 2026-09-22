@@ -1121,6 +1121,11 @@ func main() {
 	mux.Handle("/api/v1/games/deadweight/decks/", deckStatsH)
 	mux.Handle("/api/v1/games/deadweight/card-stats", deckStatsH)
 	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
+
+	// Kanban card 123214231: "we need a big_o account creation interface off of iduna" -- a
+	// plain, public, unauthenticated web page (BIG_O has no native client yet to put this
+	// inside) driving the generic guest-register/guest-login/guest-upgrade API just above.
+	mux.Handle("/play/big_o", &handlers.BigOSignupPageHandler{})
 	mux.Handle("/api/v1/game-checkpoints/", &handlers.GameCheckpointsRouter{DB: db, Keys: keys, EventLog: unifiedLog})
 
 	// User CRUD — requires JWT.
