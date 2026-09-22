@@ -226,6 +226,15 @@
       "permissions": [
         "deadweight.checkpoints.write"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-00000000001b",
+      "name": "APP-RELEASES-CI",
+      "type": "ci_agent",
+      "description": "GitHub Actions CI (any bundled-app repo's own release workflow, e.g. DEADWEIGHT/.github/workflows/ci.yml) -- uploads a signed app-release binary + metadata to the shared app-release registry (POST /api/v1/app-releases). Least-privilege: this permission and nothing else, so a compromised CI secret can only publish a new release, never touch any other IDUNA surface. S528, 2026-09-22.",
+      "permissions": [
+        "apps.releases.write"
+      ]
     }
   ]
 }

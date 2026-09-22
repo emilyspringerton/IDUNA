@@ -14,6 +14,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"iduna/internal/apps"
 	"iduna/internal/auth/device"
 	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/blog"
@@ -885,6 +886,26 @@ func main() {
 		),
 	)
 	mux.Handle("/admin/nock/api/shankpit-checkpoints/", shankpitCheckpointActivateH)
+
+	// App release registry (S528, founder real-time: "we need an app repository in IDUNA signed
+	// in github somehow with emily session new for the build before each build..."). Same real
+	// public-vs-gated split as the SHANKPIT checkpoint registry immediately above: POST (a CI
+	// publish) needs apps.releases.write; list/latest/download stay public.
+	appReleasesHInner := &handlers.AppReleasesHandler{Store: &apps.ReleaseStore{DB: db, BlobDir: "./var/app-releases"}}
+	appReleasesH := middleware.RequireAuth(keys)(
+		middleware.RequirePermission("apps.releases.write")(
+			appReleasesHInner,
+		),
+	)
+	appReleasesPublicH := &handlers.AppReleasesHandler{Store: &apps.ReleaseStore{DB: db, BlobDir: "./var/app-releases"}}
+	mux.Handle("/api/v1/app-releases", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			appReleasesH.ServeHTTP(w, r)
+			return
+		}
+		appReleasesPublicH.ServeHTTP(w, r)
+	}))
+	mux.Handle("/api/v1/app-releases/", appReleasesPublicH)
 
 	// DEADWEIGHT (and any future games.Registry game): NOCK admin write actions on the game-scoped registry.
 	mux.Handle("/admin/nock/api/game-checkpoints/", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(
