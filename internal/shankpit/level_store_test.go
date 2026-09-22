@@ -455,6 +455,34 @@ func TestExport_CarriesLevelExits(t *testing.T) {
 	}
 }
 
+// TestExport_CarriesDrexit -- DREXIT (S524, founder real-time: "can we spawn a door that is also
+// an exit via the widget system... call it a DREXIT"). There is no distinct server-side "drexit"
+// type -- NOCK's own toggleDrexit composes the two existing primitives client-side: a Door on the
+// selected wall plus a LevelExit centered on that same wall's x/y/z. This exercises exactly that
+// shape end to end (create, export) and confirms both rows survive the round trip together, same
+// as every other Door/LevelExit combination already does individually.
+func TestExport_CarriesDrexit(t *testing.T) {
+	s := newTestStore(t)
+	wall := aCube()
+	doors := []shankpit.Door{{ID: 1, WallID: wall.ID, ScriptID: 0}}
+	exits := []shankpit.LevelExit{{ID: 1, X: wall.X, Y: wall.Y, Z: wall.Z, Radius: 4}}
+	created, err := s.CreateLevel(context.Background(), "Drexit Level", 100, 50, 100, true, 2, []shankpit.Wall{wall}, nil, nil, doors, nil, nil, exits, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	exported, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(exported.Doors) != 1 || len(exported.LevelExits) != 1 {
+		t.Fatalf("expected 1 door + 1 level exit, got %d doors, %d exits", len(exported.Doors), len(exported.LevelExits))
+	}
+	exit := exported.LevelExits[0]
+	if exit.X != wall.X || exit.Y != wall.Y || exit.Z != wall.Z {
+		t.Fatalf("drexit exit should sit at the door's own wall position: got %+v, want wall %+v", exit, wall)
+	}
+}
+
 // TestExport_CarriesLevelExitTargetSpawnerID (S491, founder real-time -- GTA-style building
 // interiors: "how can i specify which spawner the exit leads to for the seamless experience of
 // exiting the building") -- TargetSpawnerID round-trips through Export same as every other

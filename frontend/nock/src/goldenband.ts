@@ -100,7 +100,11 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  // TS's stricter lib.dom types now distinguish a plain ArrayBuffer-backed Uint8Array from one
+  // that could be SharedArrayBuffer-backed; crypto.subtle.digest only accepts the former. A
+  // fresh copy is always plain-ArrayBuffer-backed regardless of what `bytes` itself was backed
+  // by, same real fix TS itself suggests for this exact narrowing gap.
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes))
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')

@@ -1260,6 +1260,8 @@ export function WallInspector({
   door,
   doorScriptList,
   onDoorChange,
+  isDrexit,
+  onToggleDrexit,
 }: {
   wall: ShankpitWall
   onChange: (w: ShankpitWall) => void
@@ -1268,6 +1270,11 @@ export function WallInspector({
   door: ShankpitDoor | null
   doorScriptList: DoorScriptSummary[]
   onDoorChange: (scriptId: number | null) => void
+  // DREXIT is a LEVEL concept (a level exit needs the level's own NextLevelID) -- a reusable
+  // Widget has no level_exits at all (see internal/shankpit/widget_store.go), so
+  // ShankpitWidgets.tsx's own reuse of this same inspector simply omits these two props.
+  isDrexit?: boolean
+  onToggleDrexit?: () => void
 }) {
   const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
   const field = (label: string, key: keyof ShankpitWall, opts: { min?: number; step?: number } = {}) => (
@@ -1348,6 +1355,20 @@ export function WallInspector({
         <p className="hint">
           This cube has a door script attached, but no scripts exist in the repository yet -- add one in the Door Scripts tab.
         </p>
+      )}
+      {/* DREXIT -- founder real-time, 2026-09-22: "a door that is also an exit... first class
+          citizen." One button composes a door + a level exit centered on this wall; toggling it
+          off drops the exit but leaves a plain door in place. Not offered in the Widget editor
+          (onToggleDrexit undefined there) -- a widget has no level_exits concept at all. */}
+      {onToggleDrexit && (
+        <button
+          type="button"
+          className={isDrexit ? 'active' : ''}
+          onClick={onToggleDrexit}
+          title="A door that also ends the level when walked through -- attaches a door to this cube (if it doesn't have one yet) and a level exit trigger centered on it, in one action."
+        >
+          {isDrexit ? '✓ DREXIT (door + level exit)' : 'Make DREXIT (door + level exit)'}
+        </button>
       )}
       <button className="danger" type="button" onClick={onDelete}>
         Delete cube
@@ -1931,6 +1952,43 @@ export default function ShankpitLevelEditor() {
     }
   }
 
+  // DREXIT -- founder real-time, 2026-09-22: "can we spawn a door that is also an exit via the
+  // widget system... build that in as a first class citizen to the shankpit level editor call it
+  // a DREXIT." A door (Door.wall_id) and a level exit (LevelExit.x/y/z) are two structurally
+  // separate rows server-side (see IDUNA/internal/shankpit/level_store.go -- widgets themselves
+  // are explicitly walls+doors only, no level_exits, so this can't be a literal Widget row; a
+  // level exit needs this LEVEL's own NextLevelID, which a reusable geometry piece can't own).
+  // What IS buildable as a real "first class citizen" is a single editor action that composes
+  // both existing primitives in one click: attach a (script-free, built-in open/close) door to
+  // the selected wall AND drop a LevelExit centered on that same wall -- no separate exit column
+  // needed to know "this door is a DREXIT," since a wall's own door + an exit at that wall's
+  // exact x/y/z position IS the pairing (isDrexitWall below just checks that).
+  const isDrexitWall = (wallId: number): boolean => {
+    const wall = draft.walls.find((w) => w.id === wallId)
+    const door = draft.doors.find((d) => d.wall_id === wallId)
+    if (!wall || !door) return false
+    return draft.levelExits.some((e) => e.x === wall.x && e.y === wall.y && e.z === wall.z)
+  }
+
+  const toggleDrexit = (wallId: number) => {
+    const wall = draft.walls.find((w) => w.id === wallId)
+    if (!wall) return
+    pushHistory()
+    if (isDrexitWall(wallId)) {
+      // Un-DREXIT: drop the paired exit, leave the door itself alone (a designer may still want
+      // a plain door on this wall without it also ending the level).
+      setLevelExits(draft.levelExits.filter((e) => !(e.x === wall.x && e.y === wall.y && e.z === wall.z)))
+      return
+    }
+    const existingDoor = draft.doors.find((d) => d.wall_id === wallId)
+    const nextDoors = existingDoor
+      ? draft.doors
+      : [...draft.doors, { id: nextDoorId(draft.doors), wall_id: wallId, script_id: 0 }]
+    const nextExits = [...draft.levelExits, { id: nextLevelExitId(draft.levelExits), x: wall.x, y: wall.y, z: wall.z, radius: 4 }]
+    setDraft((d) => ({ ...d, doors: nextDoors, levelExits: nextExits }))
+    setDirty(true)
+  }
+
   const setNavNodes = (navNodes: ShankpitNavNode[]) => {
     setDraft((d) => ({ ...d, navNodes }))
     setDirty(true)
@@ -2389,6 +2447,8 @@ export default function ShankpitLevelEditor() {
                 door={draft.doors.find((d) => d.wall_id === selectedWall.id) ?? null}
                 doorScriptList={doorScriptList}
                 onDoorChange={(scriptId) => setWallDoor(selectedWall.id, scriptId)}
+                isDrexit={isDrexitWall(selectedWall.id)}
+                onToggleDrexit={() => toggleDrexit(selectedWall.id)}
               />
             ) : selectedSpawner ? (
               <SpawnerInspector spawner={selectedSpawner} onChange={updateSpawner} onDelete={deleteSelectedSpawner} />
