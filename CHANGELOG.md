@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-22
+- kanban: blank backlog_item_id auto-generates a T-prefixed ticket number server-side (card 82821821); fixed a real bug where a bare-digit auto-id would break the done/archive path since internal/backlog's item regex requires a leading letter (sess-20260920-1908-24cb3558)
 - New app-release registry (/api/v1/app-releases) with GPG signing + emily-session build provenance -- backs SHANKPIT's Apps page and any future bundled-game CI publish. Real GPG key generated (EINHORN_INDUSTRIAL App Releases), new least-privilege APP-RELEASES-CI agent. (sess-20260920-1908-24cb3558)
 
 - DREXIT -- a door that is also a level exit, first class in the SHANKPIT level editor (Selected Cube inspector: one button attaches a door to the wall and a level exit at that same position). Also fixed a pre-existing goldenband.ts tsc build break that was silently blocking all NOCK frontend builds. (sess-20260920-1908-24cb3558)
