@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
+
+	"iduna/internal/modelgit"
 )
 
 // ValidCheckpointRoles mirrors SHANKPIT/scripts/rl_league.py's own real LeagueRole enum values
@@ -86,6 +88,11 @@ func scanCheckpointRow(scan func(...any) error) (*Checkpoint, error) {
 type CheckpointStore struct {
 	DB      *sql.DB
 	BlobDir string // e.g. var/shankpit-checkpoints -- real .zip files, named by this row's own id
+	// GitSync -- see internal/brawlpit.CheckpointStore's own identical field for the full
+	// reasoning (founder real-time, 2026-09-22: "we need to integrate the model repository with
+	// git lfs and each model repository should have a git integration that can be turned off (on
+	// by default)"). Zero value is a real no-op.
+	GitSync modelgit.Syncer
 }
 
 func validateCheckpointInput(role, sourceLocation, filename string, data []byte) error {
@@ -152,6 +159,11 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 	if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_rl_checkpoints SET blob_path = ? WHERE id = ?`, blobPath, id); err != nil {
 		return nil, fmt.Errorf("shankpit: record blob path: %w", err)
 	}
+
+	// Fire-and-forget, matches apples.go/kanban.go's own established idiom: a slow/failed git
+	// sync must never hold up or fail the real DB write above, which has already succeeded.
+	go s.GitSync.SyncBlob(blobPath, fmt.Sprintf("%d.zip", id),
+		fmt.Sprintf("model: sync checkpoint %s #%d (%s, gen %d)", role, id, name, generation))
 
 	return s.Get(ctx, id)
 }

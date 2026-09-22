@@ -182,6 +182,25 @@ pitch, and names what's genuinely missing (multi-tenancy, self-serve onboarding,
 posture verification, compliance attestation) plus open questions for a founder-level decision.
 Not an implementation plan — no code changes follow from this doc alone.
 
+## Model Repositories — git-lfs Integration
+
+Founder real-time, 2026-09-22: "we need to integrate the model repository with git lfs and each
+model repository should have a git integration that can be turned off (on by default)."
+
+Every RL checkpoint registry ("model repository" — `internal/brawlpit.CheckpointStore`, shared by
+BRAWLPIT and DEADWEIGHT via its own `Game` field, and `internal/shankpit.CheckpointStore`) now
+syncs each newly-created checkpoint blob into a real sibling repo checkout on this box
+(`/home/fatbaby/<BRAWLPIT|DEADWEIGHT|SHANKPIT>`), under `models/rl-checkpoints/`, git-lfs-tracked
+— `internal/modelgit.Syncer`. Fire-and-forget (a git/network failure never fails or blocks the
+real checkpoint upload), reusing `internal/gitsync.PushWithRetry` (extracted from apples.go's own
+production-proven Apples-git-sync idiom) for the actual add→commit→push→retry-on-rebase.
+
+**On by default, per-game toggle**: `<GAME>_MODEL_GIT_DISABLED` (any non-empty value) turns the
+integration off for that one game; unset (the default) is enabled — a `modelgit.Syncer{}` zero
+value is enabled by construction, matching the founder's own "on by default" requirement without
+needing a constructor at every call site. `<GAME>_MODEL_GIT_REPO_DIR` overrides the destination
+repo path per game if the default sibling-checkout path is ever wrong for a given deployment.
+
 ## Migrations Checklist
 
 - Migration filenames: `YYYYMMDDNNNN_description.sql`

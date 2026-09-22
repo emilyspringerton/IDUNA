@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
+
+	"iduna/internal/modelgit"
 )
 
 // ValidCheckpointRoles mirrors scripts/rl_league.py's own real LeagueRole enum values exactly
@@ -94,6 +96,14 @@ type CheckpointStore struct {
 	// just the default so every pre-existing construction site keeps working unchanged). Rows of other
 	// games are invisible: Get/List/Set*/Record* on another game's id behave as "not found".
 	Game string
+	// GitSync (founder real-time, 2026-09-22: "we need to integrate the model repository with
+	// git lfs and each model repository should have a git integration that can be turned off (on
+	// by default)") -- syncs every newly-created checkpoint blob into a real sibling git working
+	// tree, git-lfs-tracked. Zero value (Syncer{}) is a real no-op (RepoDir unset), not an error
+	// -- existing construction sites (tests, or a deployment that never wires this) behave
+	// exactly as before this field existed. See internal/modelgit's own doc comment for the full
+	// "on by default" reasoning.
+	GitSync modelgit.Syncer
 }
 
 // DefaultGame is the slug pre-existing (brawlpit) rows carry and an empty CheckpointStore.Game means.
@@ -169,6 +179,11 @@ func (s *CheckpointStore) Create(ctx context.Context, role string, generation in
 	if _, err := s.DB.ExecContext(ctx, `UPDATE brawlpit_rl_checkpoints SET blob_path = ? WHERE id = ?`, blobPath, id); err != nil {
 		return nil, fmt.Errorf("brawlpit: record blob path: %w", err)
 	}
+
+	// Fire-and-forget, matches apples.go/kanban.go's own established idiom: a slow/failed git
+	// sync must never hold up or fail the real DB write above, which has already succeeded.
+	go s.GitSync.SyncBlob(blobPath, fmt.Sprintf("%d.zip", id),
+		fmt.Sprintf("model(%s): sync checkpoint %s #%d (%s, gen %d)", s.game(), role, id, name, generation))
 
 	return s.Get(ctx, id)
 }

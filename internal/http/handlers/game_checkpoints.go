@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -14,6 +15,7 @@ import (
 	"iduna/internal/brawlpit"
 	"iduna/internal/games"
 	"iduna/internal/http/middleware"
+	"iduna/internal/modelgit"
 	"iduna/internal/userlog"
 
 	"database/sql"
@@ -24,6 +26,12 @@ type GameCheckpointsRouter struct {
 	Keys     *authjwt.Keys
 	Games    map[string]games.Config // nil = games.Registry
 	EventLog userlog.EventLog        // optional
+	// ModelGitRepoDirs maps a game slug to its real sibling repo root -- the destination this
+	// game's model-repository git integration syncs checkpoint blobs into (founder real-time,
+	// 2026-09-22: "we need to integrate the model repository with git lfs..."). A slug with no
+	// entry (or a nil map) gets a zero-value modelgit.Syncer -- RepoDir empty is a real no-op,
+	// not an error, same as every other real store this package constructs.
+	ModelGitRepoDirs map[string]string
 
 	once   sync.Once
 	gated  map[string]http.Handler
@@ -38,9 +46,22 @@ func (h *GameCheckpointsRouter) init() {
 	h.gated = map[string]http.Handler{}
 	h.public = map[string]*BrawlpitCheckpointsHandler{}
 	for slug, cfg := range cfgs {
+		gitSync := modelgit.Syncer{
+			RepoDir: h.ModelGitRepoDirs[slug],
+			RelDir:  "models/rl-checkpoints",
+			// <SLUG>_MODEL_GIT_DISABLED (any non-empty value) -- the real, per-game "turned off"
+			// half of the founder's own "on by default" requirement, checked at request time so
+			// an operator doesn't need a redeploy to flip it... actually read once at init() time
+			// (real, simple, matches every other env-driven config value in this file's own
+			// sibling construction sites in main.go, e.g. DEADWEIGHT_STEAM_APPID) -- a redeploy
+			// (or, if the founder later asks for it, a live admin toggle) is the real way to
+			// change it, not a per-request env re-read.
+			Disabled:  os.Getenv(strings.ToUpper(slug)+"_MODEL_GIT_DISABLED") != "",
+			LogPrefix: slug + "-model-git",
+		}
 		inner := &BrawlpitCheckpointsHandler{
 			Prefix:   "/api/v1/game-checkpoints/" + slug,
-			Store:    &brawlpit.CheckpointStore{DB: h.DB, BlobDir: cfg.CheckpointBlobDir, Game: slug},
+			Store:    &brawlpit.CheckpointStore{DB: h.DB, BlobDir: cfg.CheckpointBlobDir, Game: slug, GitSync: gitSync},
 			EventLog: h.EventLog,
 		}
 		h.public[slug] = inner

@@ -24,6 +24,7 @@ import (
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
+	"iduna/internal/modelgit"
 	"iduna/internal/nock"
 	"iduna/internal/promptoverse"
 	"iduna/internal/shankpit"
@@ -791,6 +792,25 @@ func main() {
 	mux.Handle("/api/v1/shankpit-sprays", shankpitSpraysPublicH)
 	mux.Handle("/api/v1/shankpit-sprays/", shankpitSpraysPublicH)
 
+	// modelGitSyncer builds this game's "model repository" git integration (founder real-time,
+	// 2026-09-22: "we need to integrate the model repository with git lfs and each model
+	// repository should have a git integration that can be turned off (on by default)"): every
+	// newly-created RL checkpoint blob is synced into a real sibling repo checkout, git-lfs-
+	// tracked. RepoDir defaults to this box's own real sibling checkout
+	// (/home/fatbaby/<REPO>) -- overridable per game via <GAME>_MODEL_GIT_REPO_DIR, same
+	// override convention every other env-driven path in this file already follows. Disabled by
+	// <GAME>_MODEL_GIT_DISABLED (any non-empty value) -- zero value (unset) is enabled, the real
+	// "on by default" the founder asked for.
+	modelGitSyncer := func(game, defaultRepoDir string) modelgit.Syncer {
+		upper := strings.ToUpper(game)
+		return modelgit.Syncer{
+			RepoDir:   getenv(upper+"_MODEL_GIT_REPO_DIR", defaultRepoDir),
+			RelDir:    "models/rl-checkpoints",
+			Disabled:  os.Getenv(upper+"_MODEL_GIT_DISABLED") != "",
+			LogPrefix: game + "-model-git",
+		}
+	}
+
 	// S420, founder real-time: "lets make a checkpoint registry so we can train from multiple
 	// locations and then we can add checkpoints from colab?" -- a real, remote, shared RL
 	// checkpoint registry (see internal/brawlpit/checkpoint_store.go's own doc comment for why a
@@ -798,7 +818,8 @@ func main() {
 	// runtimes). List/download are public (same trust level GET /api/v1/brawlpit-levels already
 	// established); upload is gated behind the real M2M brawlpit.checkpoints.write permission
 	// (migrations/truestore/202609131400_brawlpit_rl_checkpoints.sql's own new BRAWLPIT-RL agent).
-	brawlpitCheckpointsHInner := &handlers.BrawlpitCheckpointsHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints"}}
+	brawlpitModelGitSyncer := modelGitSyncer("brawlpit", "/home/fatbaby/BRAWLPIT")
+	brawlpitCheckpointsHInner := &handlers.BrawlpitCheckpointsHandler{Store: &brawlpit.CheckpointStore{DB: db, BlobDir: "./var/brawlpit-checkpoints", GitSync: brawlpitModelGitSyncer}}
 	brawlpitCheckpointsH := middleware.RequireAuth(keys)(
 		middleware.RequirePermission("brawlpit.checkpoints.write")(
 			brawlpitCheckpointsHInner,
@@ -862,7 +883,7 @@ func main() {
 	// same routing shape as the BRAWLPIT block immediately above (see that block's own comments
 	// for the full public-vs-gated split rationale; internal/shankpit/checkpoint_store.go's own
 	// doc comment for what's deliberately scoped down from BRAWLPIT's final registry).
-	shankpitCheckpointsHInner := &handlers.ShankpitCheckpointsHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints"}}
+	shankpitCheckpointsHInner := &handlers.ShankpitCheckpointsHandler{Store: &shankpit.CheckpointStore{DB: db, BlobDir: "./var/shankpit-checkpoints", GitSync: modelGitSyncer("shankpit", "/home/fatbaby/SHANKPIT")}}
 	shankpitCheckpointsH := middleware.RequireAuth(keys)(
 		middleware.RequirePermission("shankpit.checkpoints.write")(
 			shankpitCheckpointsHInner,
@@ -1130,7 +1151,15 @@ func main() {
 	// own doc comment.
 	mux.Handle("/play/big_o", &handlers.GameSignupPageHandler{Game: "big_o", Title: "BIG_O", Tagline: "A SHANKPIT Story — account creation"})
 	mux.Handle("/play/brawlpit", &handlers.GameSignupPageHandler{Game: "brawlpit", Title: "BRAWLPIT", Tagline: "Account creation"})
-	mux.Handle("/api/v1/game-checkpoints/", &handlers.GameCheckpointsRouter{DB: db, Keys: keys, EventLog: unifiedLog})
+	mux.Handle("/api/v1/game-checkpoints/", &handlers.GameCheckpointsRouter{DB: db, Keys: keys, EventLog: unifiedLog,
+		ModelGitRepoDirs: map[string]string{
+			// Only deadweight has a real CheckpointBlobDir configured in games.Registry today --
+			// big_o's own entry has none (no server exists yet to upload checkpoints at all), so
+			// it deliberately gets no ModelGitRepoDirs row either; a slug with no entry here is
+			// still a real, harmless no-op (modelgit.Syncer with an empty RepoDir).
+			"deadweight": getenv("DEADWEIGHT_MODEL_GIT_REPO_DIR", "/home/fatbaby/DEADWEIGHT"),
+		},
+	})
 
 	// User CRUD — requires JWT.
 	usersProtected := middleware.RequireAuth(keys)(usersH)

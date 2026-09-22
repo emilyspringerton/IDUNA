@@ -18,6 +18,7 @@ import (
 
 	"iduna/internal/auth"
 	"iduna/internal/backlog"
+	"iduna/internal/gitsync"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
 	"iduna/internal/userlog"
@@ -598,7 +599,7 @@ func commitAndPushBacklog(backlogPath, commitMsg string) error {
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %w\n%s", err, out)
 	}
-	if err := gitPushWithRetry("kanban-git", emilyRoot, gitEnv); err != nil {
+	if err := gitsync.PushWithRetry("kanban-git", emilyRoot, gitEnv); err != nil {
 		return fmt.Errorf("git push failed after retry: %w", err)
 	}
 	return nil
