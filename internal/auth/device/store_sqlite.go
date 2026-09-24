@@ -15,6 +15,24 @@ import (
 // patterns that appear in the device flow:
 //   - UTC_TIMESTAMP(6) → pass time.Now().UTC() as a parameter
 //   - ON DUPLICATE KEY UPDATE → INSERT OR REPLACE
+//
+// Real, found-live bug (2026-09-24, while building BIG_O's own new IDUNA device-auth phone app --
+// every real /auth/device/poll call against a freshly-started, definitely-valid, definitely-not-
+// expired device_code came back DEVICE_CODE_INVALID_OR_EXPIRED, reproduced with plain curl too, so
+// not a BIG_O-side bug). Root cause, confirmed via an isolated modernc.org/sqlite repro: every
+// OTHER store in this codebase (internal/store/sqlite.go) explicitly formats a time.Time as
+// time.RFC3339Nano text before writing it, and scans time columns back into a string + manual
+// time.Parse(time.RFC3339Nano, ...) -- never a bare *time.Time Scan destination. This file was the
+// one exception: it passed raw time.Time values straight through to ExecContext (modernc.org/
+// sqlite silently stores them via time.Time's own String() method -- "2026-09-24 05:59:13.7869...
+// +0000 UTC", NOT RFC3339Nano) and scanned straight into *time.Time/sql.NullTime destinations,
+// which modernc.org/sqlite's Scan does not support for a TEXT column at all ("unsupported Scan,
+// storing driver.Value type string into type *time.Time") -- confirmed reproducing 100% of the
+// time, not an edge case, meaning the real, live device-auth poll flow had never worked. Every
+// write below now formats explicitly; every read now scans into a string/sql.NullString and
+// parses manually, matching internal/store/sqlite.go's own already-proven-correct convention
+// exactly. The Request/Exchange struct shapes (time.Time/sql.NullTime fields) are UNCHANGED --
+// this fix is confined to this file's own read/write mechanics, no ripple into service.go.
 type SQLiteStore struct{ db *sql.DB }
 
 // NewSQLiteDeviceStore wraps an open SQLite *sql.DB for the device flow.
@@ -26,7 +44,7 @@ func (s *SQLiteStore) InsertDeviceRequest(ctx context.Context, req *Request) err
 (stream_id,device_code_hash,user_code_norm,user_code_display,status,created_at,expires_at,poll_interval_ms)
 VALUES (?,?,?,?,'pending',?,?,?)`,
 		req.StreamID, req.DeviceCodeHash[:], req.UserCodeNorm, req.UserCodeDisplay,
-		now, req.ExpiresAt, req.PollIntervalMS)
+		now, req.ExpiresAt.UTC().Format(time.RFC3339Nano), req.PollIntervalMS)
 	if err != nil {
 		return err
 	}
@@ -40,10 +58,24 @@ func (s *SQLiteStore) GetDeviceRequestByDeviceHash(ctx context.Context, deviceHa
 		        poll_interval_ms,last_poll_at,authorized_user_id,exchange_code_plain,exchange_code_expires_at
 		 FROM device_auth_requests WHERE device_code_hash=?`, deviceHash[:])
 	var req Request
+	var expiresAtStr string
+	var lastPollAtStr, exchangePlainStr, exchangeExpiresStr sql.NullString
 	if err := row.Scan(&req.ID, &req.StreamID, &req.UserCodeNorm, &req.UserCodeDisplay,
-		&req.Status, &req.ExpiresAt, &req.PollIntervalMS, &req.LastPollAt,
-		&req.AuthorizedUserID, &req.ExchangePlain, &req.ExchangeExpires); err != nil {
+		&req.Status, &expiresAtStr, &req.PollIntervalMS, &lastPollAtStr,
+		&req.AuthorizedUserID, &exchangePlainStr, &exchangeExpiresStr); err != nil {
 		return nil, err
+	}
+	req.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expiresAtStr)
+	if lastPollAtStr.Valid && lastPollAtStr.String != "" {
+		if t, perr := time.Parse(time.RFC3339Nano, lastPollAtStr.String); perr == nil {
+			req.LastPollAt = sql.NullTime{Time: t, Valid: true}
+		}
+	}
+	req.ExchangePlain = exchangePlainStr
+	if exchangeExpiresStr.Valid && exchangeExpiresStr.String != "" {
+		if t, perr := time.Parse(time.RFC3339Nano, exchangeExpiresStr.String); perr == nil {
+			req.ExchangeExpires = sql.NullTime{Time: t, Valid: true}
+		}
 	}
 	return &req, nil
 }
@@ -52,16 +84,18 @@ func (s *SQLiteStore) GetDeviceRequestByUserCode(ctx context.Context, userCodeNo
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id,stream_id,status,expires_at FROM device_auth_requests WHERE user_code_norm=?`, userCodeNorm)
 	var req Request
-	if err := row.Scan(&req.ID, &req.StreamID, &req.Status, &req.ExpiresAt); err != nil {
+	var expiresAtStr string
+	if err := row.Scan(&req.ID, &req.StreamID, &req.Status, &expiresAtStr); err != nil {
 		return nil, err
 	}
+	req.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expiresAtStr)
 	return &req, nil
 }
 
 func (s *SQLiteStore) UpdatePollState(ctx context.Context, requestID int64, lastPollAt time.Time) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE device_auth_requests SET last_poll_at=?, poll_count=poll_count+1 WHERE id=?`,
-		lastPollAt, requestID)
+		lastPollAt.UTC().Format(time.RFC3339Nano), requestID)
 	return err
 }
 
@@ -69,12 +103,13 @@ func (s *SQLiteStore) AuthorizeRequest(ctx context.Context, requestID int64, use
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE device_auth_requests
 		 SET status='authorized', authorized_user_id=?, authorized_at=?, authorized_ip_hash=?, authorized_ua_hash=?
-		 WHERE id=?`, userID, now, ipHash[:], uaHash[:], requestID)
+		 WHERE id=?`, userID, now.UTC().Format(time.RFC3339Nano), ipHash[:], uaHash[:], requestID)
 	return err
 }
 
 func (s *SQLiteStore) UpsertExchangeForRequest(ctx context.Context, req *Request, exchange *Exchange) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	expiresAtStr := exchange.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	// SQLite does not have ON DUPLICATE KEY UPDATE; use INSERT OR REPLACE.
 	// The device_request_id is the natural unique key here.
 	_, err := s.db.ExecContext(ctx,
@@ -82,7 +117,7 @@ func (s *SQLiteStore) UpsertExchangeForRequest(ctx context.Context, req *Request
 		 (exchange_code_hash, exchange_code_plain, user_id, device_request_id, created_at, expires_at, consumed_at)
 		 VALUES (?, ?, ?, ?, ?, ?, NULL)`,
 		exchange.ExchangeHash[:], exchange.ExchangePlain, exchange.UserID,
-		exchange.DeviceRequest, now, exchange.ExpiresAt)
+		exchange.DeviceRequest, now, expiresAtStr)
 	if err != nil {
 		return err
 	}
@@ -90,7 +125,7 @@ func (s *SQLiteStore) UpsertExchangeForRequest(ctx context.Context, req *Request
 		`UPDATE device_auth_requests
 		 SET exchange_code_plain=?, exchange_code_hash=?, exchange_code_expires_at=?
 		 WHERE id=?`,
-		exchange.ExchangePlain, exchange.ExchangeHash[:], exchange.ExpiresAt, exchange.DeviceRequest)
+		exchange.ExchangePlain, exchange.ExchangeHash[:], expiresAtStr, exchange.DeviceRequest)
 	return err
 }
 
@@ -102,11 +137,19 @@ func (s *SQLiteStore) GetExchangeByPlainOrHash(ctx context.Context, code string,
 		 ORDER BY id DESC LIMIT 1`, hash[:], code)
 	var ex Exchange
 	var hashBytes []byte
+	var expiresAtStr string
+	var consumedAtStr sql.NullString
 	if err := row.Scan(&ex.ID, &hashBytes, &ex.ExchangePlain, &ex.UserID,
-		&ex.DeviceRequest, &ex.ExpiresAt, &ex.ConsumedAt); err != nil {
+		&ex.DeviceRequest, &expiresAtStr, &consumedAtStr); err != nil {
 		return nil, err
 	}
 	copy(ex.ExchangeHash[:], hashBytes)
+	ex.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expiresAtStr)
+	if consumedAtStr.Valid && consumedAtStr.String != "" {
+		if t, perr := time.Parse(time.RFC3339Nano, consumedAtStr.String); perr == nil {
+			ex.ConsumedAt = sql.NullTime{Time: t, Valid: true}
+		}
+	}
 	return &ex, nil
 }
 
@@ -117,7 +160,7 @@ func (s *SQLiteStore) ConsumeExchange(ctx context.Context, exchangeID int64, dev
 	}
 	defer tx.Rollback() //nolint:errcheck
 	res, err := tx.ExecContext(ctx,
-		`UPDATE exchange_codes SET consumed_at=? WHERE id=? AND consumed_at IS NULL`, now, exchangeID)
+		`UPDATE exchange_codes SET consumed_at=? WHERE id=? AND consumed_at IS NULL`, now.UTC().Format(time.RFC3339Nano), exchangeID)
 	if err != nil {
 		return err
 	}
@@ -156,6 +199,6 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, streamType, streamID, eve
 		`INSERT INTO event_store
 		 (stream_type, stream_id, event_type, payload_json, occurred_at, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		streamType, streamID, eventType, payload, occurredAt, now)
+		streamType, streamID, eventType, payload, occurredAt.UTC().Format(time.RFC3339Nano), now)
 	return err
 }
