@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-09-24
+- feat: BIG_O joins the existing GFD<->EINHORN_SURVIVAL cross-server chat bridge (POST/GET /api/v1/chat/messages) as a third participant -- new sender_source "bigo_server" + channel "big_o" (chat_messages.go), new BIGO-SERVER M2M agent (config/agents.json + migrations/truestore/202609240100_bigo_server_agent.sql, no special permission needed). Live-verified: bootstrap provisioned the secret against the real running DB, iduna.service rebuilt+restarted, then a real POST/GET round trip succeeded end to end. 2 new tests. (sess-20260923-1030-4a526255)
+
 ## 2026-09-22
 - feat: model repository git-lfs integration -- new internal/modelgit.Syncer syncs every new RL checkpoint blob (SHANKPIT/BRAWLPIT/DEADWEIGHT) into its sibling repo checkout, git-lfs-tracked; per-game on/off toggle (<GAME>_MODEL_GIT_DISABLED), on by default. Extracted internal/gitsync.PushWithRetry from apples.go for reuse. (sess-20260920-1908-24cb3558)
 - feat: BRAWLPIT player identity (games.Registry entry, brawlpit.play) + generalized BigOSignupPageHandler into reusable GameSignupPageHandler{Game,Title,Tagline} serving both /play/big_o and /play/brawlpit — closes SHANKPIT_OS_NORTHSTAR.md item 4 (sess-20260920-1908-24cb3558)
