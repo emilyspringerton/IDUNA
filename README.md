@@ -15,6 +15,18 @@ a bearer-gated agent/CLI API at `/api/v1/kanban/cards` (`kanban.access`, see `em
 `emily kanban` command); `/admin/login` and `/portal` both restyled to the real IDUNA cream/gold
 ceremony design system (Cormorant Garamond + Spectral).
 
+**2026-09-24 — IDUNA as SSO**: `GET /api/v1/auth/sso/login` is now the one place an email/password
+is typed for IDUNA player auth — a two-pane login page (form left, brand right, same cream/gold
+ceremony design system) that any site can redirect to instead of rendering its own form
+(`internal/http/handlers/sso_login.go`). `redirect_uri` is allowlisted (`SSO_ALLOWED_REDIRECT_HOSTS`);
+on success the page hands a JWT back via a URL fragment, never a query string. Meant to be reached
+at a real, dedicated domain (`iam.okemily.com`, `ops/nginx/iam-okemily.conf`) so the browser's own
+address bar shows IDUNA's identity while a password is typed — **DNS/cert for that domain are not
+live yet** (queued: `sudo-queue/91-iam-okemily-sso-domain.sh`), so until then this is reachable the
+same-origin-proxy way any caller's own `/api/` path already uses (e.g.
+`wotan.okemily.com/api/v1/auth/sso/login`). WOTAN's `store.html` is the first real caller — it no
+longer renders its own email/password form.
+
 ---
 
 IDUNA is the central trust authority for the EINHORN_INDUSTRIAL / FARTHQ ecosystem. It sits between external identity providers (Google OAuth) and all downstream services and agents. Downstream services never trust external tokens directly — they exclusively trust IDUNA-issued ES256 JWTs.

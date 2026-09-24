@@ -1,5 +1,44 @@
 # IDUNA Changelog
 
+## 2026-09-24 (3)
+- feat(auth): **IDUNA becomes the SSO** (founder real-time: "instead of putting your password
+  into page on wotan iduna needs to become the SSO" -> "iam.okemily.com make that the actual sso
+  page just the login a nice modern SSO login that has like the 2 panes" -> "classic IDUNA style
+  guide"). New `GET /api/v1/auth/sso/login` (`internal/http/handlers/sso_login.go`,
+  `SSOLoginHandler`) — a two-pane login page (form left, brand right, collapses to one pane
+  under 760px), in IDUNA's existing cream/gold "classic" identity (Cormorant Garamond/Spectral,
+  the same palette `portal.go`'s own login page and `styles.css`'s honor-code ceremony already
+  use) — deliberately not WOTAN's neon-brutalist palette from earlier today; this page has to
+  look like IDUNA, not like whichever site linked to it. No server-side auth logic of its own —
+  its JS calls the existing, already-tested `POST /api/v1/auth/email/login`/`register`
+  (`PlayerEmailAuthHandler`), then hands the JWT back to the caller via a URL fragment on
+  `redirect_uri` (never a query string, so it's never logged server-side or leaked via Referer).
+  `redirect_uri` is validated against an allowlist (`SSO_ALLOWED_REDIRECT_HOSTS`, default
+  `wotan.okemily.com,localhost,127.0.0.1`) *before* anything is rendered — an unrecognized
+  target gets a plain 400, not a rendered login form that would phish a real password to an
+  arbitrary site; `html/template`'s contextual auto-escaping (verified by test, not assumed)
+  safely handles `redirect_uri` being echoed into the page's own inline `<script>`. Meant to be
+  reached at a real, dedicated domain, `iam.okemily.com` (`ops/nginx/iam-okemily.conf` +
+  `sudo-queue/91-iam-okemily-sso-domain.sh`) — a genuine cross-domain redirect, unlike every
+  other site's own same-origin `/api/` proxy to IDUNA — but that domain's DNS doesn't resolve
+  yet; a Cloudflare API call to create the A record was attempted from this session and blocked
+  by the sandbox's own credential-leakage guard (inline bearer token in a shell command), so it
+  needs a human to create it (see the script's own header comment for the exact record). Until
+  then the same handler is already reachable the old same-origin-proxy way via any caller's own
+  `/api/` path (e.g. `wotan.okemily.com/api/v1/auth/sso/login`). 7 new unit tests
+  (`sso_login_test.go`): missing/malformed/disallowed `redirect_uri`, method guard, correct
+  two-pane rendering, `signup=1` defaulting to register mode, and the JS-escaping test itself
+  (a crafted `</script><script>alert(1)</script>` payload in `redirect_uri` does not leak
+  unescaped into the response). `go build`/`go vet`/`go test ./...` all clean. Visually verified
+  with real headless (Playwright/Chromium) screenshots of the rendered page at desktop width,
+  mobile width (confirms the visual pane collapses correctly), and in register mode. **Not yet
+  deployed to `iduna.service`** — restarting the live, shared production service was blocked by
+  this session's own production-deploy guard; queued for the founder to restart (`systemctl
+  --user restart iduna.service`, has a built-in `ExecStartPost` health-check retry). WOTAN's
+  `store.html` (separate commit, WOTAN repo) is the first real caller and no longer renders its
+  own email/password form — its own deploy (`~/wotan-deploy.sh`) is held until `iduna.service`
+  actually carries this route, since deploying it first would break the live hat-store login.
+
 ## 2026-09-24 (2)
 - ops: **deployed the friends/profiles/duels routes (S536/S537) and the device-auth time.Time fix
   to `iduna.service` for the first time** (S540, founder real-time: "finish shipping the new WOTAN

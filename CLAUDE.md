@@ -14,6 +14,7 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/v1/auth/google` | Google OAuth callback → IDUNA JWT |
+| GET | `/api/v1/auth/sso/login` | IDUNA-as-SSO login page (`SSOLoginHandler`) — the one place a password is typed for email/password auth; `?redirect_uri=` (allowlisted via `SSO_ALLOWED_REDIRECT_HOSTS`) gets the JWT back as a URL fragment. Also served at the root of the dedicated `iam.okemily.com` domain (see `ops/nginx/iam-okemily.conf`) once its DNS/cert land. |
 | POST | `/api/v1/auth/agent` | M2M agent auth (agent_name + agent_secret) → JWT |
 | GET | `/.well-known/jwks.json` | Public key set for JWT validation |
 | POST | `/api/v1/apples` | File a golden documentation Apple |
@@ -122,6 +123,7 @@ GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON — service account key JSON for Drive API (op
 GOOGLE_DRIVE_FOLDER_ID            — Google Drive folder ID for training artifact uploads (optional; root if absent)
 IDUNA_HEC_TOKEN       — bearer token for POST /services/collector (unified logging backend ingest); unset disables ingest entirely
 EMILY_BACKLOG_PATH    — path to EMILY/BACKLOG.md for the kanban board's two-way sync (inbox read + new-card write-back); default /home/fatbaby/EMILY/BACKLOG.md
+SSO_ALLOWED_REDIRECT_HOSTS — comma-separated hostnames /api/v1/auth/sso/login's redirect_uri is allowed to target; default "wotan.okemily.com,localhost,127.0.0.1"
 ```
 
 ## Apples

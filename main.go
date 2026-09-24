@@ -1195,6 +1195,15 @@ func main() {
 	mux.Handle("/api/v1/auth/email/register", playerEmailAuthH)
 	mux.Handle("/api/v1/auth/email/login", playerEmailAuthH)
 
+	// IDUNA as SSO (S542-follow-on, founder real-time 2026-09-24: "instead of putting your
+	// password into page on wotan iduna needs to become the SSO") — the one hosted login page
+	// a caller site redirects to instead of rendering its own email/password form; its JS just
+	// calls the two endpoints above. redirect_uri is allowlisted, not open.
+	ssoLoginH := &handlers.SSOLoginHandler{
+		AllowedHosts: strings.Split(getenv("SSO_ALLOWED_REDIRECT_HOSTS", "wotan.okemily.com,localhost,127.0.0.1"), ","),
+	}
+	mux.Handle("/api/v1/auth/sso/login", ssoLoginH)
+
 	// SHANKPIT Google OAuth browser flow — public (no prior auth needed).
 	shankpitAuthH := &handlers.ShankpitAuthHandler{
 		GoogleClientID:     googleClientID,
