@@ -1,5 +1,21 @@
 # IDUNA Changelog
 
+## 2026-09-24 (2)
+- ops: **deployed the friends/profiles/duels routes (S536/S537) and the device-auth time.Time fix
+  to `iduna.service` for the first time** (S540, founder real-time: "finish shipping the new WOTAN
+  stuff"). Both had been committed/pushed but the running binary (built 01:05 UTC, before either
+  landed) predated them -- confirmed directly (`70b6b06` 06:06 UTC, `2716c8e` 12:04 UTC, both after
+  the running binary's build time), meaning `friends.html`'s calls would have 404'd against the
+  real service despite every fixture-based test passing. `go test ./...` clean (30+ packages),
+  `go build -o ~/.local/bin/iduna .`, `systemctl --user restart iduna.service` -- health check
+  (`ExecStartPost`'s own `/health` poll) passed clean, no manual intervention needed. Confirmed
+  live: `friend-requests`/`duels` routes now return 401 (auth required) instead of 404 (route
+  missing); full real curl-driven lifecycle (register two accounts → upgrade to email → friend
+  request → accept → duel → accept → real `match_token` minted → public profile shows the new
+  friend count) run against production through `wotan.okemily.com`'s own proxy, not a fixture.
+  This also closes the device-auth `time.Time` fix's own named "NOT yet deployed... needs a human
+  restart" gap from earlier today (`5f3c89b`) as a side effect of the same rebuild. (sess-20260923-1030-4a526255)
+
 ## 2026-09-24
 - feat(social): duel accept mints a shared match_token for queue pairing (S537 Duel Phase 2, Phase 1) -- investigated first (Principle 19): no game in this monorepo (DEADWEIGHT, REDGARDEN, ECOWAR, SHANKPIT, BRAWLPIT) has any existing "pair me with player X specifically" mechanism, and DEADWEIGHT has no server-to-client push channel, so this stays a pull/poll primitive by design, not push. `duelRespond`'s accept path (`game_social.go`) now mints a random 32-hex-char token (`crypto/rand`, same pattern `game_online.go`'s guest_secret already uses) with a 15-minute TTL, stored on the `duel_challenges` row and returned in the accept response; `duelsList` (`GET duels`) surfaces it to both participants identically as long as it hasn't expired, and never on a declined duel. New migration `202609240400_duel_match_tokens.sql` (two nullable columns, additive). New test coverage in `game_social_test.go`: token is real/non-empty on accept, identical when read back via `GET duels` by BOTH the challenger and the challenged player (not just in the accept response), and absent entirely on a declined duel. `go build`/`vet`/`test ./...` clean across the whole repo. This is IDUNA's half only -- DEADWEIGHT's own matchmaking queue doesn't consume this token yet (Phase 2, tracked in `EMILY/BACKLOG.md` SECTION 537). (sess-20260923-1030-4a526255)
 - feat(social): friends, public profiles, and friendly-challenge (duel) primitives (S536) on the per-game online-services layer -- founder real-time: "add iduna online accounts / add social features / profiles / friends / friendly challenges (duels) / for DEADWEIGHT / WOTAN". New routes under /api/v1/games/{game}/...: GET players/{id}/profile (public), POST/GET friend-requests + {id}/accept|decline, GET friends + DELETE friends/{id}, POST/GET duels + {id}/accept|decline (internal/http/handlers/game_social.go). Friendship has no separate table -- an accepted friend_requests row IS the friendship. A reverse-pending request auto-accepts instead of leaving two dangling rows. Duels require an existing friendship (matches "friendly challenges" naming) and are V0-scoped to the invite lifecycle only -- turning an accepted duel into a live match instance is real, named, deferred work (needs each game's own match-start mechanism), not silently punted. New migration 202609240300_friends_and_duels.sql; new game_social_test.go (full lifecycle, real SQLite migrations, not mocked). go build/vet/test clean across the whole repo. (sess-20260923-1030-4a526255)
