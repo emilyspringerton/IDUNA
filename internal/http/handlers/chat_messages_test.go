@@ -139,6 +139,44 @@ func TestChatMessages_RejectsInvalidChannel(t *testing.T) {
 	}
 }
 
+// TestChatMessages_BigOSourceAndChannel guards the 2026-09-24 BIG_O bridge addition (EMILY/
+// BACKLOG.md SECTION 536 follow-up, BIG_O/NORTHSTAR.md §27): bigo_server/big_o must actually be
+// accepted, same as the pre-existing gfd_server/einhorn_survival sources this endpoint already
+// serves.
+func TestChatMessages_BigOSourceAndChannel(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestChatDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := chatHandlerWithAuth(keys, db)
+
+	body, _ := json.Marshal(map[string]string{
+		"channel": "big_o", "sender_name": "BigO-a1b2c3", "sender_source": "bigo_server", "body": "hello from big_o",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/messages", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("post status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChatMessages_RejectsInvalidSource(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestChatDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := chatHandlerWithAuth(keys, db)
+
+	body, _ := json.Marshal(map[string]string{"channel": "say", "sender_name": "X", "sender_source": "not-a-real-source", "body": "hi"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/messages", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for invalid sender_source", rec.Code)
+	}
+}
+
 func TestChatMessages_RequiresAuth(t *testing.T) {
 	keys, _ := jwt.GenerateKeys()
 	db := newTestChatDB(t)

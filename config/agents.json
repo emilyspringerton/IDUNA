@@ -235,6 +235,13 @@
       "permissions": [
         "apps.releases.write"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-00000000001c",
+      "name": "BIGO-SERVER",
+      "type": "game_server_agent",
+      "description": "BIG_O day server (day/apps/server) -- authenticates via POST /api/v1/auth/agent to post/poll the shared cross-server chat bus (POST/GET /api/v1/chat/messages, sender_source=bigo_server, channel=big_o), joining the existing GFD<->EINHORN_SURVIVAL bridge (GoblinFoxDragon/docs2/CHAT_BRIDGE_TO_EINHORN_SURVIVAL_SPEC.md) as a third real participant rather than a parallel connection. No special permission needed -- RequireAuth is the only gate on that route, same as GTA7-SERVER/DRAGONSNSHIT-MUD already rely on. EMILY/BACKLOG.md SECTION 536 follow-up, BIG_O/NORTHSTAR.md §27, 2026-09-24.",
+      "permissions": []
     }
   ]
 }
