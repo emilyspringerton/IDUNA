@@ -19,6 +19,9 @@ package handlers
 // friendship (a friends list is a query over status='accepted', either direction).
 
 import (
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -26,6 +29,11 @@ import (
 
 	"iduna/internal/games"
 )
+
+// duelMatchTokenTTL bounds how long an accepted duel's match_token is valid for queue pairing --
+// same "matched entry expires" spirit as ShankpitMatchedTTL, just longer since a human has to
+// notice the acceptance and go queue up, not an automated system reacting instantly.
+const duelMatchTokenTTL = 15 * time.Minute
 
 type friendRequest struct {
 	ID          int64  `json:"id"`
@@ -42,11 +50,13 @@ type friendSummary struct {
 }
 
 type duelChallenge struct {
-	ID           int64  `json:"id"`
-	ChallengerID string `json:"challenger_id"`
-	ChallengedID string `json:"challenged_id"`
-	Status       string `json:"status"`
-	CreatedAt    string `json:"created_at"`
+	ID                  int64  `json:"id"`
+	ChallengerID        string `json:"challenger_id"`
+	ChallengedID        string `json:"challenged_id"`
+	Status              string `json:"status"`
+	CreatedAt           string `json:"created_at"`
+	MatchToken          string `json:"match_token,omitempty"`
+	MatchTokenExpiresAt string `json:"match_token_expires_at,omitempty"`
 }
 
 // profile is GET /api/v1/games/{game}/players/{id}/profile -- public, no auth, matching
@@ -326,7 +336,8 @@ func (h *GameOnlineHandler) duelsList(w http.ResponseWriter, r *http.Request, cf
 		return
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, challenger_id, challenged_id, status, created_at FROM duel_challenges
+		`SELECT id, challenger_id, challenged_id, status, created_at, match_token, match_token_expires_at
+		 FROM duel_challenges
 		 WHERE game = ? AND (challenger_id = ? OR challenged_id = ?)
 		 ORDER BY created_at DESC LIMIT 50`, cfg.Slug, pid, pid)
 	if err != nil {
@@ -334,12 +345,23 @@ func (h *GameOnlineHandler) duelsList(w http.ResponseWriter, r *http.Request, cf
 		return
 	}
 	defer rows.Close()
+	now := time.Now().UTC()
 	out := []duelChallenge{}
 	for rows.Next() {
 		var d duelChallenge
-		if err := rows.Scan(&d.ID, &d.ChallengerID, &d.ChallengedID, &d.Status, &d.CreatedAt); err != nil {
+		var token, expiresAt sql.NullString
+		if err := rows.Scan(&d.ID, &d.ChallengerID, &d.ChallengedID, &d.Status, &d.CreatedAt, &token, &expiresAt); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		// Only surface a live (unexpired) match_token -- a stale token from a long-accepted duel
+		// shouldn't look queueable forever; the game's own queue re-checks expiry server-side too,
+		// this just keeps the client from showing a "queue now" affordance that would just fail.
+		if d.Status == "accepted" && token.Valid && expiresAt.Valid {
+			if exp, perr := time.Parse(time.RFC3339Nano, expiresAt.String); perr == nil && now.Before(exp) {
+				d.MatchToken = token.String
+				d.MatchTokenExpiresAt = expiresAt.String
+			}
 		}
 		out = append(out, d)
 	}
@@ -366,9 +388,26 @@ func (h *GameOnlineHandler) duelRespond(w http.ResponseWriter, r *http.Request, 
 		status = "accepted"
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Accepting mints a short-lived shared match_token -- the real, minimal primitive that lets
+	// DEADWEIGHT's (or any game's) matchmaking queue pair these two specific players together
+	// instead of its normal FIFO/random pairing. See migrations/truestore/
+	// 202609240400_duel_match_tokens.sql.
+	var token, expiresAt string
+	if accept {
+		tokBytes := make([]byte, 16)
+		if _, err := rand.Read(tokBytes); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		token = hex.EncodeToString(tokBytes)
+		expiresAt = time.Now().UTC().Add(duelMatchTokenTTL).Format(time.RFC3339Nano)
+	}
+
 	res, err := h.DB.ExecContext(r.Context(),
-		`UPDATE duel_challenges SET status=?, responded_at=? WHERE id=? AND game=? AND challenged_id=? AND status='pending'`,
-		status, now, id, cfg.Slug, pid)
+		`UPDATE duel_challenges SET status=?, responded_at=?, match_token=?, match_token_expires_at=?
+		 WHERE id=? AND game=? AND challenged_id=? AND status='pending'`,
+		status, now, nullIfEmpty(token), nullIfEmpty(expiresAt), id, cfg.Slug, pid)
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -377,5 +416,20 @@ func (h *GameOnlineHandler) duelRespond(w http.ResponseWriter, r *http.Request, 
 		mmoWriteError(w, http.StatusNotFound, "duel not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": status})
+	resp := map[string]any{"status": status}
+	if accept {
+		resp["match_token"] = token
+		resp["match_token_expires_at"] = expiresAt
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// nullIfEmpty lets an empty string bind as SQL NULL rather than a literal "" -- keeps
+// match_token/match_token_expires_at genuinely absent (NULL) on a decline, not an empty string
+// that duelsList's sql.NullString scan would then have to special-case.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

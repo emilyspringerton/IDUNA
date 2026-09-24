@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -108,6 +109,57 @@ func TestSocialFlow(t *testing.T) {
 	// only the challenged player may respond.
 	if c, _, _ := e.do("POST", "/api/v1/games/deadweight/duels/"+itoa(int64(duelID))+"/decline", tokA, nil); c != 404 {
 		t.Errorf("challenger responding to own duel should 404, got %d", c)
+	}
+
+	// S537 Duel Phase 2: accepting mints a shared match_token so DEADWEIGHT's (or any game's)
+	// queue can pair these two specific players together. Confirm it's real, non-empty, and
+	// visible identically to BOTH participants via GET duels (not just in the accept response).
+	matchToken, _ := m["match_token"].(string)
+	if matchToken == "" {
+		t.Fatalf("duel accept response missing match_token: %v", m)
+	}
+	if _, ok := m["match_token_expires_at"].(string); !ok {
+		t.Fatalf("duel accept response missing match_token_expires_at: %v", m)
+	}
+	findToken := func(tok string, list []byte, id float64) string {
+		var duels []map[string]any
+		if err := json.Unmarshal(list, &duels); err != nil {
+			t.Fatalf("duels list unmarshal (%s): %v", tok, err)
+		}
+		for _, d := range duels {
+			if d["id"].(float64) == id {
+				s, _ := d["match_token"].(string)
+				return s
+			}
+		}
+		t.Fatalf("duel %v not found in duels list (%s)", id, tok)
+		return ""
+	}
+	_, _, rawA := e.do("GET", "/api/v1/games/deadweight/duels", tokA, nil)
+	_, _, rawB := e.do("GET", "/api/v1/games/deadweight/duels", tokB, nil)
+	if got := findToken("A", rawA, duelID); got != matchToken {
+		t.Errorf("A's duels list match_token = %q, want %q", got, matchToken)
+	}
+	if got := findToken("B", rawB, duelID); got != matchToken {
+		t.Errorf("B's duels list match_token = %q, want %q", got, matchToken)
+	}
+
+	// a DECLINED duel never gets a match_token -- only acceptance mints one.
+	code, m, raw = e.do("POST", "/api/v1/games/deadweight/duels", tokC, map[string]string{"to_player_id": pidA})
+	if code != 201 {
+		t.Fatalf("duel create C->A: %d %s", code, raw)
+	}
+	declinedID := m["id"].(float64)
+	code, m, _ = e.do("POST", "/api/v1/games/deadweight/duels/"+itoa(int64(declinedID))+"/decline", tokA, nil)
+	if code != 200 || m["status"] != "declined" {
+		t.Fatalf("duel decline: %d %v", code, m)
+	}
+	if m["match_token"] != nil {
+		t.Fatalf("declined duel response should not carry a match_token: %v", m)
+	}
+	_, _, rawADeclined := e.do("GET", "/api/v1/games/deadweight/duels", tokA, nil)
+	if got := findToken("A", rawADeclined, declinedID); got != "" {
+		t.Errorf("declined duel should have no match_token in duels list, got %q", got)
 	}
 
 	// unfriend A/B, then A can no longer duel B.
