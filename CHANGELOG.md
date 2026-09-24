@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-24
+- fix(device-auth): real time.Time round-trip bug breaking every SQLite device-auth poll -- found live building BIG_O's IDUNA app, root-caused via an isolated modernc.org/sqlite repro (time.Time scanned back from a TEXT column always failed, meaning the live poll flow never actually worked for any real caller). Fixed to match internal/store/sqlite.go's own already-proven RFC3339Nano format/parse convention. New store_sqlite_test.go closes the real test gap (service_test.go's fakeStore never exercised real SQL). go build/vet/test all clean. NOT yet deployed to the live service -- blocked as a production-deploy action, needs a human restart. (sess-20260923-1030-4a526255)
 - feat: BIG_O joins the existing GFD<->EINHORN_SURVIVAL cross-server chat bridge (POST/GET /api/v1/chat/messages) as a third participant -- new sender_source "bigo_server" + channel "big_o" (chat_messages.go), new BIGO-SERVER M2M agent (config/agents.json + migrations/truestore/202609240100_bigo_server_agent.sql, no special permission needed). Live-verified: bootstrap provisioned the secret against the real running DB, iduna.service rebuilt+restarted, then a real POST/GET round trip succeeded end to end. 2 new tests. (sess-20260923-1030-4a526255)
 
 ## 2026-09-22
