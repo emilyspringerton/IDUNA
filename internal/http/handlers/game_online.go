@@ -116,6 +116,28 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.leaderboard(w, r, cfg)
 	case len(parts) == 4 && parts[1] == "players" && parts[3] == "stats" && r.Method == http.MethodGet:
 		h.stats(w, r, cfg, parts[2])
+	case len(parts) == 4 && parts[1] == "players" && parts[3] == "profile" && r.Method == http.MethodGet:
+		h.profile(w, r, cfg, parts[2])
+	case len(parts) == 2 && parts[1] == "friend-requests" && r.Method == http.MethodPost:
+		h.friendRequestCreate(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "friend-requests" && r.Method == http.MethodGet:
+		h.friendRequestsList(w, r, cfg)
+	case len(parts) == 4 && parts[1] == "friend-requests" && parts[3] == "accept" && r.Method == http.MethodPost:
+		h.friendRequestRespond(w, r, cfg, parts[2], true)
+	case len(parts) == 4 && parts[1] == "friend-requests" && parts[3] == "decline" && r.Method == http.MethodPost:
+		h.friendRequestRespond(w, r, cfg, parts[2], false)
+	case len(parts) == 2 && parts[1] == "friends" && r.Method == http.MethodGet:
+		h.friendsList(w, r, cfg)
+	case len(parts) == 3 && parts[1] == "friends" && r.Method == http.MethodDelete:
+		h.friendRemove(w, r, cfg, parts[2])
+	case len(parts) == 2 && parts[1] == "duels" && r.Method == http.MethodPost:
+		h.duelCreate(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "duels" && r.Method == http.MethodGet:
+		h.duelsList(w, r, cfg)
+	case len(parts) == 4 && parts[1] == "duels" && parts[3] == "accept" && r.Method == http.MethodPost:
+		h.duelRespond(w, r, cfg, parts[2], true)
+	case len(parts) == 4 && parts[1] == "duels" && parts[3] == "decline" && r.Method == http.MethodPost:
+		h.duelRespond(w, r, cfg, parts[2], false)
 	default:
 		http.NotFound(w, r)
 	}
