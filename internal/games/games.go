@@ -64,14 +64,18 @@ var Registry = map[string]Config{
 		Slug:     "brawlpit",
 		PlayPerm: "brawlpit.play",
 	},
-	// DEADWEIGHT_2/NORTHSTAR.md D2 ("server-authoritative 1v1"): its own M2M agent identity,
-	// never reusing DEADWEIGHT's or ECOWAR's (ECOWAR-BOTS's own precedent) -- dw2_server reports
-	// results as DEADWEIGHT2-SERVER. No BotPerm/CheckpointsWritePerm/TicketsWritePerm yet: D4 ("a
-	// real placeholder bot") is a separate, not-yet-built phase -- same deliberately narrow cut
+	// D2/NORTHSTAR.md ("server-authoritative 1v1"): its own M2M agent identity, never reusing
+	// DEADWEIGHT's or ECOWAR's (ECOWAR-BOTS's own precedent) -- dw2_server reports results as
+	// D2-SERVER. Renamed from "deadweight_2" (founder real-time: "just call it D2, disambiguate
+	// it from DEADWEIGHT, D2 is the official studio name") via
+	// 202609251200_rename_deadweight2_to_d2.sql -- the repo itself is also being renamed,
+	// DEADWEIGHT_2 -> D2, separately blocked on GitHub token permissions as of this change. No
+	// BotPerm/CheckpointsWritePerm/TicketsWritePerm yet: D4 ("a real placeholder bot") is a
+	// separate, not-yet-built phase -- same deliberately narrow cut
 	// 202609221100_big_o_play_permission.sql's own doc comment named for big_o.
-	"deadweight_2": {
-		Slug:           "deadweight_2",
-		PlayPerm:       "deadweight_2.play",
-		MatchWritePerm: "deadweight_2.match.write",
+	"d2": {
+		Slug:           "d2",
+		PlayPerm:       "d2.play",
+		MatchWritePerm: "d2.match.write",
 	},
 }

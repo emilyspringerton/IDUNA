@@ -244,12 +244,12 @@
       "permissions": []
     },
     {
-      "id": "00000003-0000-4000-8000-00000000001d",
-      "name": "DEADWEIGHT2-SERVER",
+      "id": "00000003-0000-4000-8000-00000000001e",
+      "name": "D2-SERVER",
       "type": "game_bot_agent",
-      "description": "DEADWEIGHT_2 game server (dw2_server) -- reports authoritative match results via POST /api/v1/games/deadweight_2/match-result. Its own identity, never reusing DEADWEIGHT-SERVER's or ECOWAR-BOTS's (ECOWAR-BOTS's own precedent), so match stats never cross-attribute. No DEADWEIGHT2-BOTS agent yet -- D4 (a real placeholder bot) is a separate, not-yet-built phase. EMILY/BACKLOG.md SECTION 546 D2, 2026-09-25.",
+      "description": "D2 game server (dw2_server) -- reports authoritative match results via POST /api/v1/games/d2/match-result. Its own identity, never reusing DEADWEIGHT-SERVER's or ECOWAR-BOTS's (ECOWAR-BOTS's own precedent), so match stats never cross-attribute. Renamed from DEADWEIGHT2-SERVER (founder real-time: 'just call it D2, disambiguate it from DEADWEIGHT, D2 is the official studio name') via 202609251200_rename_deadweight2_to_d2.sql. No D2-BOTS agent yet -- D4 (a real placeholder bot) is a separate, not-yet-built phase. EMILY/BACKLOG.md SECTION 546, 2026-09-25.",
       "permissions": [
-        "deadweight_2.match.write"
+        "d2.match.write"
       ]
     }
   ]
