@@ -73,9 +73,22 @@ var Registry = map[string]Config{
 	// BotPerm/CheckpointsWritePerm/TicketsWritePerm yet: D4 ("a real placeholder bot") is a
 	// separate, not-yet-built phase -- same deliberately narrow cut
 	// 202609221100_big_o_play_permission.sql's own doc comment named for big_o.
+	//
+	// SteamAppID is the one exception to "no bot/checkpoint/ticket perms yet" above: it's not
+	// server infra, it's an env-gated toggle that's empty/unset by default and 404s steam-login
+	// honestly (same mechanism as deadweight's own row) until a real App ID exists -- there's no
+	// "not built yet" consumer to wait on, so it costs nothing to carry now. BotPerm/
+	// CheckpointsWritePerm/CheckpointBlobDir/TicketsWritePerm stay out because each one would be
+	// a permission string with no server to check it: D2 has no bot (D4, not built), no
+	// checkpoint-training pipeline, and no draft-pack/ticket economy (D2's own core/iduna.h
+	// explicitly scopes those out as "speculative bindings for endpoints nothing calls").
 	"d2": {
 		Slug:           "d2",
 		PlayPerm:       "d2.play",
 		MatchWritePerm: "d2.match.write",
+		// D2_STEAM_APPID: unset until D2 has a real Steamworks App ID (same external,
+		// human-only Valve-partner-account gate as DEADWEIGHT_STEAM_APPID above).
+		// steam-login 404s for this game until it's set.
+		SteamAppID: os.Getenv("D2_STEAM_APPID"),
 	},
 }
