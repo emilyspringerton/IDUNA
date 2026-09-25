@@ -39,7 +39,7 @@ type PlayerEmailAuthHandler struct {
 
 func (h *PlayerEmailAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	switch {
@@ -48,7 +48,7 @@ func (h *PlayerEmailAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	case strings.HasSuffix(r.URL.Path, "/login"):
 		h.handleLogin(w, r)
 	default:
-		http.NotFound(w, r)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 }
 
@@ -75,16 +75,16 @@ type emailAuthRequest struct {
 func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req emailAuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" || req.Password == "" {
-		http.Error(w, "email and password required", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
 		return
 	}
 	if len(req.Password) < 8 {
-		http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		return
 	}
 	if req.DisplayName == "" {
@@ -98,7 +98,7 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
 
@@ -108,7 +108,7 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		`SELECT player_id FROM player_credentials WHERE email=?`, req.Email,
 	).Scan(&existingPlayerID)
 	if lookupErr == nil {
-		http.Error(w, "email already registered", http.StatusConflict)
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "email already registered"})
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 	// player to re-register.
 	mode, err := gfdRegistrationMode(r.Context(), h.DB)
 	if err != nil {
-		http.Error(w, "db error", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "db error"})
 		return
 	}
 	if mode == gfdRegistrationModeWaitlist {
@@ -131,10 +131,10 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE") {
-				http.Error(w, "you're already on the waitlist", http.StatusConflict)
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "you're already on the waitlist"})
 				return
 			}
-			http.Error(w, "waitlist signup failed: "+err.Error(), http.StatusInternalServerError)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "waitlist signup failed: " + err.Error()})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -151,7 +151,7 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 	playerID := uuid.New().String()
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, "db error", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "db error"})
 		return
 	}
 	var gameCol sql.NullString
@@ -164,7 +164,7 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 	)
 	if err != nil {
 		tx.Rollback()
-		http.Error(w, "registration failed: "+err.Error(), http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "registration failed: " + err.Error()})
 		return
 	}
 	_, err = tx.ExecContext(r.Context(),
@@ -173,7 +173,7 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 	)
 	if err != nil {
 		tx.Rollback()
-		http.Error(w, "registration failed: "+err.Error(), http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "registration failed: " + err.Error()})
 		return
 	}
 
@@ -194,22 +194,22 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		if err != nil {
 			tx.Rollback()
 			if strings.Contains(err.Error(), "UNIQUE") {
-				http.Error(w, "character name already taken", http.StatusConflict)
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "character name already taken"})
 				return
 			}
-			http.Error(w, "character creation failed: "+err.Error(), http.StatusInternalServerError)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "character creation failed: " + err.Error()})
 			return
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, "commit failed", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
 		return
 	}
 
 	token, err := h.issueJWT(playerID, req.DisplayName, req.Email, game)
 	if err != nil {
-		http.Error(w, "JWT signing failed", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "JWT signing failed"})
 		return
 	}
 
@@ -232,12 +232,12 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req emailAuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" || req.Password == "" {
-		http.Error(w, "email and password required", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
 		return
 	}
 
@@ -249,15 +249,15 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 		 WHERE pc.email=?`, req.Email,
 	).Scan(&playerID, &displayName, &hash, &disabledAt, &gameCol)
 	if err == sql.ErrNoRows {
-		http.Error(w, "invalid email or password", http.StatusUnauthorized)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
 		return
 	}
 	if err != nil {
-		http.Error(w, "db error", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "db error"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
-		http.Error(w, "invalid email or password", http.StatusUnauthorized)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
 		return
 	}
 	// First Game Master tool (2026-08-05, founder: "a way to disable accounts"). Checked after
@@ -267,7 +267,7 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 	// fine: they already proved they own the credential, so "account disabled" tells a real
 	// account owner (not an attacker guessing passwords) something they're entitled to know.
 	if disabledAt.Valid {
-		http.Error(w, "this account has been disabled", http.StatusForbidden)
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this account has been disabled"})
 		return
 	}
 
@@ -278,7 +278,7 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 
 	token, err := h.issueJWT(playerID, displayName, req.Email, gameCol.String)
 	if err != nil {
-		http.Error(w, "JWT signing failed", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "JWT signing failed"})
 		return
 	}
 

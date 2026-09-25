@@ -185,6 +185,54 @@ func TestEmailRegister_GameScopesTheAccount(t *testing.T) {
 	}
 }
 
+// TestEmailAuth_ErrorResponsesAreValidJSON -- real, live-found bug (founder screenshot,
+// 2026-09-25): every error path in this handler used http.Error (plain text), while the SSO
+// login page's own JS (sso_login.go) unconditionally calls res.json() on every response
+// regardless of status. A duplicate-email register threw "Unexpected token 'e', "email
+// alre"... is not valid JSON" straight at the user instead of a real "email already
+// registered" message. Covers the two error paths reachable from the SSO page's own
+// register/login form without any special setup (duplicate email, wrong password) plus the
+// unsupported-method/path cases -- every one must be `{"error": "..."}`, not plain text.
+func TestEmailAuth_ErrorResponsesAreValidJSON(t *testing.T) {
+	db := newTestEmailAuthDB(t)
+	defer db.Close()
+	h := &handlers.PlayerEmailAuthHandler{DB: db, Keys: newTestKeys(t), Issuer: "test"}
+
+	regBody := `{"email":"dupe@example.com","password":"correcthorsebattery"}`
+	if w := doEmailAuth(h, "/api/v1/auth/email/register", regBody); w.Code != http.StatusOK {
+		t.Fatalf("first register: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	cases := []struct {
+		name string
+		w    *httptest.ResponseRecorder
+	}{
+		{"duplicate email on register", doEmailAuth(h, "/api/v1/auth/email/register", regBody)},
+		{"wrong password on login", doEmailAuth(h, "/api/v1/auth/email/login",
+			`{"email":"dupe@example.com","password":"wrongpassword"}`)},
+		{"unknown email on login", doEmailAuth(h, "/api/v1/auth/email/login",
+			`{"email":"nobody@example.com","password":"correcthorsebattery"}`)},
+		{"invalid JSON body", doEmailAuth(h, "/api/v1/auth/email/register", `not json`)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.w.Code < 400 {
+				t.Fatalf("expected an error status, got %d body=%s", c.w.Code, c.w.Body.String())
+			}
+			var body struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(c.w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("error response is not valid JSON (this is exactly the live bug): status=%d body=%q err=%v",
+					c.w.Code, c.w.Body.String(), err)
+			}
+			if body.Error == "" {
+				t.Fatalf("expected a non-empty \"error\" field, got body=%s", c.w.Body.String())
+			}
+		})
+	}
+}
+
 // TestEmailRegister_NoGameLeavesClaimAbsent -- backward compatibility: an
 // ordinary registration with no game field must not carry any game claim at
 // all (not even an empty string) so every existing ticket handler's
