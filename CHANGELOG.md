@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-25
+- fix(games): claimGamePlayer -- an IDUNA identity registered generically now gets claimed for a game on first real use instead of dead-ending on 'no account for that game' + 'email already taken' (sess-20260923-1030-4a526255)
 - feat(games): sso-exchange -- bridges a generic IDUNA SSO login into a real, game-scoped player token, so WOTAN's friends.html can drop its own DEADWEIGHT email/password form (sess-20260923-1030-4a526255)
 
 - fix(auth): email/register+login error responses are now JSON, not plain text -- fixes the SSO login page's res.json() crashing on any auth error (found live via a founder screenshot) (sess-20260923-1030-4a526255)
