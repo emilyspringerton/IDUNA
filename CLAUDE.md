@@ -67,6 +67,7 @@ so it stays true without needing a line-by-line update every time a route is add
 - **Humans**: Google OAuth → `user_id` → roles → JWT with `roles[]` + `permissions[]`
 - **Agents**: `agent_name` + `agent_secret` → JWT with explicit `permissions[]` (no role inheritance)
 - Agents are registered in `config/agents.json` and seeded by `cmd/bootstrap`
+- **Reveal a "training key"** (an agent's plaintext M2M secret) from the Back Office: `/admin/agents` → "Reveal secret" on any agent row with a credential set. The `agents` table only ever stores a one-way hash — this reads the plaintext back out of `var/agent-secrets.env` instead (`internal/agentsecrets`), the one place it's still recorded (founder real-time, 2026-09-25: "it needs to reveal them to me like an admin in carepyre can summon the email password out of the void"). Only works for an agent whose secret was set via `cmd/bootstrap` or rotated via this same admin UI since this feature landed — an older secret rotated some other way genuinely isn't recoverable; "Generate Secret" makes it revealable going forward. The reveal action itself (never the secret value) is audit-logged as `iduna:admin.agent.secret_reveal`.
 
 ## Directory Layout
 

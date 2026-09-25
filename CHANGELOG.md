@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-09-25 (3)
+- Back Office: reveal a training key. New `internal/agentsecrets` package (merge-safe read/write of `var/agent-secrets.env`, ported from `cmd/bootstrap`'s own logic) + a "Reveal secret" button on `/admin/agents` for any agent with a credential set. Founder real-time: "in the IDUNA BACKOFFICE i need an interface for the training keys it needs to reveal them to me like an admin in carepyre can summon the email password out of the void." Agent secrets are one-way-hashed in the DB (never reversible like CarePyre's own AES-encrypted mailbox passwords), so this reads the plaintext from the one place it's still recorded instead. Rotating a secret via `/admin/agents/{id}/secret` now also writes the new plaintext into `agent-secrets.env` (best-effort, never blocks the rotation itself), so newly-rotated secrets stay revealable going forward -- an older secret rotated before this feature existed, or through some other path, genuinely isn't recoverable, and the UI says so rather than pretending. The reveal action is audit-logged (`iduna:admin.agent.secret_reveal`), never the secret value itself, matching this handler's existing "never log the raw credential" discipline. (sess-20260923-1030-4a526255)
+
 ## 2026-09-25 (2)
 - games: add SteamAppID parity field to Registry["d2"] (D2_STEAM_APPID env var), matching deadweight's row (sess-20260923-1030-4a526255)
 - Add internal/http/handlers/shankpit_leaderboard.go: public GET /api/v1/shankpit/leaderboard,

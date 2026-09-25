@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"iduna/internal/agentsecrets"
 	"iduna/internal/auth"
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
@@ -28,7 +29,13 @@ type AdminHandler struct {
 	DriveSlurp    *DriveSlurpHandler    // OAuth-based Drive browse+slurp feature, S187-03/S188-05/S189-10
 	EventLog      userlog.EventLog      // optional (S226-03); nil skips event emission entirely
 	OpenExecutive *OpenExecutiveHandler // S506 -- reused for the /admin/openexecutive status+provision page, same core logic as the JSON API
-	mux           *http.ServeMux
+	// AgentSecretsPath is var/agent-secrets.env (see internal/agentsecrets) -- the one place an
+	// agent's plaintext M2M secret ("training key") is still recorded after the DB only keeps a
+	// one-way hash. Empty disables both the "Reveal secret" button (agents() just omits it) and
+	// the rotate-path write-through below, matching this handler's own "optional field, nil/empty
+	// degrades gracefully" convention for EventLog/Mailinglist above.
+	AgentSecretsPath string
+	mux              *http.ServeMux
 }
 
 // Init registers routes on the handler's internal mux. Call once after construction.
@@ -235,9 +242,10 @@ func (h *AdminHandler) agents(w http.ResponseWriter, r *http.Request) {
 	}
 	users, _ := h.Store.ListUsers(ctx, 200)
 	renderHTML(w, adminAgentsTmpl, map[string]any{
-		"Title":  "Agent Registry",
-		"Agents": agents,
-		"Users":  users,
+		"Title":          "Agent Registry",
+		"Agents":         agents,
+		"Users":          users,
+		"HasSecretsFile": h.AgentSecretsPath != "",
 	})
 }
 
@@ -316,12 +324,61 @@ func (h *AdminHandler) agentAction(w http.ResponseWriter, r *http.Request) {
 		emitAuthEvent(ctx, h.EventLog, "iduna:admin.agent.secret_rotate", "iduna-admin", map[string]any{
 			"agent_id": agentID, "operator_id": operatorID,
 		})
+		// SECTION 551 follow-up, founder real-time 2026-09-25: write the freshly-rotated
+		// plaintext into agent-secrets.env too (merge-safe, see internal/agentsecrets), so
+		// "Reveal secret" below keeps working after a rotation instead of only ever reflecting
+		// whatever cmd/bootstrap last wrote. Best-effort: a write failure here (read-only
+		// filesystem, path not configured) must never break the rotation itself, which already
+		// succeeded in the database above -- the operator still sees the plaintext once, right
+		// now, in the response below, same as before this feature existed.
+		if h.AgentSecretsPath != "" {
+			if agent, err := h.Store.GetAgentByID(ctx, agentID); err == nil && agent != nil {
+				_ = agentsecrets.WriteMerged(h.AgentSecretsPath, map[string]string{agent.Name: plaintext})
+			}
+		}
 		// One-time reveal: this plaintext is never retrievable again after this
-		// response (only the bcrypt/SHA-256 hash is persisted).
+		// response (only the bcrypt/SHA-256 hash is persisted) UNLESS the write-through
+		// above succeeded, in which case "Reveal secret" on the agents list can show it again.
 		renderHTML(w, adminAgentSecretTmpl, map[string]any{
 			"Title":     "Agent Credential",
 			"AgentID":   agentID,
 			"Plaintext": plaintext,
+			"Revealed":  false,
+		})
+		return
+	case "reveal-secret":
+		// Read-only, but a POST (not a GET) on purpose, matching every other action in this
+		// dispatcher: a plaintext M2M secret is exactly the kind of response you don't want
+		// sitting in browser history/referrer headers/proxy access logs the way a GET URL can.
+		if h.AgentSecretsPath == "" {
+			http.Error(w, "agent secrets file not configured on this deployment", http.StatusNotFound)
+			return
+		}
+		agent, err := h.Store.GetAgentByID(ctx, agentID)
+		if err != nil {
+			http.Error(w, "agent not found: "+err.Error(), http.StatusNotFound)
+			return
+		}
+		if agent == nil {
+			http.Error(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		plaintext, ok := agentsecrets.Lookup(h.AgentSecretsPath, agent.Name)
+		if !ok {
+			http.Error(w, "no recorded plaintext for this agent -- it was likely provisioned before this feature existed and never rotated since; use \"Generate Secret\" to rotate it, which will make it revealable going forward", http.StatusNotFound)
+			return
+		}
+		// Deliberately NOT an emitAuthEvent call with the plaintext -- same "never log the raw
+		// credential" discipline as the rotate case above. The reveal ITSELF (not the secret
+		// value) is worth a real audit trail entry, since this is root M2M credential access.
+		emitAuthEvent(ctx, h.EventLog, "iduna:admin.agent.secret_reveal", "iduna-admin", map[string]any{
+			"agent_id": agentID, "operator_id": operatorID,
+		})
+		renderHTML(w, adminAgentSecretTmpl, map[string]any{
+			"Title":     "Agent Credential",
+			"AgentID":   agentID,
+			"Plaintext": plaintext,
+			"Revealed":  true,
 		})
 		return
 	default:
@@ -745,6 +802,10 @@ var adminAgentsTmpl = mustParseTmpl("agents", `
     <form class="inline" method="POST" action="/admin/agents/{{.ID}}/secret">
       <button type="submit">Generate Secret</button>
     </form>
+    {{else if $.HasSecretsFile}}
+    <form class="inline" method="POST" action="/admin/agents/{{.ID}}/reveal-secret">
+      <button type="submit">Reveal secret</button>
+    </form>
     {{end}}
   </td>
 </tr>
@@ -760,10 +821,15 @@ permission exist.</p>
 
 var adminAgentSecretTmpl = mustParseTmpl("agent-secret", `
 {{define "body"}}
-<h1>Agent Credential Generated</h1>
+<h1>Agent Credential</h1>
 <div class="section-card">
-<p style="margin-bottom:12px"><strong>This secret is shown once and is not recoverable.</strong> Copy it now
-and store it wherever the agent reads its credential from (e.g. an env file or secrets manager).</p>
+{{if .Revealed}}
+<p style="margin-bottom:12px">Recorded plaintext for this agent, read from <code>agent-secrets.env</code>.</p>
+{{else}}
+<p style="margin-bottom:12px"><strong>Copy it now.</strong> Store it wherever the agent reads its
+credential from (e.g. an env file or secrets manager) -- you can come back to
+<a href="/admin/agents">Agent Registry</a> and use "Reveal secret" to see it again later.</p>
+{{end}}
 <pre style="font-size:13px">{{.Plaintext}}</pre>
 <p class="meta" style="margin-top:12px">Agent ID: {{.AgentID}}</p>
 </div>

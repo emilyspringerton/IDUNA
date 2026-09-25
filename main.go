@@ -135,7 +135,13 @@ func main() {
 		IdunaRoot:          getenv("IDUNA_ROOT", "."),
 	}
 	openexecutiveH := handlers.NewOpenExecutiveHandler(iamStore, baseURL)
-	adminH := &handlers.AdminHandler{Store: iamStore, DB: db, DriveSlurp: driveSlurpH, OpenExecutive: openexecutiveH}
+	adminH := &handlers.AdminHandler{
+		Store:            iamStore,
+		DB:               db,
+		DriveSlurp:       driveSlurpH,
+		OpenExecutive:    openexecutiveH,
+		AgentSecretsPath: filepath.Join(getenv("IDUNA_ROOT", "."), "var", "agent-secrets.env"),
+	}
 	adminH.Init()
 	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer, CookieDomain: os.Getenv("IDUNA_ADMIN_COOKIE_DOMAIN")}
 	applesH := &handlers.ApplesHandler{Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
