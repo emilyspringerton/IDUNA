@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-25
+
+- fix(auth): email/register+login error responses are now JSON, not plain text -- fixes the SSO login page's res.json() crashing on any auth error (found live via a founder screenshot) (sess-20260923-1030-4a526255)
+
+
 ## 2026-09-24 (3)
 - feat(auth): **IDUNA becomes the SSO** (founder real-time: "instead of putting your password
   into page on wotan iduna needs to become the SSO" -> "iam.okemily.com make that the actual sso
