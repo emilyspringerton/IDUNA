@@ -98,6 +98,8 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.emailLogin(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "sso-exchange" && r.Method == http.MethodPost:
+		h.ssoExchange(w, r, cfg)
 	case len(parts) == 3 && parts[1] == "draft-run" && parts[2] == "start" && r.Method == http.MethodPost:
 		h.draftRunStart(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "draft-run" && r.Method == http.MethodGet:
@@ -492,6 +494,53 @@ func (h *GameOnlineHandler) emailLogin(w http.ResponseWriter, r *http.Request, c
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": h.ticketBalance(ctx, cfg, pid), "account_state": "base", // logged in via credentials, always base
+	})
+}
+
+// ssoExchange bridges IDUNA's general cross-app SSO login (SSOLoginHandler / PlayerEmailAuthHandler,
+// "the one hosted place a password is typed" -- EMILY/BACKLOG.md SECTION 543) into this game's own
+// player-token shape (player_id/game/permissions claims -- see playerToken's own doc comment). Real,
+// found-live gap: WOTAN's friends.html rendered its own DEADWEIGHT email/password form directly
+// against emailLogin above, the same duplicated-credential-UI problem SECTION 543 fixed for
+// store.html -- but simply pointing friends.html at the SSO page and reusing its returned token
+// outright does NOT work, because the generic SSO JWT (sub=player_id, no player_id/game/permissions
+// claims) fails draftPlayerClaims's checks. This endpoint takes that already-valid SSO token as proof
+// of identity (same authjwt.Verify/h.Keys every other bearer check in this file uses -- IDUNA's auth
+// keys are shared across every token shape) and, if a real players row already exists for that exact
+// identity scoped to this game (an email was already linked via this game's own client-side
+// guest-upgrade flow), mints a real playerToken for it. No new player is ever created here -- an
+// identity with no linked account for this game gets a clear, real 404 telling them to link one
+// first, matching friends.html's own existing "guest accounts alone can't sign in here" framing, not
+// a silent auto-registration into a fresh, disconnected player row.
+func (h *GameOnlineHandler) ssoExchange(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, _ := claims["sub"].(string)
+	if pid == "" {
+		pid, _ = claims["player_id"].(string)
+	}
+	if pid == "" {
+		mmoWriteError(w, http.StatusForbidden, "token has no subject")
+		return
+	}
+	ctx := r.Context()
+	var name string
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT display_name FROM players WHERE player_id = ? AND game = ? AND disabled_at IS NULL`, pid, cfg.Slug).Scan(&name); err != nil {
+		mmoWriteError(w, http.StatusNotFound, "no account for this game is linked to this IDUNA identity -- link one from inside the game client first")
+		return
+	}
+	h.topUpTicketsIfDue(ctx, cfg, pid)
+	tok, exp, err := h.playerToken(cfg, "email", pid, name)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
+		"tickets": h.ticketBalance(ctx, cfg, pid), "account_state": "base",
 	})
 }
 

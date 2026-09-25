@@ -843,6 +843,93 @@ func TestGuestUpgrade_SamePlayerIDCarriesOverTicketsAndStats(t *testing.T) {
 	_ = newTok
 }
 
+// TestSSOExchange_GenericSSOTokenBecomesAUsableGamePlayerToken -- real, live-found gap
+// (WOTAN's friends.html, founder ask "make it work for Friends and Duels"): the generic IDUNA
+// SSO JWT (PlayerEmailAuthHandler's shape -- sub=player_id, no player_id/game/permissions
+// claims) fails draftPlayerClaims outright, so friends.html can't just point at the SSO page and
+// reuse its token directly the way store.html does. This proves the real, full path: a guest
+// links an email via guest-upgrade (the DEADWEIGHT client's own real flow), logs in later
+// through the *generic* cross-app SSO endpoint (not the game-scoped email-login), exchanges that
+// generic token via sso-exchange for a real playerToken, and that exchanged token actually
+// authenticates against a real game-scoped endpoint (friendsList) -- not just that sso-exchange
+// returns 200.
+func TestSSOExchange_GenericSSOTokenBecomesAUsableGamePlayerToken(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, guestTok := e.register(t, "deadweight", "Gary")
+	if code, _, raw := e.do("POST", "/api/v1/games/deadweight/guest-upgrade", guestTok,
+		map[string]string{"email": "gary@example.com", "password": "correcthorsebattery"}); code != 200 {
+		t.Fatalf("guest-upgrade: %d %s", code, raw)
+	}
+
+	// The generic, game-agnostic SSO login WOTAN's iam.okemily.com page actually calls --
+	// deliberately a different handler/route than /api/v1/games/deadweight/email-login above.
+	emailAuth := &handlers.PlayerEmailAuthHandler{DB: e.db, Keys: e.keys, Issuer: "test"}
+	ssoResp := doEmailAuth(emailAuth, "/api/v1/auth/email/login",
+		`{"email":"gary@example.com","password":"correcthorsebattery"}`)
+	if ssoResp.Code != http.StatusOK {
+		t.Fatalf("generic SSO login: status=%d body=%s", ssoResp.Code, ssoResp.Body.String())
+	}
+	var ssoBody struct {
+		Token    string `json:"token"`
+		PlayerID string `json:"player_id"`
+	}
+	if err := json.Unmarshal(ssoResp.Body.Bytes(), &ssoBody); err != nil {
+		t.Fatalf("decode SSO response: %v", err)
+	}
+	if ssoBody.PlayerID != pid {
+		t.Fatalf("SSO login player_id = %q, want %q", ssoBody.PlayerID, pid)
+	}
+
+	// Sanity: the raw generic SSO token must NOT already work against a game-scoped endpoint --
+	// otherwise sso-exchange would be solving a problem that doesn't exist.
+	if code, _, _ := e.do("GET", "/api/v1/games/deadweight/friends", ssoBody.Token, nil); code == 200 {
+		t.Fatalf("raw generic SSO token should NOT authenticate against a game-scoped endpoint directly")
+	}
+
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/sso-exchange", ssoBody.Token, nil)
+	if code != 200 {
+		t.Fatalf("sso-exchange: %d %s", code, raw)
+	}
+	if m["player_id"] != pid {
+		t.Fatalf("sso-exchange player_id = %v, want %s", m["player_id"], pid)
+	}
+	exchangedTok, _ := m["token"].(string)
+	if exchangedTok == "" {
+		t.Fatalf("sso-exchange returned no token: %s", raw)
+	}
+
+	// The real proof: the exchanged token must actually authenticate against a real
+	// friends/duels endpoint, matching what friends.html itself will call.
+	if code, _, raw := e.do("GET", "/api/v1/games/deadweight/friends", exchangedTok, nil); code != 200 {
+		t.Fatalf("exchanged token should authenticate against friendsList: %d %s", code, raw)
+	}
+}
+
+// TestSSOExchange_NoLinkedAccountIsARealNotFound -- an IDUNA identity that has never linked an
+// email/password for THIS game (e.g. only ever played a different game, or only ever registered
+// through the generic SSO page directly with no game scope at all) must get a clear, honest 404,
+// never a silently-minted new player row for a game they never touched.
+func TestSSOExchange_NoLinkedAccountIsARealNotFound(t *testing.T) {
+	e := newGameEnv(t)
+	emailAuth := &handlers.PlayerEmailAuthHandler{DB: e.db, Keys: e.keys, Issuer: "test"}
+	regResp := doEmailAuth(emailAuth, "/api/v1/auth/email/register",
+		`{"email":"nodeadweight@example.com","password":"correcthorsebattery"}`)
+	if regResp.Code != http.StatusOK {
+		t.Fatalf("generic SSO register: status=%d body=%s", regResp.Code, regResp.Body.String())
+	}
+	var regBody struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(regResp.Body.Bytes(), &regBody); err != nil {
+		t.Fatalf("decode register response: %v", err)
+	}
+
+	code, _, raw := e.do("POST", "/api/v1/games/deadweight/sso-exchange", regBody.Token, nil)
+	if code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an identity with no linked deadweight account, got %d %s", code, raw)
+	}
+}
+
 func TestGuestUpgrade_RequiresPlayerTokenAndValidEmail(t *testing.T) {
 	e := newGameEnv(t)
 	_, _, tok := e.register(t, "deadweight", "Ada")
