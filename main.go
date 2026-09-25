@@ -1153,6 +1153,11 @@ func main() {
 	mux.Handle("/api/v1/games/deadweight/matches/", matchReplayH)
 	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
 
+	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
+	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:
+	// any IDUNA account is already a SHANKPIT account).
+	mux.Handle("/api/v1/shankpit/leaderboard", &handlers.ShankpitLeaderboardHandler{DB: db, Limiter: middleware.NewIPRateLimiter(60)})
+
 	// Kanban card 123214231 ("we need a big_o account creation interface off of iduna") and
 	// SHANKPIT_OS_NORTHSTAR.md item 4 ("BRAWLPIT has no player-facing IDUNA identity
 	// integration at all") -- plain, public, unauthenticated web pages (neither game has a
