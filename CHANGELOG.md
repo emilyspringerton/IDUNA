@@ -1,5 +1,11 @@
 # IDUNA Changelog
 
+## 2026-09-25 (2)
+- Add internal/http/handlers/shankpit_leaderboard.go: public GET /api/v1/shankpit/leaderboard,
+  reading SHANKPIT's existing players.kills/deaths/sessions columns (already written by
+  handleSessionEnd under shankpit.match.write) for WOTAN's new shankpit.html (S550, founder
+  real-time: "add shankpit to WOTAN")
+
 ## 2026-09-25
 - Add internal/matchlog + match_replay.go: public GET /api/v1/games/deadweight/matches[/{id}[/replay]], the /replay route shelling out to DEADWEIGHT's new dw_replay_dump for a real round-by-round engine replay (WOTAN S547) (sess-20260923-1030-4a526255)
 - fix(games): claimGamePlayer -- an IDUNA identity registered generically now gets claimed for a game on first real use instead of dead-ending on 'no account for that game' + 'email already taken' (sess-20260923-1030-4a526255)
