@@ -905,28 +905,103 @@ func TestSSOExchange_GenericSSOTokenBecomesAUsableGamePlayerToken(t *testing.T) 
 	}
 }
 
-// TestSSOExchange_NoLinkedAccountIsARealNotFound -- an IDUNA identity that has never linked an
-// email/password for THIS game (e.g. only ever played a different game, or only ever registered
-// through the generic SSO page directly with no game scope at all) must get a clear, honest 404,
-// never a silently-minted new player row for a game they never touched.
-func TestSSOExchange_NoLinkedAccountIsARealNotFound(t *testing.T) {
+// TestSSOExchange_UnscopedIdentityIsClaimedOnFirstUse -- real, live-found gap (founder
+// real-time, 2026-09-25): an IDUNA identity registered generically (WOTAN's own SSO page, no
+// game param) previously got a hard 404 on friends.html AND a dead-end "email already taken" on
+// the DEADWEIGHT client's own claim-account flow, with no way to ever actually use it for a
+// game. The real, safe fix -- see claimGamePlayer's own doc comment -- is that a players row
+// that's NEVER been scoped to any game gets claimed for the first game that legitimately uses
+// it, matching the SSO login page's own "One IDUNA account, every app" tagline. Once claimed,
+// a SECOND, different game must NOT also be able to claim the same identity.
+func TestSSOExchange_UnscopedIdentityIsClaimedOnFirstUse(t *testing.T) {
 	e := newGameEnv(t)
 	emailAuth := &handlers.PlayerEmailAuthHandler{DB: e.db, Keys: e.keys, Issuer: "test"}
 	regResp := doEmailAuth(emailAuth, "/api/v1/auth/email/register",
-		`{"email":"nodeadweight@example.com","password":"correcthorsebattery"}`)
+		`{"email":"nogame@example.com","password":"correcthorsebattery"}`)
 	if regResp.Code != http.StatusOK {
 		t.Fatalf("generic SSO register: status=%d body=%s", regResp.Code, regResp.Body.String())
 	}
 	var regBody struct {
-		Token string `json:"token"`
+		Token    string `json:"token"`
+		PlayerID string `json:"player_id"`
 	}
 	if err := json.Unmarshal(regResp.Body.Bytes(), &regBody); err != nil {
 		t.Fatalf("decode register response: %v", err)
 	}
+	var gameBefore sql.NullString
+	if err := e.db.QueryRow(`SELECT game FROM players WHERE player_id=?`, regBody.PlayerID).Scan(&gameBefore); err != nil {
+		t.Fatal(err)
+	}
+	if gameBefore.Valid && gameBefore.String != "" {
+		t.Fatalf("test setup: expected an unscoped row, got game=%q", gameBefore.String)
+	}
 
-	code, _, raw := e.do("POST", "/api/v1/games/deadweight/sso-exchange", regBody.Token, nil)
-	if code != http.StatusNotFound {
-		t.Fatalf("expected 404 for an identity with no linked deadweight account, got %d %s", code, raw)
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/sso-exchange", regBody.Token, nil)
+	if code != http.StatusOK {
+		t.Fatalf("sso-exchange on an unscoped identity should claim it: %d %s", code, raw)
+	}
+	if m["player_id"] != regBody.PlayerID {
+		t.Fatalf("player_id = %v, want %s", m["player_id"], regBody.PlayerID)
+	}
+	var gameAfter string
+	if err := e.db.QueryRow(`SELECT game FROM players WHERE player_id=?`, regBody.PlayerID).Scan(&gameAfter); err != nil {
+		t.Fatal(err)
+	}
+	if gameAfter != "deadweight" {
+		t.Fatalf("players.game after claim = %q, want deadweight", gameAfter)
+	}
+
+	// A different game must NOT also be able to claim the now-scoped identity.
+	code2, _, raw2 := e.do("POST", "/api/v1/games/othergame/sso-exchange", regBody.Token, nil)
+	if code2 != http.StatusForbidden {
+		t.Fatalf("a second game claiming an already-scoped identity should be refused: %d %s", code2, raw2)
+	}
+}
+
+// TestSSOExchange_NoSuchPlayerIsARealNotFound -- a token whose subject matches no players row at
+// all (garbage/forged, or a genuinely deleted account) still gets a real 404, not a claim.
+func TestSSOExchange_NoSuchPlayerIsARealNotFound(t *testing.T) {
+	e := newGameEnv(t)
+	tok, err := authjwt.Sign(e.keys, map[string]any{"sub": "no-such-player-id", "aud": "shankpit", "exp": time.Now().Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _, raw := e.do("POST", "/api/v1/games/deadweight/sso-exchange", tok, nil); code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a nonexistent player_id, got %d %s", code, raw)
+	}
+}
+
+// TestEmailLogin_ClaimsAnUnscopedAccountAndRefusesAnotherGamesAccount -- the exact real scenario
+// the founder hit: register generically via IDUNA's SSO, then use the DEADWEIGHT client/web's own
+// email-login with the same credentials -- it must now succeed (claiming the identity for
+// deadweight), not the old "invalid email or password" (the row existed, it just wasn't scoped
+// yet). A genuinely different-game-scoped account must still be refused, with a distinct message
+// from a wrong password.
+func TestEmailLogin_ClaimsAnUnscopedAccountAndRefusesAnotherGamesAccount(t *testing.T) {
+	e := newGameEnv(t)
+	emailAuth := &handlers.PlayerEmailAuthHandler{DB: e.db, Keys: e.keys, Issuer: "test"}
+	regResp := doEmailAuth(emailAuth, "/api/v1/auth/email/register",
+		`{"email":"claimviaemail@example.com","password":"correcthorsebattery"}`)
+	if regResp.Code != http.StatusOK {
+		t.Fatalf("generic SSO register: status=%d body=%s", regResp.Code, regResp.Body.String())
+	}
+
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/email-login", "",
+		map[string]string{"email": "claimviaemail@example.com", "password": "correcthorsebattery"})
+	if code != http.StatusOK {
+		t.Fatalf("email-login on a previously-unscoped account should claim it and succeed: %d %s", code, raw)
+	}
+	tok, _ := m["token"].(string)
+	if code2, _, raw2 := e.do("POST", "/api/v1/games/deadweight/verify", tok, nil); code2 != http.StatusOK {
+		t.Fatalf("claimed account's token should verify: %d %s", code2, raw2)
+	}
+
+	// A different game's own email-login for the SAME (now deadweight-scoped) email must be
+	// refused, with a message distinct from "invalid email or password".
+	code3, m3, _ := e.do("POST", "/api/v1/games/othergame/email-login", "",
+		map[string]string{"email": "claimviaemail@example.com", "password": "correcthorsebattery"})
+	if code3 != http.StatusForbidden {
+		t.Fatalf("expected 403 for a different game against an already-claimed account, got %d %v", code3, m3)
 	}
 }
 

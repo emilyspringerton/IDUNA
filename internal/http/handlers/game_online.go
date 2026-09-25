@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -461,9 +462,47 @@ func (h *GameOnlineHandler) guestUpgrade(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "token": tok, "expires_at": exp, "account_state": "base"})
 }
 
+// errPlayerScopedToOtherGame signals a real, existing IDUNA identity already exclusively scoped
+// to a DIFFERENT game -- see claimGamePlayer's own doc comment for why this stays a hard refusal.
+var errPlayerScopedToOtherGame = errors.New("player is scoped to a different game")
+
+// claimGamePlayer resolves a players row by player_id, claiming it for cfg's game on first real
+// use if it was never scoped to any game (game IS NULL/''). Real, live-found gap (founder
+// real-time, 2026-09-25): a player who registers generically through IDUNA's own SSO page (WOTAN
+// store.html/friends.html, no game param) gets a players row with no game set -- then hits a
+// dead end everywhere else ("no account for that game" on friends.html; "email already taken" on
+// the DEADWEIGHT client's own claim-account flow, since that email is already spoken for by this
+// exact row). This is the real, safe form of "One IDUNA account, every app" (the SSO login page's
+// own tagline): an account that's never touched any per-game feature yet is fair game for the
+// first game that actually uses it. An account already scoped to a DIFFERENT game stays exclusive
+// (matching S241-01's own founder-established "make sure that account only for X" guarantee) --
+// claiming never reassigns an already-decided scope, it only ever fills in a previously-empty one.
+func (h *GameOnlineHandler) claimGamePlayer(ctx context.Context, pid string, cfg games.Config) (name string, err error) {
+	var gameCol sql.NullString
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT display_name, game FROM players WHERE player_id = ? AND disabled_at IS NULL`, pid,
+	).Scan(&name, &gameCol); err != nil {
+		return "", err
+	}
+	if gameCol.Valid && gameCol.String != "" && gameCol.String != cfg.Slug {
+		return "", errPlayerScopedToOtherGame
+	}
+	if !gameCol.Valid || gameCol.String == "" {
+		if _, err := h.DB.ExecContext(ctx, `UPDATE players SET game = ? WHERE player_id = ?`, cfg.Slug, pid); err != nil {
+			return "", err
+		}
+	}
+	return name, nil
+}
+
 // emailLogin is the returning half of guestUpgrade -- same game-scoped player-token shape every
 // other login path here issues (permissions/game/player_id claims), unlike the generic
-// PlayerEmailAuthHandler's own token shape (see guestUpgrade's doc comment).
+// PlayerEmailAuthHandler's own token shape (see guestUpgrade's doc comment). Looks up by email
+// alone (globally unique in player_credentials) rather than baking `AND p.game = ?` into the
+// lookup query -- claimGamePlayer below is what decides whether this identity is usable for this
+// game, and does it AFTER the password is verified, so a valid credential scoped to a different
+// game gets a clear, distinct "already linked to a different game" rather than being
+// indistinguishable from a wrong password.
 func (h *GameOnlineHandler) emailLogin(w http.ResponseWriter, r *http.Request, cfg games.Config) {
 	var req struct {
 		Email    string `json:"email"`
@@ -475,12 +514,20 @@ func (h *GameOnlineHandler) emailLogin(w http.ResponseWriter, r *http.Request, c
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	ctx := r.Context()
-	var pid, name, hash string
+	var pid, hash string
 	err := h.DB.QueryRowContext(ctx,
-		`SELECT pc.player_id, p.display_name, pc.password_hash FROM player_credentials pc
-		 JOIN players p ON p.player_id = pc.player_id WHERE pc.email = ? AND p.game = ?`,
-		req.Email, cfg.Slug).Scan(&pid, &name, &hash)
+		`SELECT player_id, password_hash FROM player_credentials WHERE email = ?`, req.Email,
+	).Scan(&pid, &hash)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		mmoWriteError(w, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+	name, err := h.claimGamePlayer(ctx, pid, cfg)
+	if err == errPlayerScopedToOtherGame {
+		mmoWriteError(w, http.StatusForbidden, "this IDUNA account is already linked to a different game")
+		return
+	}
+	if err != nil {
 		mmoWriteError(w, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
@@ -526,9 +573,12 @@ func (h *GameOnlineHandler) ssoExchange(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	ctx := r.Context()
-	var name string
-	if err := h.DB.QueryRowContext(ctx,
-		`SELECT display_name FROM players WHERE player_id = ? AND game = ? AND disabled_at IS NULL`, pid, cfg.Slug).Scan(&name); err != nil {
+	name, err := h.claimGamePlayer(ctx, pid, cfg)
+	if err == errPlayerScopedToOtherGame {
+		mmoWriteError(w, http.StatusForbidden, "this IDUNA identity is already linked to a different game")
+		return
+	}
+	if err != nil {
 		mmoWriteError(w, http.StatusNotFound, "no account for this game is linked to this IDUNA identity -- link one from inside the game client first")
 		return
 	}
