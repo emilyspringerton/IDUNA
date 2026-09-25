@@ -242,6 +242,15 @@
       "type": "game_server_agent",
       "description": "BIG_O day server (day/apps/server) -- authenticates via POST /api/v1/auth/agent to post/poll the shared cross-server chat bus (POST/GET /api/v1/chat/messages, sender_source=bigo_server, channel=big_o), joining the existing GFD<->EINHORN_SURVIVAL bridge (GoblinFoxDragon/docs2/CHAT_BRIDGE_TO_EINHORN_SURVIVAL_SPEC.md) as a third real participant rather than a parallel connection. No special permission needed -- RequireAuth is the only gate on that route, same as GTA7-SERVER/DRAGONSNSHIT-MUD already rely on. EMILY/BACKLOG.md SECTION 536 follow-up, BIG_O/NORTHSTAR.md §27, 2026-09-24.",
       "permissions": []
+    },
+    {
+      "id": "00000003-0000-4000-8000-00000000001d",
+      "name": "DEADWEIGHT2-SERVER",
+      "type": "game_bot_agent",
+      "description": "DEADWEIGHT_2 game server (dw2_server) -- reports authoritative match results via POST /api/v1/games/deadweight_2/match-result. Its own identity, never reusing DEADWEIGHT-SERVER's or ECOWAR-BOTS's (ECOWAR-BOTS's own precedent), so match stats never cross-attribute. No DEADWEIGHT2-BOTS agent yet -- D4 (a real placeholder bot) is a separate, not-yet-built phase. EMILY/BACKLOG.md SECTION 546 D2, 2026-09-25.",
+      "permissions": [
+        "deadweight_2.match.write"
+      ]
     }
   ]
 }
