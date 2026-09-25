@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-25 (2)
+- games: add SteamAppID parity field to Registry["d2"] (D2_STEAM_APPID env var), matching deadweight's row (sess-20260923-1030-4a526255)
 - Add internal/http/handlers/shankpit_leaderboard.go: public GET /api/v1/shankpit/leaderboard,
   reading SHANKPIT's existing players.kills/deaths/sessions columns (already written by
   handleSessionEnd under shankpit.match.write) for WOTAN's new shankpit.html (S550, founder
