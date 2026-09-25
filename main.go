@@ -24,6 +24,7 @@ import (
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/mailinglist"
+	"iduna/internal/matchlog"
 	"iduna/internal/modelgit"
 	"iduna/internal/nock"
 	"iduna/internal/promptoverse"
@@ -1141,6 +1142,15 @@ func main() {
 	mux.Handle("/api/v1/games/deadweight/decks", deckStatsH)
 	mux.Handle("/api/v1/games/deadweight/decks/", deckStatsH)
 	mux.Handle("/api/v1/games/deadweight/card-stats", deckStatsH)
+	// WOTAN S547: public match-history + replay data (matches.ndjson, dw_server's sibling log to
+	// decks.ndjson above) -- see internal/http/handlers/match_replay.go and internal/matchlog.
+	matchReplayH := &handlers.MatchReplayHandler{
+		Store:     &matchlog.Store{Path: getenv("DEADWEIGHT_MATCH_LOG", "/home/fatbaby/.local/var/deadweight/matches/matches.ndjson")},
+		ReplayBin: getenv("DEADWEIGHT_REPLAY_DUMP_BIN", handlers.DefaultReplayDumpBin),
+		Limiter:   middleware.NewIPRateLimiter(60),
+	}
+	mux.Handle("/api/v1/games/deadweight/matches", matchReplayH)
+	mux.Handle("/api/v1/games/deadweight/matches/", matchReplayH)
 	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
 
 	// Kanban card 123214231 ("we need a big_o account creation interface off of iduna") and
