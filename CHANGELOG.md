@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-25
+- Add internal/matchlog + match_replay.go: public GET /api/v1/games/deadweight/matches[/{id}[/replay]], the /replay route shelling out to DEADWEIGHT's new dw_replay_dump for a real round-by-round engine replay (WOTAN S547) (sess-20260923-1030-4a526255)
 - fix(games): claimGamePlayer -- an IDUNA identity registered generically now gets claimed for a game on first real use instead of dead-ending on 'no account for that game' + 'email already taken' (sess-20260923-1030-4a526255)
 - feat(games): sso-exchange -- bridges a generic IDUNA SSO login into a real, game-scoped player token, so WOTAN's friends.html can drop its own DEADWEIGHT email/password form (sess-20260923-1030-4a526255)
 
