@@ -1,5 +1,19 @@
 # IDUNA Changelog
 
+## 2026-09-27
+- NOCK: keyframe **animator** + **rig remapping** primitives. Founder real-time: "continue to evolve NOCK tools into a total blender replacement we need a way to animate in NOCK also we need the primatives for remapping a mesh onto a new rig".
+  - Go core, `internal/nock`: `rig.go` decodes and encodes .gskel/.gmesh/.gband and carries the quaternion/matrix kit. `rig_bonemap.go` builds the automatic bone map (exact or normalised name, canonical body part across Mixamo/Unreal/Rigify/Biped, then chain order for spines and fingers, plus overrides). `rig_remap.go` re-skins a mesh onto a new rig (names with ancestor fold-in, proximity envelope weights, or auto; optional size fit). `rig_retarget.go` does world-space clip retargeting that tolerates differing bone axes and armature frames, with root motion scaled to height. `keyframes.go` bakes a KeyframeDoc (linear/smooth/step) and derives keys from a baked clip. `anim_rig.go` has the store operations.
+  - HTTP (`nock_animator.go`): `GET/POST .../animations/{id}/keyframes`, `GET .../bone-map?target=`, `POST .../remap-mesh`, `POST .../retarget`. Every result is a new row, and imports are never modified.
+  - Migration `202609270001` adds `nock_animations.keyframes_json`.
+  - CLI: `nock rig-map | rig-remap-mesh | rig-retarget | anim-bake | anim-keys`.
+  - UI: `Animator.tsx` (pose mode + dope sheet: joint picking, R/G gizmo, auto-key, per-key interpolation, copy/paste pose, playback) and `RigTools.tsx` (bone-map review and overrides, remap, retarget), wired into the character library cards. `keyframes.ts` is the browser twin of the Go baker. The orphaned `AnimationEditor.tsx` (never imported by App.tsx) is left in place.
+  - Tests: 16 new Go tests (unit + handler).
+  - Checked on the real 65-joint mannequin from BIG_O against a Mixamo-named copy: 65/65 bone map correct, retarget within 0.05°, name remap weight-exact, proximity weights 71% dominant-joint agreement.
+  - Found two real bugs live and fixed them: number-based spine matching was off by one across conventions, and an empty doc serialised `tracks: null`, which crashed the animator.
+  - The full animate → save → remap → retarget flow was driven in headless Chromium against the real handler and embedded UI.
+  - Also found, not fixed: BIG_O's `zombie_walk` clip has a 7-tick ~170° upper-arm glitch in its own data (see NOCK_CHARACTER_PIPELINE_NORTHSTAR.md).
+  - README gains a NOCK section.
+
 ## 2026-09-25 (3)
 - Back Office: reveal a training key. New `internal/agentsecrets` package (merge-safe read/write of `var/agent-secrets.env`, ported from `cmd/bootstrap`'s own logic) + a "Reveal secret" button on `/admin/agents` for any agent with a credential set. Founder real-time: "in the IDUNA BACKOFFICE i need an interface for the training keys it needs to reveal them to me like an admin in carepyre can summon the email password out of the void." Agent secrets are one-way-hashed in the DB (never reversible like CarePyre's own AES-encrypted mailbox passwords), so this reads the plaintext from the one place it's still recorded instead. Rotating a secret via `/admin/agents/{id}/secret` now also writes the new plaintext into `agent-secrets.env` (best-effort, never blocks the rotation itself), so newly-rotated secrets stay revealable going forward -- an older secret rotated before this feature existed, or through some other path, genuinely isn't recoverable, and the UI says so rather than pretending. The reveal action is audit-logged (`iduna:admin.agent.secret_reveal`), never the secret value itself, matching this handler's existing "never log the raw credential" discipline. (sess-20260923-1030-4a526255)
 

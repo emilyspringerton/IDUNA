@@ -38,6 +38,7 @@ func newAnimationsTestHandler(t *testing.T) *handlers.NockAnimationsHandler {
 			gskel_data      BLOB,
 			gmesh_data      BLOB,
 			skeleton_hash   TEXT,
+			keyframes_json  TEXT,
 			source_location TEXT,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

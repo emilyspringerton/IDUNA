@@ -73,6 +73,16 @@ func (h *NockAnimationsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.attachAnimation(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "gband" && r.Method == http.MethodPatch:
 		h.saveEditedGBand(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "keyframes" && r.Method == http.MethodGet:
+		h.getKeyframes(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "keyframes" && r.Method == http.MethodPost:
+		h.authorKeyframes(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "bone-map" && r.Method == http.MethodGet:
+		h.boneMap(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "remap-mesh" && r.Method == http.MethodPost:
+		h.remapMesh(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "retarget" && r.Method == http.MethodPost:
+		h.retarget(w, r, parts[0])
 	default:
 		http.NotFound(w, r)
 	}

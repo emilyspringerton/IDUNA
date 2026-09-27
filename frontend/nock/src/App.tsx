@@ -4,6 +4,8 @@ import LevelEditor from './LevelEditor'
 import ShankpitLevelEditor from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
 import AnimationViewer from './AnimationViewer'
+import Animator from './Animator'
+import RigTools from './RigTools'
 import ShankpitAiOpponents from './ShankpitAiOpponents'
 import DeadweightAiOpponents from './DeadweightAiOpponents'
 import ShankpitMaterials from './ShankpitMaterials'
@@ -974,6 +976,11 @@ function Animations() {
   // previewing (2026-09-17, founder real-time: "can we add a 3d scene like the shankpit level
   // editor for the animations models viewer?") -- which row's real 3D preview is currently open.
   const [previewing, setPreviewing] = useState<AnimationSummary | null>(null)
+  // animating / rigToolsOpenId (2026-09-27, founder real-time: "we need a way to animate in NOCK
+  // also we need the primatives for remapping a mesh onto a new rig") -- the keyframe animator
+  // (Animator.tsx) and the remap/retarget panel (RigTools.tsx).
+  const [animating, setAnimating] = useState<AnimationSummary | null>(null)
+  const [rigToolsOpenId, setRigToolsOpenId] = useState<number | null>(null)
   // importNotice (2026-09-17, founder confirmed a real multi-clip upload -- Quaternius's
   // "Universal Animation Library" -- used to have every clip past the first silently discarded)
   // -- real, visible confirmation of how many clips an import actually found, not just "success."
@@ -1076,7 +1083,8 @@ function Animations() {
       <p className="hint">
         A rigged mesh with no animation yet -- like a mannequin standing in T-pose -- imports just fine; you can add
         animations to it later, either by uploading a separate file with the same rig or by animating it right here
-        once NOCK's rigging/animation tools land.
+        with <strong>Animate</strong> (pose joints, set keys on a timeline). <strong>Rig tools</strong> moves a mesh or a clip
+        onto a different rig, e.g. a Mixamo character onto an Unreal-style skeleton.
       </p>
       <input
         placeholder="name (defaults to the file name)"
@@ -1161,6 +1169,10 @@ function Animations() {
               {a.has_skel && <a href={animations.downloadUrl(a.id, 'gskel')}>.gskel</a>}
               {a.has_mesh && <a href={animations.downloadUrl(a.id, 'gmesh')}>.gmesh</a>}
               {(a.has_mesh || a.has_skel) && <button onClick={() => setPreviewing(a)}>Preview</button>}
+              {a.has_skel && <button onClick={() => setAnimating(a)}>Animate</button>}
+              {(a.has_mesh || (a.has_skel && a.has_animation)) && (
+                <button onClick={() => setRigToolsOpenId(rigToolsOpenId === a.id ? null : a.id)}>{rigToolsOpenId === a.id ? 'Close rig tools' : 'Rig tools'}</button>
+              )}
               <button
                 onClick={async () => {
                   const name = window.prompt('Rename to:', a.name)
@@ -1203,6 +1215,7 @@ function Animations() {
                 </button>
               )}
             </div>
+            {rigToolsOpenId === a.id && <RigTools source={a} library={list} onDone={refresh} />}
             {attachOpenId === a.id && (
               <div className="animation-attach-panel hint">
                 <p>
@@ -1253,6 +1266,7 @@ function Animations() {
         {list.length > 0 && filteredList.length === 0 && <p className="hint">Nothing matches this filter yet.</p>}
       </div>
       {previewing && <AnimationViewer animation={previewing} onClose={() => setPreviewing(null)} />}
+      {animating && <Animator animation={animating} onClose={() => setAnimating(null)} onSaved={refresh} />}
     </div>
   )
 }

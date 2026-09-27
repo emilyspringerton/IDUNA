@@ -224,6 +224,48 @@ Migrations live in `migrations/truestore/` named `YYYYMMDDNNNN_description.sql`.
 
 ---
 
+## NOCK — animator and rig tools
+
+NOCK (`/admin/nock`, gated by `iduna.admin`) is the in-house asset toolset: textures, levels, and
+a character library of GOLDENBAND `.gmesh` / `.gskel` / `.gband` assets imported from glTF. As of
+2026-09-27 it can also **author animation** and **move meshes and clips between rigs**, which were
+the two Blender jobs it previously couldn't do.
+
+- **Animator** (character library → *Animate*, on any row with a rig): Blender-style pose mode +
+  dope sheet. Click a joint, drag the gizmo (R rotate / G move), and keys are set at the playhead
+  (auto-key, or I to key by hand). Per-key interpolation is linear, smooth, or step. Keyframes are the
+  stored source (`nock_animations.keyframes_json`) and the server bakes them to a `.gband` on
+  save. Imported clips open with editable keys derived from their baked motion and only ever
+  save as a new row.
+- **Rig tools** (character library → *Rig tools*): pick a target rig, review the automatic bone
+  map (exact / normalised name, canonical body part across Mixamo, Unreal, Rigify and Biped
+  naming, then chain order for spines and fingers), override any joint, then:
+  - *Remap mesh*: re-skin a mesh onto the target rig, either by keeping its weights through the
+    bone map or with new proximity weights for an unskinned or unrelated mesh. Optionally fits
+    the mesh to the rig's size.
+  - *Retarget clip*: move an animation onto the target rig. This works in world space, so the rigs
+    can use different bone-axis conventions, and root motion is scaled to the target's height.
+- **CLI** (file-based, no server): `go run ./cmd/nock rig-map | rig-remap-mesh | rig-retarget |
+  anim-bake | anim-keys` (`nock help` for flags).
+- **HTTP**: `GET/POST /admin/nock/api/animations/{id}/keyframes`, `GET .../{id}/bone-map?target=`,
+  `POST .../{id}/remap-mesh`, `POST .../{id}/retarget`.
+
+**Verified** against the real 65-joint Unreal-style mannequin and its mocap clips, plus a Mixamo-named
+copy of that rig:
+- The automatic bone map matched all 65 joints correctly.
+- Retargeting a real walk onto the renamed rig reproduced every joint rotation to within 0.05°.
+- A name-based mesh remap kept every artist weight.
+- The full animate → save → remap → retarget flow was driven in headless Chromium.
+
+**Limits:**
+- Proximity weights are distance envelopes, not Blender's heat-diffusion weights: the dominant
+  joint agreed with the artist's weights on 71% of the mannequin's vertices, so they're a starting
+  point, not a finished skin.
+- Retargeting needs matching rest poses (T to T, A to A) and has no IK or foot locking.
+- There is no weight painting, skeleton building, or mesh modelling yet.
+
+---
+
 ## Bob — database admin agent
 
 Bob (`cmd/bob-agent`) is IDUNA's DB specialist. He:

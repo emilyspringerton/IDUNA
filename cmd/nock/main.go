@@ -44,6 +44,13 @@ func main() {
 		return
 	}
 
+	if run, ok := rigCommands[cmd]; ok {
+		if err := run(args); err != nil {
+			fatal(err)
+		}
+		return
+	}
+
 	dataDir := os.Getenv("NOCK_DATA_DIR")
 	if dataDir == "" {
 		dataDir = "./nock-projects"
@@ -139,6 +146,16 @@ Effects:
 
 Export:
   export -project NAME -out PATH.png|PATH.jpg [-background '#RRGGBB']
+
+Animator + rig remapping (file-based GOLDENBAND assets; a clip NAME means NAME.gband +
+NAME.gband.json; -map takes src=dst,... overrides or @file.json):
+  rig-map        -src A.gskel -dst B.gskel [-map ...]          print the automatic bone map
+  rig-remap-mesh -mesh M.gmesh [-src A.gskel] -dst B.gskel -out OUT.gmesh
+                 [-mode auto|names|proximity] [-fit] [-map ...]  re-skin a mesh onto a new rig
+  rig-retarget   -clip NAME -src A.gskel -dst B.gskel -out NAME [-map ...]
+                                                               move a clip onto a new rig
+  anim-bake      -keys KEYS.json -skel A.gskel -out NAME       bake keyframes to a clip
+  anim-keys      -clip NAME -skel A.gskel [-every 5]           clip -> editable keyframes JSON
 
 Texture library (SQLite-backed CRUD -- a real, independent "master texture" per row, not a
 layer inside a Project; see internal/nock/texture_store.go's own header comment):

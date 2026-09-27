@@ -2,6 +2,7 @@
 // JSON shape exactly (see IDUNA/internal/nock/project.go). Every call goes through the same Go
 // Service the CLI (cmd/nock) calls too — this file has no logic of its own beyond building the
 // right HTTP request, matching the "same shape CLI and GUI" design.
+import type { KeyframeDoc } from './keyframes'
 
 export interface Layer {
   name: string
@@ -323,6 +324,42 @@ export const animations = {
   // AnimationEditor.tsx via goldenband.ts's own encodeGBand) back onto an existing row.
   saveEditedGBand: (id: number, gbandDataBase64: string, manifestJSON: string) =>
     animReq<Animation>(`/${id}/gband`, { method: 'PATCH', body: JSON.stringify({ gband_data_base64: gbandDataBase64, manifest_json: manifestJSON }) }),
+
+  // Animator + rig tools (2026-09-27, founder real-time: "we need a way to animate in NOCK also
+  // we need the primatives for remapping a mesh onto a new rig") -- IDUNA's
+  // internal/http/handlers/nock_animator.go.
+  getKeyframes: (id: number, every = 5) => animReq<{ source: 'stored' | 'derived' | 'empty'; keyframes: KeyframeDoc }>(`/${id}/keyframes?every=${every}`),
+  saveKeyframes: (id: number, keyframes: KeyframeDoc, opts: { name?: string; replace?: boolean }) =>
+    animReq<Animation>(`/${id}/keyframes`, { method: 'POST', body: JSON.stringify({ keyframes, name: opts.name ?? '', replace: !!opts.replace }) }),
+  boneMap: (id: number, targetId: number) => animReq<BoneMapReport>(`/${id}/bone-map?target=${targetId}`),
+  remapMesh: (id: number, req: { target_id: number; name: string; mode: 'auto' | 'names' | 'proximity'; fit: boolean; bone_map?: Record<string, string> }) =>
+    animReq<{ animation: Animation; report: RemapReport }>(`/${id}/remap-mesh`, { method: 'POST', body: JSON.stringify(req) }),
+  retarget: (id: number, req: { target_id: number; name: string; bone_map?: Record<string, string> }) =>
+    animReq<{ animation: Animation; report: RetargetReport }>(`/${id}/retarget`, { method: 'POST', body: JSON.stringify(req) }),
+}
+
+export interface BoneMapReport {
+  map: Record<string, string>
+  how: Record<string, 'exact' | 'canonical' | 'chain' | 'override'>
+  unmapped_source: string[] | null
+  unmapped_dest: string[] | null
+}
+
+export interface RemapReport {
+  mode: string
+  bone_map: BoneMapReport
+  vertices_by_name: number
+  vertices_proximity: number
+  bind_mismatch: number
+  fit_scale?: number
+  warnings?: string[]
+}
+
+export interface RetargetReport {
+  bone_map: BoneMapReport
+  joints_animated: number
+  height_ratio: number
+  warnings?: string[]
 }
 
 // ---- NOCK door script repository (SHANKPIT Story System Phase 1, S459-81/82 -- founder
