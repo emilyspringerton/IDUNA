@@ -1,79 +1,83 @@
 package handlers
 
+// shankpit_leaderboard.go -- WOTAN S550 (EMILY/BACKLOG.md SECTION 550, founder real-time,
+// 2026-09-25: "add shankpit to WOTAN ... if you have an iduna account you have a shankpit
+// account ... for now we need basic shankpit match tracking"). Public, read-only basic
+// kill/death/session leaderboard sourced directly from the players table's existing
+// kills/deaths/sessions columns (migrations/truestore/202606200001_players.sql) -- the same
+// columns players.go's handleSessionEnd already writes to on every real SHANKPIT match. No new
+// table, no new account type: "IDUNA account = SHANKPIT account" is already true today, this is
+// just the first WOTAN-facing read of it. Sibling to match_replay.go (DEADWEIGHT's own public
+// WOTAN leaderboard read) -- same public/no-auth/rate-limited posture, much simpler shape (one
+// query, no ndjson log, no replay subprocess).
+//
+//	GET /api/v1/shankpit/leaderboard?limit=
+
 import (
+	"context"
 	"database/sql"
-	"encoding/json"
 	"net/http"
+	"strconv"
+
+	"iduna/internal/http/middleware"
 )
 
-// ShankpitLeaderboardHandler reads the top SHANKPIT players by kills — the
-// WOTAN-leaderboard-for-SHANKPIT surface, same pattern as
-// RedgardenLeaderboardHandler (redgarden_stats.go). Unlike REDGARDEN,
-// SHANKPIT match results already land on the shared `players` table
-// (kills/deaths/sessions, written by handleSessionEnd in players.go under
-// the shankpit.match.write permission) rather than the genre-agnostic
-// player_game_stats table — this handler reads that existing column set
-// directly instead of introducing a second, parallel aggregate.
-//
-// Public (no permission required), same trust level as GET
-// /api/v1/players/{id}'s public profile read and the REDGARDEN leaderboard.
-//
-//	GET /api/v1/shankpit/leaderboard?limit=N
+// ShankpitLeaderboardHandler serves the route above.
 type ShankpitLeaderboardHandler struct {
-	DB *sql.DB
+	DB      *sql.DB
+	Limiter *middleware.IPRateLimiter
+}
+
+type shankpitLeaderboardEntry struct {
+	DisplayName string  `json:"display_name"`
+	Kills       int64   `json:"kills"`
+	Deaths      int64   `json:"deaths"`
+	KDRatio     float64 `json:"kd_ratio"`
+	Sessions    int64   `json:"sessions"`
 }
 
 func (h *ShankpitLeaderboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		mmoWriteError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	if h.Limiter != nil && !h.Limiter.Allow(clientIP(r)) {
+		mmoWriteError(w, http.StatusTooManyRequests, "slow down")
 		return
 	}
 	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := parsePositiveInt(l); err == nil && n > 0 {
-			limit = min(n, 200)
-		}
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 200 {
+		limit = v
 	}
-	if h.DB == nil {
-		http.Error(w, "stats not available", http.StatusServiceUnavailable)
-		return
-	}
-	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT player_id, display_name, kills, deaths, sessions
-		FROM players
-		WHERE sessions > 0
-		ORDER BY kills DESC, sessions DESC
-		LIMIT ?
-	`, limit)
+	entries, err := h.leaderboard(r.Context(), limit)
 	if err != nil {
-		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=15")
+	writeJSON(w, http.StatusOK, map[string]any{"leaderboard": entries})
+}
+
+func (h *ShankpitLeaderboardHandler) leaderboard(ctx context.Context, limit int) ([]shankpitLeaderboardEntry, error) {
+	rows, err := h.DB.QueryContext(ctx,
+		`SELECT display_name, kills, deaths, sessions FROM players
+		 WHERE sessions > 0 ORDER BY kills DESC, deaths ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
-
-	type entry struct {
-		PlayerID    string  `json:"player_id"`
-		DisplayName string  `json:"display_name"`
-		Kills       int     `json:"kills"`
-		Deaths      int     `json:"deaths"`
-		Sessions    int     `json:"sessions"`
-		KDRatio     float64 `json:"kd_ratio"`
-	}
-	entries := []entry{}
+	out := []shankpitLeaderboardEntry{}
 	for rows.Next() {
-		var e entry
-		if err := rows.Scan(&e.PlayerID, &e.DisplayName, &e.Kills, &e.Deaths, &e.Sessions); err != nil {
-			http.Error(w, "db scan error: "+err.Error(), http.StatusInternalServerError)
-			return
+		var e shankpitLeaderboardEntry
+		if err := rows.Scan(&e.DisplayName, &e.Kills, &e.Deaths, &e.Sessions); err != nil {
+			return nil, err
 		}
 		if e.Deaths > 0 {
 			e.KDRatio = float64(e.Kills) / float64(e.Deaths)
 		} else {
 			e.KDRatio = float64(e.Kills)
 		}
-		entries = append(entries, e)
+		out = append(out, e)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"game": "shankpit", "leaderboard": entries})
+	return out, rows.Err()
 }

@@ -1159,6 +1159,11 @@ func main() {
 	mux.Handle("/api/v1/games/deadweight/matches/", matchReplayH)
 	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
 
+	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
+	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:
+	// any IDUNA account is already a SHANKPIT account).
+	mux.Handle("/api/v1/shankpit/leaderboard", &handlers.ShankpitLeaderboardHandler{DB: db, Limiter: middleware.NewIPRateLimiter(60)})
+
 	// Kanban card 123214231 ("we need a big_o account creation interface off of iduna") and
 	// SHANKPIT_OS_NORTHSTAR.md item 4 ("BRAWLPIT has no player-facing IDUNA identity
 	// integration at all") -- plain, public, unauthenticated web pages (neither game has a
@@ -1313,13 +1318,6 @@ func main() {
 	)
 	mux.Handle("/api/v1/redgarden/live-match", redgardenLiveMatchWriteH)
 	mux.Handle("/api/v1/redgarden/live-match/latest", &handlers.RedgardenLiveMatchGetHandler{})
-
-	// Public SHANKPIT leaderboard read — WOTAN's own shankpit.html, same trust level as the
-	// REDGARDEN leaderboard above and the existing shankpit.match.write-gated session-end write
-	// (players.go's handleSessionEnd) it reads from. Founder real-time (2026-09-25): "add shankpit
-	// to WOTAN... if you have an iduna account you have a shankpit account... for now we need
-	// basic shankpit match tracking" — see EMILY/BACKLOG.md SECTION 550.
-	mux.Handle("/api/v1/shankpit/leaderboard", &handlers.ShankpitLeaderboardHandler{DB: db})
 
 	// SHANKPIT-460 v0 matchmaking queue (S156-03) — in-memory, ephemeral by
 	// design (see handlers.ShankpitQueue doc comment). ServerAddr is the one
