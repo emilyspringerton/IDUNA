@@ -27,6 +27,22 @@ same-origin-proxy way any caller's own `/api/` path already uses (e.g.
 `wotan.okemily.com/api/v1/auth/sso/login`). WOTAN's `store.html` is the first real caller — it no
 longer renders its own email/password form.
 
+**2026-09-27 — NOCK video editor (phone uploads)**: a new **Video** tab in NOCK (`/admin/nock/#video`,
+`iduna.admin`). Mint a short-lived phone link in NOCK; it's shown as a QR code; any phone camera
+opens `BASE_URL/nock/upload/<token>` and uploads straight from its camera roll — no app, no IDUNA
+login on the phone (the link token is the only credential: expiry, optional upload cap, revocable).
+Uploads land in a clip library (ffprobe-checked — non-video is rejected and deleted; each clip gets a
+browser-safe 720p H.264 proxy + thumbnail so iPhone HEVC previews anywhere); mark in/out, build a
+timeline, and render it to one H.264/AAC MP4 via ffmpeg (mixed portrait/landscape, frame rates and
+audio/no-audio sources are normalized, letterboxed not cropped). **Status**: tested (store + HTTP
+tests against real ffmpeg, plus a Playwright walkthrough — phone viewport uploading a rotated HEVC
+`.MOV` and an H.264 `.mp4`, then cut + render on desktop) against the real handlers in a local
+harness; **not yet deployed** to the live IDUNA. **Needs on the host**: `ffmpeg`/`ffprobe` on PATH,
+`NOCK_VIDEO_DIR` (default `var/nock-videos`), `NOCK_VIDEO_MAX_MB` (default 4096), and nginx
+`client_max_body_size` raised to match for `/nock/upload/` + `/admin/nock/api/videos`. **Limits
+(v0)**: cuts only — no transitions, titles, audio mixing or multiple tracks; one render at a time;
+not tested on real physical phones yet (Playwright iPhone emulation only).
+
 ---
 
 IDUNA is the central trust authority for the EINHORN_INDUSTRIAL / FARTHQ ecosystem. It sits between external identity providers (Google OAuth) and all downstream services and agents. Downstream services never trust external tokens directly — they exclusively trust IDUNA-issued ES256 JWTs.

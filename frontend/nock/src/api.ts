@@ -1115,3 +1115,140 @@ export const deadweightCheckpoints = {
       return (await res.json()) as DeadweightCheckpoint
     }),
 }
+
+// ---------------------------------------------------------------------------------------------
+// Video editor (founder real-time, 2026-09-27: "blue ocean we need a nock video editor that can
+// take uploads from any phone via nock"). Mirrors internal/nock/video_store.go's JSON shapes and
+// handlers/nock_videos.go's routes exactly.
+// ---------------------------------------------------------------------------------------------
+
+export interface NockVideo {
+  id: number
+  name: string
+  original_filename: string
+  size_bytes: number
+  duration_ms: number
+  width: number
+  height: number
+  video_codec: string
+  has_audio: boolean
+  fps: number
+  proxy_status: 'pending' | 'ready' | 'failed'
+  proxy_error?: string
+  source: 'admin' | 'phone'
+  upload_link_id?: number
+  uploaded_by?: string
+  created_at: string
+  has_thumb: boolean
+}
+
+export interface VideoUploadLink {
+  id: number
+  token: string
+  label: string
+  created_by?: string
+  expires_at: string
+  max_uploads: number
+  upload_count: number
+  revoked: boolean
+  created_at: string
+  upload_url: string
+  active: boolean
+}
+
+export interface VideoSegment {
+  clip_id: number
+  in_ms: number
+  out_ms: number
+}
+
+export interface VideoEDL {
+  width: number
+  height: number
+  fps: number
+  segments: VideoSegment[]
+}
+
+export interface VideoTimeline {
+  id: number
+  name: string
+  edl: VideoEDL
+  render_status: 'none' | 'rendering' | 'ready' | 'failed' | 'stale'
+  render_error?: string
+  rendered_at?: string
+  created_at: string
+  updated_at: string
+}
+
+const VIDEO_API = '/admin/nock/api'
+
+async function vreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${VIDEO_API}${path}`, {
+    credentials: 'include',
+    ...opts,
+    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+  })
+  if (!res.ok) {
+    let msg = res.statusText
+    try {
+      msg = ((await res.json()) as { error?: string }).error ?? msg
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(msg)
+  }
+  if (res.status === 204) return undefined as T
+  const text = await res.text()
+  return (text ? JSON.parse(text) : undefined) as T
+}
+
+export const videos = {
+  list: () => vreq<NockVideo[]>('/videos'),
+  rename: (id: number, name: string) => vreq<NockVideo>(`/videos/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  delete: (id: number) => vreq<void>(`/videos/${id}`, { method: 'DELETE' }),
+  reproxy: (id: number) => vreq<void>(`/videos/${id}/reproxy`, { method: 'POST' }),
+  proxyUrl: (id: number) => `${VIDEO_API}/videos/${id}/proxy`,
+  originalUrl: (id: number, download = false) => `${VIDEO_API}/videos/${id}/original${download ? '?download=1' : ''}`,
+  thumbUrl: (id: number) => `${VIDEO_API}/videos/${id}/thumb`,
+
+  /** XHR (not fetch) so the UI gets real upload progress for multi-hundred-MB files. */
+  upload: (file: File, onProgress: (pct: number) => void) =>
+    new Promise<NockVideo>((resolve, reject) => {
+      const fd = new FormData()
+      fd.append('file', file, file.name)
+      const x = new XMLHttpRequest()
+      x.open('POST', `${VIDEO_API}/videos`)
+      x.withCredentials = true
+      x.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100))
+      x.onload = () => {
+        if (x.status === 201) resolve(JSON.parse(x.responseText) as NockVideo)
+        else {
+          let msg = `${x.status}`
+          try {
+            msg = (JSON.parse(x.responseText) as { error?: string }).error ?? msg
+          } catch {
+            /* keep status */
+          }
+          reject(new Error(msg))
+        }
+      }
+      x.onerror = () => reject(new Error('network error'))
+      x.send(fd)
+    }),
+
+  links: () => vreq<VideoUploadLink[]>('/video-upload-links'),
+  createLink: (label: string, ttl_minutes: number, max_uploads: number) =>
+    vreq<VideoUploadLink>('/video-upload-links', { method: 'POST', body: JSON.stringify({ label, ttl_minutes, max_uploads }) }),
+  revokeLink: (id: number) => vreq<void>(`/video-upload-links/${id}`, { method: 'DELETE' }),
+  linkQrUrl: (id: number) => `${VIDEO_API}/video-upload-links/${id}/qr`,
+
+  timelines: () => vreq<VideoTimeline[]>('/video-timelines'),
+  createTimeline: (name: string, edl?: VideoEDL) =>
+    vreq<VideoTimeline>('/video-timelines', { method: 'POST', body: JSON.stringify({ name, edl }) }),
+  saveTimeline: (id: number, edl: VideoEDL, name = '') =>
+    vreq<VideoTimeline>(`/video-timelines/${id}`, { method: 'PUT', body: JSON.stringify({ name, edl }) }),
+  deleteTimeline: (id: number) => vreq<void>(`/video-timelines/${id}`, { method: 'DELETE' }),
+  render: (id: number) => vreq<VideoTimeline>(`/video-timelines/${id}/render`, { method: 'POST' }),
+  outputUrl: (id: number, download = false, bust = '') =>
+    `${VIDEO_API}/video-timelines/${id}/output${download ? '?download=1' : bust ? `?v=${enc(bust)}` : ''}`,
+}

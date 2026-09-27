@@ -304,3 +304,34 @@ dracula dark, both stock, both colorful) and the one rule every new NOCK compone
 5. PARENA backend migration (see "explicitly out of scope" #1) — sequenced after PARENA's own
    image/raster stdlib support exists, which it does not today (checked: no `stdlib/image` or
    equivalent anywhere in `PARENA/stdlib/`).
+
+## Video editor + phone uploads (2026-09-27)
+
+Founder real-time: "blue ocean we need a nock video editor that can take uploads from any phone via
+nock." Frame-break read: the general pattern is **"capture on any device, author in NOCK"** — a
+short-lived capability link turns any phone into an input device for NOCK without an app or a
+login on it. Video is the first consumer; the same link shape could later take photos → texture
+library, or audio.
+
+**Built (v0)**, `internal/nock/video_store.go` + `handlers/nock_videos.go` + `frontend/nock/src/VideoEditor.tsx`:
+- **Phone link**: admin mints a token (15 min–1 day, optional upload cap, revocable), shown as a QR
+  code. `/nock/upload/<token>` is a self-contained mobile page (`accept="video/*" multiple`,
+  sequential uploads with progress). Slots are reserved atomically before the body streams (two
+  phones can't overrun a capped link) and released if the upload fails.
+- **Clips**: streamed to disk (never buffered in memory or /tmp), ffprobe-validated (a non-video is
+  rejected and deleted — the path is reachable without login), rotation-aware dimensions, background
+  720p H.264 proxy + thumbnail so iPhone HEVC plays in any browser. Range-capable serving for seek.
+- **Timelines**: EDL = output size/fps + ordered `{clip_id, in_ms, out_ms}` segments. Render
+  normalizes each segment (scale + pad, fps, yuv420p, H.264, 48 kHz stereo AAC, silent track synth
+  for audio-less clips), then concat-demuxes with stream copy. Editing after a render marks it
+  `stale`; a clip used by a timeline can't be deleted; a render interrupted by a restart is marked
+  failed on startup (`VideoStore.Recover`).
+
+**Not built (named)**: transitions, titles/text, audio mixing/music beds, multiple tracks, speed
+changes, a visual waveform/filmstrip scrubber, render queue beyond one-at-a-time, disk quotas or
+retention for clips, exporting a render into the texture/animation libraries, a native NOCK mobile
+app. Untested on physical phones (Playwright iPhone emulation + real HEVC/rotated fixtures only).
+
+**Deploy checklist**: `ffmpeg`/`ffprobe` on the IDUNA host; `NOCK_VIDEO_DIR`; `NOCK_VIDEO_MAX_MB`;
+nginx `client_max_body_size` ≥ that for `/nock/upload/` and `/admin/nock/api/videos` (and generous
+`proxy_read_timeout`/`proxy_request_buffering off` so multi-GB phone uploads stream through).
