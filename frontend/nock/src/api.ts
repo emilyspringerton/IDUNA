@@ -889,6 +889,22 @@ export const shankpitWidgets = {
   save: (id: number, walls: ShankpitWall[], doors: ShankpitDoor[]) =>
     wreq<ShankpitWidget>(`/${id}`, { method: 'PUT', body: JSON.stringify({ walls, doors }) }),
   delete: (id: number) => wreq<void>(`/${id}`, { method: 'DELETE' }),
+
+  // importGltf -- the NOCK glTF importer -> SHANKPIT widget bridge: the same .glb/.gltf the
+  // Animations tab accepts, one box wall per mesh node (world-space bounds), "door*"-named nodes
+  // become doors. Multipart, so it can't go through wreq's JSON path.
+  async importGltf(file: File, name: string, scale: number): Promise<ShankpitWidget> {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('name', name)
+    form.append('scale', String(scale))
+    const res = await fetch(`${SHANKPIT_WIDGETS_BASE}/import-gltf`, { method: 'POST', credentials: 'include', body: form })
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText)
+      throw new Error(`${res.status}: ${text}`)
+    }
+    return (await res.json()) as ShankpitWidget
+  },
 }
 
 // ---- SHANKPIT sprays (S459-19, founder real-time: "can we implement sprays? ... export to spray
