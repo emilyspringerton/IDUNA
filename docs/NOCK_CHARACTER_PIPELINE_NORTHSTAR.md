@@ -146,9 +146,43 @@ editor, not one feature:
    in this pass — sequenced last because Phases 0-2 and rigging/animation authoring are all real,
    valuable, and buildable against imported meshes without it.
 
-No code for Phase 3 exists yet. This doc names the real order (rigging+animation before
-modeling) and the real reason (imported assets already unblock everything upstream of modeling),
-not a designed implementation.
+### Phase 3 progress (2026-09-27): animation tool v0 + rig remapping primitives SHIPPED
+
+Founder real-time: "continue to evolve NOCK tools into a total blender replacement we need a way
+to animate in NOCK also we need the primatives for remapping a mesh onto a new rig".
+
+- **Animation tool (item 2), v0 shipped.** `frontend/nock/src/Animator.tsx` is a Blender-style pose
+  mode + dope sheet on any row with a rig: click-to-pick joints, a TransformControls gizmo
+  (R/G), auto-key or I-to-key, per-key linear/smooth/step interpolation, copy/paste pose,
+  length/tick-rate, and playback. The editable source is a `KeyframeDoc`
+  (`internal/nock/keyframes.go`), stored in `nock_animations.keyframes_json`
+  (migration `202609270001`) next to the `.gband` it bakes to. That's the same source → artifact
+  split the procedural textures use. Imported clips open with keys derived from their baked data
+  (`KeyframesFromClip`, with constant channels collapsed to one key) and save only as new rows.
+  Not yet: curve/graph editor (Bezier handles), IK, layered/additive clips, onion skinning.
+  Also not yet: stitching clips into the `gseq.c` sequences the runtime already supports.
+- **Rig remapping primitives, shipped** (not one of the three items above, but a prerequisite for
+  the "bring it in house" goal: imported meshes and clips arrive on many different rigs):
+  `internal/nock/rig_bonemap.go` (automatic bone map across Mixamo/Unreal/Rigify/Biped naming,
+  with overrides), `rig_remap.go` (re-skin a mesh onto a new rig: keep weights through the bone
+  map, or new proximity weights, with optional size fit), `rig_retarget.go` (world-space clip
+  retargeting that handles differing bone-axis conventions and armature frames, with root motion
+  scaled to height). UI: `frontend/nock/src/RigTools.tsx`. CLI: `nock rig-map | rig-remap-mesh |
+  rig-retarget | anim-bake | anim-keys`. Verified on the real 65-joint mannequin + clips
+  (`BIG_O/day/assets/goldenband/`) against a Mixamo-named copy: 65/65 joints mapped correctly,
+  retarget within 0.05°, name remap weight-exact. Proximity weights agree with the artist's
+  dominant joint on 71% of vertices, so they are a starting point that a weight-paint tool
+  needs to finish.
+- **Rigging tool (item 1): still open.** The remap primitives cover "put this mesh on that
+  existing rig". Building a skeleton from scratch and painting weights by hand are not started.
+  The proximity-weight envelope (`rig_remap.go`'s `envelope`) is the natural seed for a
+  weight-paint tool's "auto weights" button.
+- **Modeling tool (item 3): not started**, still sequenced last.
+- **Found along the way, not fixed:** BIG_O's copy of the imported `zombie_walk` clip snaps
+  both upper arms ~165–172° for ticks 44–50 and snaps back at 51. It's a glitch in the clip's own
+  data, visible in any consumer. It's worth re-importing from source to see whether the glTF import's
+  per-component quaternion lerp (no hemisphere alignment in `gltf_convert.go`'s
+  `resampleQuat`) is the cause.
 
 ## Explicitly out of scope for this doc
 
@@ -171,5 +205,6 @@ not a designed implementation.
    in-browser preview.
 2. Phase 2: generalize scriptable-object attachment past doors + a real map-editor placement UI.
 3. Phase 3: rigging tool, then animation tool, then (last, most speculative) modeling tool.
+   Animation tool v0 and rig remapping shipped 2026-09-27 (see "Phase 3 progress" above).
 
 Each phase is real, separately shippable work — not a single big-bang rewrite.

@@ -559,3 +559,119 @@ textarea {
 .active-badge {
   @apply text-sm text-gold;
 }
+
+/* NOCK animator + rig tools (2026-09-27) */
+.animation-viewer-panel.animator-panel {
+  @apply max-h-[95vh] max-w-6xl overflow-y-auto;
+}
+
+.animator-body {
+  @apply flex flex-col gap-3 md:flex-row;
+}
+
+.animator-canvas {
+  @apply h-[55vh] min-w-0 flex-1;
+}
+
+.animator-side {
+  @apply flex w-full flex-col gap-2 text-sm md:w-64 md:shrink-0;
+}
+
+.animator-side label {
+  @apply flex flex-col gap-1;
+}
+
+.animator-side label.animator-check,
+.animator-check {
+  @apply flex flex-row items-center gap-2;
+}
+
+.animator-row {
+  @apply flex flex-wrap items-center gap-1;
+}
+
+.animator-row input[type='number'] {
+  @apply w-16 min-w-0 flex-1;
+}
+
+.animator-mode button:not(.active) {
+  @apply btn-outline;
+}
+
+.animator-mode button.active {
+  @apply btn-primary;
+}
+
+.animator-check input[type='checkbox'] {
+  @apply checkbox checkbox-sm checkbox-primary;
+}
+
+.animator-side select {
+  @apply select select-sm w-full;
+}
+
+.animator-side hr {
+  @apply border-line;
+}
+
+.animator-keys {
+  @apply text-xs;
+}
+
+.timeline {
+  @apply flex flex-col gap-1 rounded border border-line p-2 text-xs;
+}
+
+.timeline-head {
+  @apply flex items-center gap-2;
+}
+
+.timeline-grid {
+  @apply grid max-h-48 overflow-y-auto;
+  grid-template-columns: minmax(6rem, 12rem) 1fr;
+}
+
+.timeline-label {
+  @apply cursor-pointer truncate border-b border-line px-1 py-0.5 text-muted;
+}
+
+.timeline-label.selected {
+  @apply text-gold;
+}
+
+.timeline-lane {
+  @apply relative h-5 cursor-pointer border-b border-l border-line;
+}
+
+.timeline-lane.selected {
+  @apply bg-panel;
+}
+
+.timeline-ruler {
+  @apply h-5;
+}
+
+.timeline-tick-label {
+  @apply absolute top-0 -translate-x-1/2 text-muted;
+}
+
+.timeline-key {
+  @apply absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-gold;
+}
+
+.timeline-key.summary {
+  @apply bg-ink;
+}
+
+.timeline-playhead {
+  @apply pointer-events-none absolute top-0 bottom-0 w-px bg-danger;
+}
+
+.bone-map-table {
+  @apply w-full border-collapse text-xs;
+}
+
+.bone-map-table th,
+.bone-map-table td {
+  @apply border-b border-line px-1 py-0.5 text-left;
+}
