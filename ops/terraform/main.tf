@@ -66,3 +66,26 @@ resource "cloudflare_dns_record" "iam" {
 output "iam_fqdn" {
   value = "${cloudflare_dns_record.iam.name}.okemily.com"
 }
+
+# mixforge.okemily.com -- MIXFORGE's own dedicated domain (founder real-time, 2026-09-27: "lets
+# get MIXFORGE live mixforge.okemily.com"). Fronts the real, live DJ-room demo (static
+# web/index.html + web/multiplayer.html served straight from the MIXFORGE repo checkout, real
+# room.wasm turn-order logic, WebSocket seat/turn state proxied to the real
+# server/room_server.mjs process) -- see MIXFORGE/ops/nginx/mixforge-okemily.conf and
+# MIXFORGE/ops/systemd/mixforge-room-server.service for the app-level half of this (already
+# built, not yet live -- this record is the missing infra half, same split iam.okemily.com's own
+# header comment already established). DNS-only (not proxied through Cloudflare's edge), same
+# reason as iam: certbot's HTTP-01 challenge in sudo-queue/ needs to reach this box directly.
+resource "cloudflare_dns_record" "mixforge" {
+  zone_id = var.okemily_zone_id
+  name    = "mixforge"
+  type    = "A"
+  content = var.server_ipv4
+  ttl     = 300
+  proxied = false
+  comment = "MIXFORGE DJ-room demo (mixforge.okemily.com) -- managed by Terraform, see IDUNA/ops/terraform/main.tf"
+}
+
+output "mixforge_fqdn" {
+  value = "${cloudflare_dns_record.mixforge.name}.okemily.com"
+}
