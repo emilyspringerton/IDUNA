@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { robots, type Robot } from './api'
+import { robots, type Robot, type RobotSyncReport } from './api'
 import { buildBones, parseGSkel, type ParsedJoint } from './goldenband'
 
 // Robots.tsx -- NOCK's robot registry (founder real-time, 2026-09-27: "upgrade shankpit and nock
@@ -129,6 +129,8 @@ export default function Robots() {
   const [list, setList] = useState<Robot[]>([])
   const [selected, setSelected] = useState<Robot | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sync, setSync] = useState<RobotSyncReport | null>(null)
+  const [syncing, setSyncing] = useState(false)
   const [files, setFiles] = useState<{ spec: File | null; grobot: File | null; gskel: File | null }>({ spec: null, grobot: null, gskel: null })
 
   const refresh = useCallback(() => {
@@ -154,6 +156,19 @@ export default function Robots() {
       open(r.id)
     } catch (e) {
       setError(String(e))
+    }
+  }
+
+  const syncFromGit = async () => {
+    setError(null)
+    setSyncing(true)
+    try {
+      setSync(await robots.syncFromGit())
+      refresh()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -184,6 +199,22 @@ export default function Robots() {
         <code>gbtool robot import-ur</code> / <code>gbtool robot compile</code> (see <code>format/GROBOT_FORMAT.md</code>).
       </p>
       {error && <p className="error">{error}</p>}
+      <p>
+        <button type="button" onClick={syncFromGit} disabled={syncing}>
+          {syncing ? 'Syncing…' : 'Sync from git (GOLDENBAND)'}
+        </button>{' '}
+        <span className="hint">
+          Git is the source of truth: IDUNA also re-imports GOLDENBAND's robots/ + assets/robots/ on every start, and{' '}
+          <code>nock robots-sync</code> does the same from a shell. Hand uploads are never overwritten.
+        </span>
+      </p>
+      {sync && (
+        <div className="hint">
+          Synced from <code>{sync.dir}</code>{sync.revision && <> @ <code>{sync.revision.slice(0, 12)}</code></>}:{' '}
+          {sync.items.map((it) => `${it.name} ${it.action}${it.detail ? ` (${it.detail})` : ''}`).join(' · ')}
+          {sync.not_in_git && sync.not_in_git.length > 0 && <> · no longer in git: {sync.not_in_git.join(', ')}</>}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <label>spec (.grobot.json) <input type="file" accept=".json" onChange={(e) => setFiles((f) => ({ ...f, spec: e.target.files?.[0] ?? null }))} /></label>
         <label>rig (.grobot) <input type="file" accept=".grobot" onChange={(e) => setFiles((f) => ({ ...f, grobot: e.target.files?.[0] ?? null }))} /></label>
@@ -197,7 +228,7 @@ export default function Robots() {
         <tbody>
           {list.map((r) => (
             <tr key={r.id} className={selected?.id === r.id ? 'active' : ''}>
-              <td><button type="button" onClick={() => open(r.id)}>{r.model}</button></td>
+              <td><button type="button" onClick={() => open(r.id)}>{r.model}</button> <span className="hint">{r.source_location?.startsWith('git:') ? r.source_location : 'uploaded'}</span></td>
               <td>{r.manufacturer}</td>
               <td>{r.joint_count}</td>
               <td>{r.moving_mass_kg.toFixed(3)} kg</td>
@@ -205,7 +236,7 @@ export default function Robots() {
             </tr>
           ))}
           {list.length === 0 && (
-            <tr><td colSpan={5} className="hint">No robots yet -- upload GOLDENBAND's assets/robots/ur5e.* to start.</td></tr>
+            <tr><td colSpan={5} className="hint">No robots yet -- press “Sync from git” (or upload a spec + compiled rig).</td></tr>
           )}
         </tbody>
       </table>

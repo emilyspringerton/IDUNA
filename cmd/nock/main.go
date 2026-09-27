@@ -33,6 +33,17 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
+	if robotCommands[cmd] {
+		st, err := openRobotStore()
+		if err != nil {
+			fatal(err)
+		}
+		if err := dispatchRobotCmd(cmd, st, args); err != nil {
+			fatal(err)
+		}
+		return
+	}
+
 	if textureCommands[cmd] {
 		store, err := openTextureStore()
 		if err != nil {
@@ -139,6 +150,10 @@ Effects:
 
 Export:
   export -project NAME -out PATH.png|PATH.jpg [-background '#RRGGBB']
+
+Robot registry (GOLDEN BAND datasheet robot rigs; git is the source of truth):
+  robots-sync [--dir /home/fatbaby/GOLDENBAND]   import robots/*.grobot.json + assets/robots/* into the DB
+  robots-list                                    list registered robots (JSON)
 
 Texture library (SQLite-backed CRUD -- a real, independent "master texture" per row, not a
 layer inside a Project; see internal/nock/texture_store.go's own header comment):

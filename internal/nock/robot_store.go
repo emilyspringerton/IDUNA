@@ -17,6 +17,7 @@ package nock
 // IDUNA stays a standalone module with no GOLDENBAND dependency.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -25,6 +26,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -303,4 +307,149 @@ func (s *RobotStore) DeleteRobot(ctx context.Context, id int64) error {
 		return fmt.Errorf("nock: robot not found")
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------- git -> registry sync
+
+// Founder real-time, 2026-09-27: "build in the affordances that slurp it into the database". The
+// robot data's source of truth is git (GOLDENBAND: robots/<name>.grobot.json specs, compiled
+// assets/robots/<name>.grobot + .gskel); this pulls a GOLDENBAND working tree into nock_robots.
+// Called from three places that share this one function: IDUNA startup (automatic), POST
+// /admin/nock/api/robots/sync (NOCK's "Sync from git" button), and `nock robots-sync` (CLI).
+//
+// Rules: a robot is (re)imported only if it passes the same provenance checks as an upload.
+// Rows the sync created are marked source_location "git:..." and are updated in place when git
+// changes; a row with the same name that was uploaded by hand is never overwritten (reported as
+// skipped). Robots removed from git are left in the database (reported, not deleted). The sync
+// only reads the working tree -- it never pulls, fetches or modifies the git checkout.
+
+type RobotSyncItem struct {
+	Name   string `json:"name"`
+	Action string `json:"action"` // created | updated | unchanged | skipped | error
+	Detail string `json:"detail,omitempty"`
+}
+
+type RobotSyncReport struct {
+	Dir      string          `json:"dir"`
+	Revision string          `json:"revision,omitempty"`
+	Items    []RobotSyncItem `json:"items"`
+	NotInGit []string        `json:"not_in_git,omitempty"` // git-sourced rows whose spec is gone from the tree
+}
+
+// gitRevision returns the checkout's HEAD commit, read straight from .git (no git binary needed).
+func gitRevision(dir string) string {
+	head, err := os.ReadFile(filepath.Join(dir, ".git", "HEAD"))
+	if err != nil {
+		return ""
+	}
+	h := strings.TrimSpace(string(head))
+	if !strings.HasPrefix(h, "ref: ") {
+		return h
+	}
+	ref := strings.TrimPrefix(h, "ref: ")
+	if b, err := os.ReadFile(filepath.Join(dir, ".git", filepath.FromSlash(ref))); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	if packed, err := os.ReadFile(filepath.Join(dir, ".git", "packed-refs")); err == nil {
+		for _, line := range strings.Split(string(packed), "\n") {
+			if f := strings.Fields(line); len(f) == 2 && f[1] == ref {
+				return f[0]
+			}
+		}
+	}
+	return ""
+}
+
+func (s *RobotStore) updateRobot(ctx context.Context, id int64, specJSON, grobot, gskel []byte, sourceLocation string) error {
+	info, spec, err := ValidateRobotUpload(specJSON, grobot)
+	if err != nil {
+		return err
+	}
+	mass := 0.0
+	for _, j := range info.Joints {
+		mass += j.Mass
+	}
+	_, err = s.DB.ExecContext(ctx,
+		`UPDATE nock_robots SET manufacturer = ?, model = ?, joint_count = ?, moving_mass_kg = ?, spec_hash = ?, spec_json = ?,
+		 grobot_data = ?, gskel_data = ?, source_location = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		spec.Manufacturer, spec.Model, len(info.Joints), mass, info.SpecHash, string(specJSON), grobot,
+		nullBytesIfEmpty(gskel), nullIfEmpty(sourceLocation), id)
+	if err != nil {
+		return fmt.Errorf("nock: update robot: %w", err)
+	}
+	return nil
+}
+
+// SyncFromGit imports every robot in a GOLDENBAND working tree at dir.
+func (s *RobotStore) SyncFromGit(ctx context.Context, dir string) (*RobotSyncReport, error) {
+	specs, err := filepath.Glob(filepath.Join(dir, "robots", "*.grobot.json"))
+	if err != nil {
+		return nil, err
+	}
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("nock: no robots/*.grobot.json under %s -- is this a GOLDENBAND checkout (with the robot data merged)?", dir)
+	}
+	sort.Strings(specs)
+	rep := &RobotSyncReport{Dir: dir, Revision: gitRevision(dir)}
+	source := "git:GOLDENBAND"
+	if rep.Revision != "" {
+		source += "@" + rep.Revision[:min(12, len(rep.Revision))]
+	}
+	existing, err := s.ListRobots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byName := map[string]Robot{}
+	for _, r := range existing {
+		byName[r.Name] = r
+	}
+	inGit := map[string]bool{}
+	for _, specPath := range specs {
+		name := strings.TrimSuffix(filepath.Base(specPath), ".grobot.json")
+		inGit[name] = true
+		item := RobotSyncItem{Name: name}
+		spec, err1 := os.ReadFile(specPath)
+		grobot, err2 := os.ReadFile(filepath.Join(dir, "assets", "robots", name+".grobot"))
+		gskel, _ := os.ReadFile(filepath.Join(dir, "assets", "robots", name+".gskel")) // optional
+		switch {
+		case err1 != nil:
+			item.Action, item.Detail = "error", err1.Error()
+		case err2 != nil:
+			item.Action, item.Detail = "error", "no compiled assets/robots/"+name+".grobot (run GOLDENBAND scripts/robot_assets.sh)"
+		default:
+			row, have := byName[name]
+			switch {
+			case !have:
+				if _, err := s.CreateRobot(ctx, spec, grobot, gskel, source); err != nil {
+					item.Action, item.Detail = "error", err.Error()
+				} else {
+					item.Action = "created"
+				}
+			case !strings.HasPrefix(row.SourceLocation, "git:"):
+				item.Action, item.Detail = "skipped", "a hand-uploaded robot already uses this name; git never overwrites uploads"
+			default:
+				full, err := s.GetRobot(ctx, row.ID)
+				if err != nil {
+					item.Action, item.Detail = "error", err.Error()
+					break
+				}
+				if full.SpecJSON == string(spec) && bytes.Equal(full.GRobotData, grobot) && bytes.Equal(full.GSkelData, gskel) {
+					item.Action = "unchanged"
+					break
+				}
+				if err := s.updateRobot(ctx, row.ID, spec, grobot, gskel, source); err != nil {
+					item.Action, item.Detail = "error", err.Error()
+				} else {
+					item.Action = "updated"
+				}
+			}
+		}
+		rep.Items = append(rep.Items, item)
+	}
+	for _, r := range existing {
+		if strings.HasPrefix(r.SourceLocation, "git:") && !inGit[r.Name] {
+			rep.NotInGit = append(rep.NotInGit, r.Name)
+		}
+	}
+	return rep, nil
 }

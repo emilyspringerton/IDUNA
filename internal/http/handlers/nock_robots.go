@@ -12,6 +12,7 @@ package handlers
 //	GET    /admin/nock/api/robots/{id}/grobot   compiled physics rig
 //	GET    /admin/nock/api/robots/{id}/gskel    display skeleton
 //	DELETE /admin/nock/api/robots/{id}
+//	POST   /admin/nock/api/robots/sync          re-import every robot from the GOLDENBAND git checkout
 
 import (
 	"fmt"
@@ -24,6 +25,9 @@ import (
 
 type NockRobotsHandler struct {
 	Store *nock.RobotStore
+	// GitDir is the GOLDENBAND working tree the sync endpoint reads (NOCK_ROBOTS_GIT_DIR). Empty
+	// disables the endpoint.
+	GitDir string
 }
 
 func (h *NockRobotsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +51,17 @@ func (h *NockRobotsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, list)
 	case len(parts) == 0 && r.Method == http.MethodPost:
 		h.create(w, r)
+	case len(parts) == 1 && parts[0] == "sync" && r.Method == http.MethodPost:
+		if h.GitDir == "" {
+			mmoWriteError(w, http.StatusServiceUnavailable, "robot git sync is disabled (NOCK_ROBOTS_GIT_DIR=off)")
+			return
+		}
+		rep, err := h.Store.SyncFromGit(r.Context(), h.GitDir)
+		if err != nil {
+			mmoWriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, rep)
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		if rb := h.load(w, r, parts[0]); rb != nil {
 			rb.GRobotData, rb.GSkelData = nil, nil

@@ -136,3 +136,95 @@ func TestRobotStoreRoundTripAndProvenance(t *testing.T) {
 		t.Error("deleted robot still readable")
 	}
 }
+
+// fakeGoldenband lays out a GOLDENBAND-shaped working tree (robots/ + assets/robots/ + a .git
+// HEAD) from the real UR5e testdata.
+func fakeGoldenband(t *testing.T) string {
+	t.Helper()
+	spec, grobot, gskel := loadUR5e(t)
+	dir := t.TempDir()
+	for p, b := range map[string][]byte{
+		"robots/ur5e.grobot.json":          spec,
+		"assets/robots/ur5e.grobot":        grobot,
+		"assets/robots/ur5e.gskel":         gskel,
+		".git/HEAD":                        []byte("ref: refs/heads/main\n"),
+		".git/refs/heads/main":             []byte("0123456789abcdef0123456789abcdef01234567\n"),
+		"robots/sources/README-not-a-spec": []byte("x"),
+	} {
+		full := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestRobotSyncFromGit(t *testing.T) {
+	db := newRobotTestDB(t)
+	store := &RobotStore{DB: db}
+	ctx := context.Background()
+	dir := fakeGoldenband(t)
+
+	rep, err := store.SyncFromGit(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Revision != "0123456789abcdef0123456789abcdef01234567" || len(rep.Items) != 1 || rep.Items[0].Action != "created" {
+		t.Fatalf("first sync: %+v", rep)
+	}
+	list, _ := store.ListRobots(ctx)
+	if len(list) != 1 || list[0].SourceLocation != "git:GOLDENBAND@0123456789ab" || !list[0].HasSkel {
+		t.Fatalf("row: %+v", list)
+	}
+
+	rep, _ = store.SyncFromGit(ctx, dir)
+	if rep.Items[0].Action != "unchanged" {
+		t.Fatalf("second sync should be a no-op: %+v", rep.Items)
+	}
+
+	// git changes (the skeleton is re-exported) -> the git-owned row is updated in place.
+	os.Remove(filepath.Join(dir, "assets", "robots", "ur5e.gskel"))
+	rep, _ = store.SyncFromGit(ctx, dir)
+	if rep.Items[0].Action != "updated" {
+		t.Fatalf("changed tree should update: %+v", rep.Items)
+	}
+	if r, _ := store.GetRobot(ctx, list[0].ID); r.HasSkel {
+		t.Error("update did not take the new (skeleton-less) state")
+	}
+
+	// A spec edited without recompiling fails provenance and is reported, not imported.
+	specPath := filepath.Join(dir, "robots", "ur5e.grobot.json")
+	b, _ := os.ReadFile(specPath)
+	os.WriteFile(specPath, bytes.Replace(b, []byte(`"effort": 150`), []byte(`"effort": 999`), 1), 0o644)
+	rep, _ = store.SyncFromGit(ctx, dir)
+	if rep.Items[0].Action != "error" || !strings.Contains(rep.Items[0].Detail, "not compiled from this spec") {
+		t.Fatalf("stale compile must be rejected: %+v", rep.Items)
+	}
+	os.WriteFile(specPath, b, 0o644)
+
+	// A hand-uploaded robot with the same name is never overwritten by git.
+	db2 := newRobotTestDB(t)
+	store2 := &RobotStore{DB: db2}
+	spec, grobot, _ := loadUR5e(t)
+	if _, err := store2.CreateRobot(ctx, spec, grobot, nil, "NOCK upload"); err != nil {
+		t.Fatal(err)
+	}
+	rep, _ = store2.SyncFromGit(ctx, dir)
+	if rep.Items[0].Action != "skipped" {
+		t.Fatalf("hand upload must win: %+v", rep.Items)
+	}
+
+	// Removed from git -> reported, left in place.
+	os.Remove(specPath)
+	os.WriteFile(filepath.Join(dir, "robots", "other.grobot.json"), []byte("{}"), 0o644)
+	rep, _ = store.SyncFromGit(ctx, dir)
+	if len(rep.NotInGit) != 1 || rep.NotInGit[0] != "ur5e" {
+		t.Fatalf("not_in_git: %+v", rep)
+	}
+	if _, err := store.SyncFromGit(ctx, t.TempDir()); err == nil {
+		t.Error("a directory with no robots/ must be an error, not a silent no-op")
+	}
+}

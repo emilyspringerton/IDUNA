@@ -1152,6 +1152,13 @@ export interface Robot {
   updated_at: string
 }
 
+export interface RobotSyncReport {
+  dir: string
+  revision?: string
+  items: { name: string; action: 'created' | 'updated' | 'unchanged' | 'skipped' | 'error'; detail?: string }[]
+  not_in_git?: string[]
+}
+
 const ROBOTS_BASE = '/admin/nock/api/robots'
 
 async function robreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -1175,5 +1182,6 @@ export const robots = {
     return robreq<Robot>('', { method: 'POST', body: fd })
   },
   delete: (id: number) => robreq<{ deleted: number }>(`/${id}`, { method: 'DELETE' }),
+  syncFromGit: () => robreq<RobotSyncReport>('/sync', { method: 'POST' }),
   downloadUrl: (id: number, kind: 'spec' | 'grobot' | 'gskel') => `${ROBOTS_BASE}/${id}/${kind}`,
 }
