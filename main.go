@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -718,6 +719,35 @@ func main() {
 	mux.Handle("/admin/nock/api/door-scripts/", nockDoorScriptsProtected)
 	nockDoorScriptsPublicH := &handlers.NockDoorScriptsPublicHandler{Store: doorScriptStore}
 	mux.Handle("/api/v1/nock-door-scripts/", nockDoorScriptsPublicH)
+
+	// NOCK video editor (founder real-time, 2026-09-27: "blue ocean we need a nock video editor
+	// that can take uploads from any phone via nock"). Clip bytes live on disk under
+	// NOCK_VIDEO_DIR (too big for a BLOB), metadata in the shared db; every media operation
+	// shells out to ffmpeg/ffprobe. The phone half is /nock/upload/<token>: public, no IDUNA
+	// login, the short-lived link token minted from NOCK (and shown there as a QR code) is the
+	// only credential. See internal/nock/video_store.go and handlers/nock_videos.go.
+	nockVideoMaxMB := int64(4096)
+	if v := getenv("NOCK_VIDEO_MAX_MB", ""); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			nockVideoMaxMB = n
+		}
+	}
+	nockVideoStore := &nock.VideoStore{DB: db, Dir: getenv("NOCK_VIDEO_DIR", "/home/fatbaby/IDUNA/var/nock-videos")}
+	// A broken video dir disables the video editor only -- never the trust authority itself.
+	if err := nockVideoStore.Init(); err != nil {
+		log.Printf("nock videos: DISABLED, %v", err)
+	} else {
+		if err := nockVideoStore.Recover(context.Background()); err != nil {
+			log.Printf("nock videos: recover: %v", err)
+		}
+		nockVideosH := &handlers.NockVideosHandler{Store: nockVideoStore, BaseURL: baseURL, MaxBytes: nockVideoMaxMB << 20}
+		nockVideosProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockVideosH))
+		for _, p := range []string{"videos", "video-upload-links", "video-timelines"} {
+			mux.Handle("/admin/nock/api/"+p, nockVideosProtected)
+			mux.Handle("/admin/nock/api/"+p+"/", nockVideosProtected)
+		}
+		mux.Handle("/nock/upload/", &handlers.NockPhoneUploadHandler{Store: nockVideoStore, MaxBytes: nockVideoMaxMB << 20})
+	}
 
 	// BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
 	// editor online - web technologies - we already started building nock - can we finish

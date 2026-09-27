@@ -11,6 +11,7 @@ import DeadweightAiOpponents from './DeadweightAiOpponents'
 import ShankpitMaterials from './ShankpitMaterials'
 import ShankpitWidgets from './ShankpitWidgets'
 import Sprays from './Sprays'
+import VideoEditor from './VideoEditor'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -1271,8 +1272,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'code'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'code']
+type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'video' | 'code'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'video', 'code']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1393,6 +1394,9 @@ export default function App() {
           <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
             Sprays
           </button>
+          <button className={tab === 'video' ? 'active' : ''} onClick={() => setTab('video')}>
+            Video
+          </button>
           <button className={tab === 'code' ? 'active' : ''} onClick={() => setTab('code')}>
             Code
           </button>
@@ -1435,6 +1439,8 @@ export default function App() {
         <ShankpitWidgets />
       ) : tab === 'sprays' ? (
         <Sprays />
+      ) : tab === 'video' ? (
+        <VideoEditor />
       ) : tab === 'code' ? (
         <div className="layout-single">
           {/* A plain link, not an iframe: VS Code's own UI (menus, the command palette,

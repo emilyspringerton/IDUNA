@@ -675,3 +675,151 @@ textarea {
 .bone-map-table td {
   @apply border-b border-line px-1 py-0.5 text-left;
 }
+
+/* ---- Video editor (VideoEditor.tsx) ---- */
+.video-editor {
+  @apply grid flex-1 gap-4 overflow-y-auto p-6;
+  grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.3fr);
+}
+@media (max-width: 900px) {
+  .video-editor {
+    grid-template-columns: 1fr;
+    @apply p-4;
+  }
+}
+.video-col {
+  @apply flex min-w-0 flex-col gap-4;
+}
+.video-panel {
+  @apply flex flex-col gap-3 rounded-lg border border-line bg-panel p-4;
+}
+.video-panel h3 {
+  @apply m-0 text-base font-semibold text-ink;
+}
+.video-form-row {
+  @apply flex flex-wrap items-center gap-2;
+}
+.video-form-row input:not([type='file']),
+.video-form-row select,
+.video-segments input {
+  @apply input input-sm;
+}
+.video-form-row button,
+.video-link-list button,
+.video-segments button,
+.video-card button {
+  @apply btn btn-sm;
+}
+.video-form-row button.primary {
+  @apply btn-primary;
+}
+.video-panel button.danger {
+  @apply btn-outline btn-error;
+}
+.video-panel a {
+  @apply link link-primary text-sm;
+}
+.video-file-btn {
+  @apply btn btn-sm btn-primary;
+}
+.video-file-btn input {
+  @apply hidden;
+}
+.video-qr {
+  @apply flex flex-wrap items-center gap-4 rounded-lg border border-line bg-bg p-3;
+}
+.video-qr img {
+  @apply rounded bg-white p-2;
+  image-rendering: pixelated;
+}
+.video-qr-meta {
+  @apply flex min-w-0 flex-1 flex-col gap-2;
+}
+.video-qr-url {
+  @apply break-all font-mono text-xs;
+}
+.video-link-list {
+  @apply m-0 flex list-none flex-col gap-2 p-0;
+}
+.video-link-list li {
+  @apply flex flex-wrap items-center gap-2;
+}
+.video-link-label {
+  @apply font-semibold;
+}
+.video-grid {
+  @apply grid gap-3;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.video-card {
+  @apply flex cursor-pointer flex-col gap-1 rounded-lg border border-line bg-bg p-2;
+}
+.video-card.active {
+  @apply border-gold;
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+.video-card-name {
+  @apply truncate text-sm font-semibold;
+}
+.video-thumb {
+  @apply relative flex aspect-video items-center justify-center overflow-hidden rounded bg-black;
+}
+.video-thumb img {
+  @apply h-full w-full object-contain;
+}
+.video-duration {
+  @apply absolute bottom-1 right-1 rounded bg-black/70 px-1 font-mono text-xs text-white;
+}
+.video-badge {
+  @apply badge badge-secondary badge-xs;
+}
+.video-player {
+  @apply w-full rounded bg-black;
+  max-height: 60vh;
+}
+.video-tl-title {
+  @apply mr-2;
+}
+.video-segments {
+  @apply m-0 flex list-none flex-col gap-2 p-0;
+}
+.video-segments li {
+  @apply flex flex-wrap items-center gap-2 rounded border border-line bg-bg p-2;
+}
+.video-segments img,
+.video-seg-noimg {
+  @apply h-9 w-16 rounded bg-black object-cover;
+}
+.video-segments label {
+  @apply flex items-center gap-1 text-xs;
+}
+.video-segments input {
+  @apply w-20;
+}
+.video-seg-idx {
+  @apply w-5 text-center font-mono text-xs opacity-70;
+}
+.video-seg-name {
+  @apply min-w-0 flex-1 truncate text-sm;
+}
+.video-status {
+  @apply badge badge-sm;
+}
+.video-status-ready {
+  @apply badge-success;
+}
+.video-status-rendering {
+  @apply badge-info;
+}
+.video-status-failed {
+  @apply badge-error;
+}
+.video-status-stale {
+  @apply badge-warning;
+}
+.video-error {
+  @apply max-h-40 overflow-auto whitespace-pre-wrap rounded bg-bg p-2 text-xs text-danger;
+}
+.video-form-row select {
+  @apply w-auto;
+}
