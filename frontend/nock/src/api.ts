@@ -1115,3 +1115,69 @@ export const deadweightCheckpoints = {
       return (await res.json()) as DeadweightCheckpoint
     }),
 }
+
+// ---- Sounds + shareable filter chains (IDUNA internal/nock/sound_store.go,
+// handlers/nock_sounds.go). Founder real-time 2026-09-27: "we need a way to upload and record in
+// nock as well as pass filters around". Upload is a raw audio body with metadata in the query.
+
+export interface Sound {
+  id: number
+  name: string
+  mime_type: string
+  source: 'upload' | 'record' | 'render'
+  duration_ms: number
+  sample_rate: number
+  channels: number
+  size_bytes: number
+  content_hash: string
+  parent_id?: number
+  filter_id?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SoundFilter {
+  id: number
+  name: string
+  description: string
+  chain: import('./sound/chain.ts').Chain
+  created_at: string
+  updated_at: string
+}
+
+export interface SoundUploadMeta {
+  source: Sound['source']
+  duration_ms?: number
+  sample_rate?: number
+  channels?: number
+  parent_id?: number
+  filter_id?: number
+}
+
+export const sounds = {
+  list: () => req<Sound[]>('/sounds'),
+  audioUrl: (id: number) => `${API_BASE}/sounds/${id}/audio`,
+  rename: (id: number, name: string) => req<Sound>(`/sounds/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  delete: (id: number) => req<void>(`/sounds/${id}`, { method: 'DELETE' }),
+  upload: (name: string, blob: Blob, meta: SoundUploadMeta) => {
+    const q = new URLSearchParams({ name, source: meta.source })
+    for (const k of ['duration_ms', 'sample_rate', 'channels', 'parent_id', 'filter_id'] as const) {
+      const v = meta[k]
+      if (v !== undefined) q.set(k, String(Math.round(v)))
+    }
+    return req<Sound>(`/sounds?${q}`, { method: 'POST', body: blob, headers: { 'Content-Type': blob.type || 'audio/wav' } })
+  },
+}
+
+export const soundFilters = {
+  list: () => req<SoundFilter[]>('/sound-filters'),
+  create: (name: string, description: string, chain: SoundFilter['chain']) =>
+    req<SoundFilter>('/sound-filters', { method: 'POST', body: JSON.stringify({ name, description, chain }) }),
+  update: (id: number, patch: Partial<Pick<SoundFilter, 'name' | 'description' | 'chain'>>) =>
+    req<SoundFilter>(`/sound-filters/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  clone: (id: number, name: string) =>
+    req<SoundFilter>(`/sound-filters/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
+  delete: (id: number) => req<void>(`/sound-filters/${id}`, { method: 'DELETE' }),
+  /** The public, login-free URL an engine (SHANKPIT) fetches this chain from. */
+  publicUrl: (name: string) => `${window.location.origin}/api/v1/nock-sound-filters/${encodeURIComponent(name)}`,
+}

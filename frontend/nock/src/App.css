@@ -559,3 +559,92 @@ textarea {
 .active-badge {
   @apply text-sm text-gold;
 }
+
+/* ---- Sounds tab (2026-09-27) ---- */
+.sounds-grid {
+  @apply grid gap-4;
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 2fr) minmax(260px, 1.2fr);
+}
+@media (max-width: 1100px) {
+  .sounds-grid { grid-template-columns: 1fr; }
+}
+.sound-actions, .chain-toolbar {
+  @apply flex flex-wrap items-center gap-2;
+}
+.sound-list { @apply flex flex-col gap-1; }
+.sound-list li { @apply flex items-center gap-1 rounded border border-line px-1; }
+.sound-list li.active { @apply bg-panel; }
+.sound-list li > button:first-child { @apply flex-1 text-left; }
+.chain-stages { @apply my-2 flex flex-col gap-2; }
+.chain-stages li { @apply rounded border border-line p-2; }
+.chain-stages li.bypassed { @apply opacity-50; }
+.stage-head { @apply flex flex-wrap items-center gap-2; }
+.stage-fields { @apply mt-1 flex flex-wrap gap-2 text-xs; }
+.stage-fields label { @apply flex flex-col; }
+.stage-fields input { @apply w-24; }
+button.small { @apply px-1 py-0 text-xs; }
+.btn input[hidden] { display: none; }
+
+/* ---- Booth (2026-09-27): 4 decks + mixer + MPC ---- */
+.booth { @apply flex flex-col gap-3 p-2; }
+.booth-top { @apply grid gap-2; grid-template-columns: 1fr auto 1fr; }
+@media (max-width: 1300px) { .booth-top { grid-template-columns: 1fr; } }
+.deck-col { @apply grid gap-2; grid-template-columns: 1fr 1fr; }
+.deck { @apply flex flex-col gap-1 rounded-lg border border-line bg-panel p-2 text-xs; }
+.deck.playing { @apply border-gold; }
+.deck-head, .row { @apply flex flex-wrap items-center gap-1; }
+.deck-head { @apply justify-between; }
+.badge { @apply rounded bg-gold px-1 text-bg; }
+.deck-display { @apply rounded bg-bg p-1 font-mono; }
+.deck-progress { @apply h-2 rounded bg-line; }
+.deck-progress > div { @apply h-2 rounded bg-gold; }
+.deck-readout { @apply flex justify-between; }
+.deck-readout .bpm { @apply font-bold; }
+.phase { @apply relative h-1 bg-line; }
+.phase > div { @apply absolute top-0 h-1 w-1 bg-ink; }
+.deck-body { @apply flex items-center justify-between gap-2; }
+.jog {
+  @apply h-28 w-28 cursor-grab rounded-full border-4 border-line;
+  background: radial-gradient(circle, var(--color-panel) 30%, var(--color-bg) 31%, var(--color-line) 100%);
+  touch-action: none;
+}
+.jog:active { cursor: grabbing; }
+.tempo { @apply flex flex-col items-center gap-1; }
+input[type="range"].vertical { writing-mode: vertical-lr; direction: rtl; height: 7rem; }
+.hotcues button { @apply w-6 px-0; }
+.hotcues button.set, .deck button.active, .strip button.active, .mpc-controls button.active { @apply bg-gold text-bg; }
+.cue-btn { @apply font-bold; }
+.play-btn { @apply font-bold; }
+.row input[type="number"] { @apply w-16; }
+.toggles label { @apply flex items-center gap-1; }
+
+.mixer { @apply flex flex-col items-center gap-2 rounded-lg border border-line bg-panel p-2 text-xs; }
+.strips { @apply flex gap-2; }
+.strip { @apply flex flex-col items-center gap-1; }
+.strip-num { @apply font-bold; }
+.fader-row { @apply flex items-end gap-1; }
+.master-section { @apply flex flex-wrap items-center justify-center gap-2; }
+.xfader { @apply flex w-full items-center gap-2; }
+.xfader input { @apply flex-1; }
+.knob { @apply flex select-none flex-col items-center; font-size: 0.6rem; }
+.knob svg { touch-action: none; cursor: ns-resize; }
+.knob-body { fill: var(--color-bg); stroke: var(--color-line); stroke-width: 2; }
+.knob-mark { stroke: var(--color-gold); stroke-width: 3; stroke-linecap: round; }
+.meter { @apply flex flex-col gap-px; }
+.meter .led { @apply h-2 w-3 rounded-sm bg-line; }
+.meter .led.green { background: #22c55e; }
+.meter .led.amber { background: #f59e0b; }
+.meter .led.red { background: #ef4444; }
+
+.mpc { @apply flex flex-col gap-2 rounded-lg border border-line bg-panel p-2 text-xs; }
+.mpc-controls { @apply flex flex-wrap items-center gap-2; }
+.pads { @apply grid max-w-xl gap-2; grid-template-columns: repeat(4, 1fr); }
+.pad { @apply flex flex-col gap-1; }
+.pad-hit {
+  @apply flex h-20 flex-col items-start justify-between rounded-md border-2 border-line bg-bg p-1 text-left;
+  touch-action: none;
+}
+.pad.hit .pad-hit { @apply border-gold; box-shadow: 0 0 12px var(--color-gold); }
+.pad-num { @apply font-bold; }
+.pad-name { @apply truncate text-muted; max-width: 100%; }
+.pad kbd { @apply self-end text-muted; }

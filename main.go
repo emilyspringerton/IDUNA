@@ -719,6 +719,20 @@ func main() {
 	nockDoorScriptsPublicH := &handlers.NockDoorScriptsPublicHandler{Store: doorScriptStore}
 	mux.Handle("/api/v1/nock-door-scripts/", nockDoorScriptsPublicH)
 
+	// NOCK sound library + shareable filter chains (founder real-time, 2026-09-27: "nock and
+	// shankpit engine need sound engineering primatives we need a way to upload and record in
+	// nock as well as pass filters around"). Admin-gated authoring surface, plus a public
+	// read-only chain lookup by name for SHANKPIT (same posture as door scripts above). See
+	// internal/nock/sound_store.go and migrations/truestore/202609270001_nock_sounds.sql.
+	soundStore := &nock.SoundStore{DB: db}
+	nockSoundsH := &handlers.NockSoundsHandler{Store: soundStore}
+	nockSoundsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockSoundsH))
+	mux.Handle("/admin/nock/api/sounds", nockSoundsProtected)
+	mux.Handle("/admin/nock/api/sounds/", nockSoundsProtected)
+	mux.Handle("/admin/nock/api/sound-filters", nockSoundsProtected)
+	mux.Handle("/admin/nock/api/sound-filters/", nockSoundsProtected)
+	mux.Handle("/api/v1/nock-sound-filters/", &handlers.NockSoundFiltersPublicHandler{Store: soundStore})
+
 	// BRAWLPIT online level editor (S415-02/03, founder real-time: "get the brawlpit level
 	// editor online - web technologies - we already started building nock - can we finish
 	// building out some of that interface so we can kind of parlay it into an online brawlpit

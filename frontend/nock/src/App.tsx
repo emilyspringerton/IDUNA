@@ -9,6 +9,8 @@ import DeadweightAiOpponents from './DeadweightAiOpponents'
 import ShankpitMaterials from './ShankpitMaterials'
 import ShankpitWidgets from './ShankpitWidgets'
 import Sprays from './Sprays'
+import Sounds from './Sounds'
+import Booth from './Booth'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -1257,8 +1259,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'code'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'code']
+type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'sounds' | 'booth' | 'code'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'sounds', 'booth', 'code']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1379,6 +1381,12 @@ export default function App() {
           <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
             Sprays
           </button>
+          <button className={tab === 'sounds' ? 'active' : ''} onClick={() => setTab('sounds')}>
+            Sounds
+          </button>
+          <button className={tab === 'booth' ? 'active' : ''} onClick={() => setTab('booth')}>
+            Booth
+          </button>
           <button className={tab === 'code' ? 'active' : ''} onClick={() => setTab('code')}>
             Code
           </button>
@@ -1421,6 +1429,10 @@ export default function App() {
         <ShankpitWidgets />
       ) : tab === 'sprays' ? (
         <Sprays />
+      ) : tab === 'sounds' ? (
+        <Sounds />
+      ) : tab === 'booth' ? (
+        <Booth />
       ) : tab === 'code' ? (
         <div className="layout-single">
           {/* A plain link, not an iframe: VS Code's own UI (menus, the command palette,
