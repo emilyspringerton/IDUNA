@@ -83,7 +83,7 @@ resource "cloudflare_dns_record" "mixforge" {
   content = var.server_ipv4
   ttl     = 300
   proxied = false
-  comment = "MIXFORGE DJ-room demo (mixforge.okemily.com) -- managed by Terraform, see IDUNA/ops/terraform/main.tf"
+  comment = "MIXFORGE DJ-room demo -- managed by Terraform, see IDUNA/ops/terraform/main.tf"
 }
 
 output "mixforge_fqdn" {
