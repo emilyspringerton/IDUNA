@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-27
+- Deployed NOCK keyframe animator + rig remapping to the live service (was committed but not yet built/restarted); rebuilt binary, verified new frontend bundle embedded, restarted iduna.service (sess-20260923-1030-4a526255)
 - Merged abandoned busy-newton SHANKPIT leaderboard branch; deduped against an independently-built competing handler that would have double-registered the same route (sess-20260923-1030-4a526255)
 - NOCK: keyframe **animator** + **rig remapping** primitives. Founder real-time: "continue to evolve NOCK tools into a total blender replacement we need a way to animate in NOCK also we need the primatives for remapping a mesh onto a new rig".
   - Go core, `internal/nock`: `rig.go` decodes and encodes .gskel/.gmesh/.gband and carries the quaternion/matrix kit. `rig_bonemap.go` builds the automatic bone map (exact or normalised name, canonical body part across Mixamo/Unreal/Rigify/Biped, then chain order for spines and fingers, plus overrides). `rig_remap.go` re-skins a mesh onto a new rig (names with ancestor fold-in, proximity envelope weights, or auto; optional size fit). `rig_retarget.go` does world-space clip retargeting that tolerates differing bone axes and armature frames, with root motion scaled to height. `keyframes.go` bakes a KeyframeDoc (linear/smooth/step) and derives keys from a baked clip. `anim_rig.go` has the store operations.
