@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-27
+- Add mixforge.okemily.com Cloudflare DNS record (terraform), companion to MIXFORGE's own nginx vhost + systemd deploy (sess-20260923-1030-4a526255)
 - Deployed NOCK keyframe animator + rig remapping to the live service (was committed but not yet built/restarted); rebuilt binary, verified new frontend bundle embedded, restarted iduna.service (sess-20260923-1030-4a526255)
 - Merged abandoned busy-newton SHANKPIT leaderboard branch; deduped against an independently-built competing handler that would have double-registered the same route (sess-20260923-1030-4a526255)
 - NOCK: keyframe **animator** + **rig remapping** primitives. Founder real-time: "continue to evolve NOCK tools into a total blender replacement we need a way to animate in NOCK also we need the primatives for remapping a mesh onto a new rig".
