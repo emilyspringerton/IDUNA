@@ -221,6 +221,7 @@ Migrations live in `migrations/truestore/` named `YYYYMMDDNNNN_description.sql`.
 | `GET` | `/q/:slug.png` | none | The live-rendered QR image itself, embeddable/printable with no admin session |
 | `GET` | `/play/big_o` \| `/play/brawlpit` | none | Public account-creation pages — create/resume a guest account via `/api/v1/games/{game}/guest-*`, no native client required for either game yet |
 | `POST` | `/api/v1/games/{game}/guest-register` \| `guest-login` \| `guest-upgrade` | none / player JWT | Generic per-game guest-account flow (`internal/games.Registry`) — DEADWEIGHT, BIG_O, and BRAWLPIT all ride this same code path |
+| `POST` | `/admin/nock/api/shankpit-widgets/import-gltf` | cookie (iduna.admin) | NOCK glTF → SHANKPIT widget bridge: multipart `file` (.glb / embedded .gltf, same input as the Animations tab importer), `name`, optional `scale`, `preview=1` to convert without saving. One axis-aligned box wall per mesh node (world-space bounds, full node hierarchy transforms, `baseColorFactor` color); nodes named `door*` become scriptless doors. Exact for cube blockouts, lossy for rotated/detailed meshes (bounding box only). Unit-tested; not yet tried against a real Blender export. Also a button in NOCK's Widgets tab. |
 
 ---
 

@@ -265,6 +265,9 @@ export default function ShankpitWidgets() {
   const [dirty, setDirty] = useState(false)
   const [newName, setNewName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [gltfFile, setGltfFile] = useState<File | null>(null)
+  const [gltfScale, setGltfScale] = useState('1')
+  const [importing, setImporting] = useState(false)
 
   const load = async (id: number) => {
     setError(null)
@@ -296,6 +299,30 @@ export default function ShankpitWidgets() {
       await load(w.id)
     } catch (err) {
       setError(String(err))
+    }
+  }
+
+  // Import a Blender .glb/.gltf as a new widget: one cube per mesh node, "door*" nodes become
+  // doors (assign their script in the inspector afterwards). Name defaults to the file's stem.
+  const importGltf = async () => {
+    if (!gltfFile) return
+    const scale = Number(gltfScale)
+    if (!(scale > 0)) {
+      setError('scale must be a positive number')
+      return
+    }
+    setError(null)
+    setImporting(true)
+    try {
+      const w = await shankpitWidgets.importGltf(gltfFile, newName || gltfFile.name.replace(/\.(glb|gltf)$/i, ''), scale)
+      setNewName('')
+      setGltfFile(null)
+      refresh()
+      await load(w.id)
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -372,6 +399,19 @@ export default function ShankpitWidgets() {
         <button type="button" onClick={createWidget} disabled={!newName}>
           + New widget
         </button>
+        <h3>Import from glTF</h3>
+        <p className="hint">
+          A Blender .glb (or embedded .gltf) blockout: each mesh object becomes one cube sized to its bounds (rotated
+          objects become their bounding box). Objects named "door..." become doors. Uses the name above, or the file name.
+        </p>
+        <input type="file" accept=".glb,.gltf" onChange={(e) => setGltfFile(e.target.files?.[0] ?? null)} />
+        <label className="hint">
+          scale <input type="number" step="any" min="0" value={gltfScale} onChange={(e) => setGltfScale(e.target.value)} style={{ width: '5em' }} />
+        </label>
+        <button type="button" onClick={importGltf} disabled={!gltfFile || importing}>
+          {importing ? 'Importing...' : 'Import glTF as widget'}
+        </button>
+        {error && activeId === null && <span className="error">{error}</span>}
       </aside>
 
       <main>

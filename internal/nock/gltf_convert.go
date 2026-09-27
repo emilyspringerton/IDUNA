@@ -116,6 +116,9 @@ const (
 type loadedGLTF struct {
 	doc     gltfDoc
 	buffers [][]byte
+	// rawJSON is the document's own JSON text, kept so a second, narrower reader (gltf_widget.go's
+	// scene-graph/material view) can decode fields gltfDoc deliberately doesn't carry.
+	rawJSON []byte
 }
 
 // loadGLTFBytes accepts EITHER a real .glb (binary container, magic-detected) or a plain .gltf
@@ -160,7 +163,7 @@ func loadGLTFBytes(raw []byte) (*loadedGLTF, error) {
 			return nil, fmt.Errorf("buffer %d is %d bytes, expected at least %d", i, len(buffers[i]), b.ByteLength)
 		}
 	}
-	return &loadedGLTF{doc: doc, buffers: buffers}, nil
+	return &loadedGLTF{doc: doc, buffers: buffers, rawJSON: jsonBytes}, nil
 }
 
 func indexByte(s string, c byte) int {

@@ -9,10 +9,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"iduna/internal/nock"
 	"iduna/internal/shankpit"
 )
 
@@ -39,6 +41,8 @@ func (h *ShankpitWidgetsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		h.list(w, r)
 	case len(parts) == 0 && r.Method == http.MethodPost:
 		h.create(w, r)
+	case len(parts) == 1 && parts[0] == "import-gltf" && r.Method == http.MethodPost:
+		h.importGLTF(w, r)
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		h.get(w, r, parts[0])
 	case len(parts) == 1 && r.Method == http.MethodPut:
@@ -132,4 +136,78 @@ func (h *ShankpitWidgetsHandler) delete(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// widgetDefaultFriction matches the NOCK widget editor's own new-wall default (ShankpitWidgets.tsx).
+const widgetDefaultFriction = 0.3
+
+// WidgetFromGLTFBoxes turns nock.GLTFToWidgetBoxes output into real Widget walls/doors: wall ids
+// 1..n in scene order, and one scriptless door (script_id 0) per box flagged IsDoor.
+func WidgetFromGLTFBoxes(boxes []nock.WidgetBox) ([]shankpit.Wall, []shankpit.Door) {
+	walls := make([]shankpit.Wall, 0, len(boxes))
+	doors := []shankpit.Door{}
+	for i, b := range boxes {
+		id := i + 1
+		walls = append(walls, shankpit.Wall{
+			ID: id, X: b.CX, Y: b.CY, Z: b.CZ, SX: b.SX, SY: b.SY, SZ: b.SZ,
+			R: b.R, G: b.G, B: b.B, Friction: widgetDefaultFriction, Name: b.Name,
+		})
+		if b.IsDoor {
+			doors = append(doors, shankpit.Door{ID: len(doors) + 1, WallID: id})
+		}
+	}
+	return walls, doors
+}
+
+// importGLTF is the NOCK glTF importer -> SHANKPIT Widget bridge (founder real-time, 2026-09-27:
+// "we need a way to go from nock tools gltf importer into the shankpit widgets"). Multipart form:
+// `file` (a .glb or embedded-buffer .gltf -- the same input the Animations tab's own import-gltf
+// accepts), `name` (the new widget's name), optional `scale` (uniform multiplier, default 1).
+// `preview=1` (form or query) returns the converted {walls, doors} without saving anything, so
+// the UI can show the result before committing it. See internal/nock/gltf_widget.go for the
+// mesh-node -> AABB mapping and its honest limits.
+func (h *ShankpitWidgetsHandler) importGLTF(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid multipart form: %v", err))
+		return
+	}
+	scale := 1.0
+	if v := r.FormValue("scale"); v != "" {
+		parsed, err := strconv.ParseFloat(v, 64)
+		if err != nil || parsed <= 0 {
+			mmoWriteError(w, http.StatusBadRequest, "scale must be a positive number")
+			return
+		}
+		scale = parsed
+	}
+	fileData, err := readFormFile(r, "file")
+	if err != nil || len(fileData) == 0 {
+		mmoWriteError(w, http.StatusBadRequest, "missing file field (drop a .glb or .gltf file)")
+		return
+	}
+	boxes, err := nock.GLTFToWidgetBoxes(fileData, scale)
+	if err != nil {
+		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("glTF to widget conversion failed: %v", err))
+		return
+	}
+	walls, doors := WidgetFromGLTFBoxes(boxes)
+	if len(walls) > shankpit.MaxWalls {
+		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("this file has %d mesh nodes; a widget holds at most %d walls (one per mesh node) -- join or delete meshes in Blender and re-export", len(walls), shankpit.MaxWalls))
+		return
+	}
+	if len(doors) > shankpit.MaxDoors {
+		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("this file has %d door* nodes; a widget holds at most %d doors", len(doors), shankpit.MaxDoors))
+		return
+	}
+	if r.FormValue("preview") == "1" {
+		writeJSON(w, http.StatusOK, map[string]any{"walls": walls, "doors": doors})
+		return
+	}
+	widget, err := h.Store.CreateWidget(r.Context(), r.FormValue("name"), walls, doors)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, widget)
 }
