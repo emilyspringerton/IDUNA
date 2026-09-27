@@ -940,6 +940,60 @@ func TestCreateLevel_AcceptsWanderingBotRole(t *testing.T) {
 	}
 }
 
+// TestCreateLevel_RejectsUnknownCharacterKit (S492, founder real-time: "i can place a character
+// and choose a role but i have no control over what that is as the designer") -- validateCharacters
+// catches a kit outside the real AIKit range at save time, same discipline Role's own test above
+// established.
+func TestCreateLevel_RejectsUnknownCharacterKit(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil,
+		[]shankpit.Character{{ID: 1, Role: shankpit.AIRoleGuard, Kit: 6, X: 0, Y: 0, Z: 0}}, nil, nil); err == nil {
+		t.Fatal("expected an error for an unknown character kit")
+	}
+	if _, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil,
+		[]shankpit.Character{{ID: 1, Role: shankpit.AIRoleGuard, Kit: -1, X: 0, Y: 0, Z: 0}}, nil, nil); err == nil {
+		t.Fatal("expected an error for a negative character kit")
+	}
+}
+
+// TestCreateLevel_AcceptsExplicitKit (S492) -- the real, previously-missing designer control: an
+// author-chosen AIKit round-trips through export unchanged, same convention
+// TestCreateLevel_AcceptsWanderingBotRole already established for Role.
+func TestCreateLevel_AcceptsExplicitKit(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateLevel(context.Background(), "Kit Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil,
+		[]shankpit.Character{{ID: 1, Role: shankpit.AIRoleWanderingBot, Kit: shankpit.AIKitGeorge, X: 5, Y: 0, Z: 5}}, nil, nil)
+	if err != nil {
+		t.Fatalf("expected AIKitGeorge (5) to be accepted, got: %v", err)
+	}
+	exported, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(exported.Characters) != 1 || exported.Characters[0].Kit != shankpit.AIKitGeorge {
+		t.Fatalf("expected the authored kit to round-trip through export, got %+v", exported.Characters)
+	}
+}
+
+// TestCreateLevel_DefaultKitIsAuto verifies a character saved without ever setting Kit (every
+// pre-S492 caller, and the Go zero value) decodes to AIKitAuto, preserving SHANKPIT's existing
+// round-robin/witness_ai behavior for every character authored before this field existed.
+func TestCreateLevel_DefaultKitIsAuto(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil,
+		[]shankpit.Character{{ID: 1, Role: shankpit.AIRoleGuard, X: 0, Y: 0, Z: 0}}, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	exported, err := s.Export(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(exported.Characters) != 1 || exported.Characters[0].Kit != shankpit.AIKitAuto {
+		t.Fatalf("expected the default kit to be AIKitAuto (0), got %+v", exported.Characters)
+	}
+}
+
 // TestCreateLevel_RejectsTooManyCharacters verifies the real MaxCharacters bound, mirroring
 // SHANKPIT's own native STORY_AI_MAX cap.
 func TestCreateLevel_RejectsTooManyCharacters(t *testing.T) {
@@ -959,7 +1013,7 @@ func TestCreateLevel_RejectsTooManyCharacters(t *testing.T) {
 func TestExport_CharactersRoundTripWithNoIDTranslation(t *testing.T) {
 	s := newTestStore(t)
 	created, err := s.CreateLevel(context.Background(), "Test Level", 100, 50, 100, true, 2, nil, nil, nil, nil, nil,
-		[]shankpit.Character{{ID: 42, Role: shankpit.AIRoleTerritorialBeast, X: 10, Y: 8, Z: -10}}, nil, nil)
+		[]shankpit.Character{{ID: 42, Role: shankpit.AIRoleTerritorialBeast, Kit: shankpit.AIKitLeela, X: 10, Y: 8, Z: -10}}, nil, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -971,8 +1025,8 @@ func TestExport_CharactersRoundTripWithNoIDTranslation(t *testing.T) {
 		t.Fatalf("expected 1 exported character, got %d: %+v", len(doc.Characters), doc.Characters)
 	}
 	got := doc.Characters[0]
-	if got.Role != shankpit.AIRoleTerritorialBeast || got.X != 10 || got.Y != 8 || got.Z != -10 {
-		t.Fatalf("expected role/x/y/z to round-trip unchanged, got %+v", got)
+	if got.Role != shankpit.AIRoleTerritorialBeast || got.Kit != shankpit.AIKitLeela || got.X != 10 || got.Y != 8 || got.Z != -10 {
+		t.Fatalf("expected role/kit/x/y/z to round-trip unchanged, got %+v", got)
 	}
 }
 

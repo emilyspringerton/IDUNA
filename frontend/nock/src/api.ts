@@ -676,6 +676,11 @@ export interface ShankpitNavNode {
 export interface ShankpitCharacter {
   id: number
   role: number
+  // kit (S492, founder real-time: "i have no control over what that is as the designer") -- which
+  // of the 5 real robot models this character renders as, decoupled from role (behavior). See
+  // KIT_OPTIONS below; 0 = auto (SHANKPIT's existing connection-order round-robin/witness_ai pick,
+  // unchanged for every character that doesn't opt in).
+  kit: number
   x: number
   y: number
   z: number
@@ -723,6 +728,19 @@ export const AI_ROLE_OPTIONS: { value: number; label: string }[] = [
   // enters combat -- but was never actually exposed in this dropdown, so no NOCK designer could
   // ever select it. Purely additive; the native value (10) was always real, just unreachable.
   { value: 10, label: 'Wandering Bot (ambient, non-hostile)' },
+]
+
+// KIT_OPTIONS -- real AIKit values (S492), hand-kept in sync with SHANKPIT's own AIKit enum
+// (packages/simulation/story_ai.h), IDUNA's own Go mirror (internal/shankpit.AIKit* constants),
+// and apps/lobby/src/main.c's own kits[5] array order -- same established cross-boundary
+// convention AI_ROLE_OPTIONS above uses. "Auto" preserves the pre-S492 look exactly.
+export const KIT_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: 'Auto (round-robin, current behavior)' },
+  { value: 1, label: 'Mannequin' },
+  { value: 2, label: 'Stan' },
+  { value: 3, label: 'Mike' },
+  { value: 4, label: 'Leela' },
+  { value: 5, label: 'George' },
 ]
 
 export interface ShankpitLevel {

@@ -211,11 +211,20 @@ func validateNavNodes(nodes []NavNode) error {
 // cross-reference to validate at all -- the simplest of the four scriptable object kinds shipped
 // so far.
 type Character struct {
-	ID   int     `json:"id"`
-	Role int     `json:"role"`
-	X    float64 `json:"x"`
-	Y    float64 `json:"y"`
-	Z    float64 `json:"z"`
+	ID int `json:"id"`
+	Role int `json:"role"`
+	// Kit (S492, founder real-time: "i have no control over what that is as the designer") --
+	// which of the 5 real robot models (packages/goldenband glTF kits) this character renders
+	// as, completely decoupled from Role (behavior). AIKitAuto (the Go zero value, so every
+	// pre-S492 character with no "kit" key in its stored JSON decodes to this unchanged) keeps
+	// SHANKPIT's existing connection-order round-robin / witness_ai role-based pick exactly as
+	// it was. Kept in sync BY HAND with SHANKPIT's own AIKit enum (packages/simulation/
+	// story_ai.h) and PlayerState.forced_kit's wire encoding -- same established cross-language
+	// convention Role's own AIRole values already use.
+	Kit int     `json:"kit"`
+	X   float64 `json:"x"`
+	Y   float64 `json:"y"`
+	Z   float64 `json:"z"`
 }
 
 // MaxCharacters mirrors SHANKPIT's own real STORY_AI_MAX (packages/simulation/story_ai.h).
@@ -243,6 +252,18 @@ const (
 	AIRoleWanderingBot = 10
 )
 
+// Real AIKit values (S492), hand-kept in sync with SHANKPIT's own AIKit enum
+// (packages/simulation/story_ai.h) and apps/lobby/src/main.c's own kits[5] array order -- same
+// established convention AIRole's own const block above uses.
+const (
+	AIKitAuto      = 0 // no author choice -- SHANKPIT's existing round-robin/witness_ai pick
+	AIKitMannequin = 1
+	AIKitStan      = 2
+	AIKitMike      = 3
+	AIKitLeela     = 4
+	AIKitGeorge    = 5
+)
+
 // validateCharacters checks structural bounds and that every character's own role is a real,
 // known AIRole value -- an unknown role is rejected at save time here rather than silently
 // skipped later at spawn time (SHANKPIT's own server_apply_custom_level does its own defensive
@@ -256,6 +277,9 @@ func validateCharacters(characters []Character) error {
 	for i, c := range characters {
 		if c.Role < AIRoleRiftHound || c.Role > AIRoleWanderingBot {
 			return fmt.Errorf("shankpit: character %d has unknown role %d", i, c.Role)
+		}
+		if c.Kit < AIKitAuto || c.Kit > AIKitGeorge {
+			return fmt.Errorf("shankpit: character %d has unknown kit %d", i, c.Kit)
 		}
 	}
 	return nil
@@ -526,6 +550,7 @@ type NavNodeExport struct {
 // character has no cross-reference to translate, it's exported as authored.
 type CharacterExport struct {
 	Role int     `json:"role"`
+	Kit  int     `json:"kit"`
 	X    float64 `json:"x"`
 	Y    float64 `json:"y"`
 	Z    float64 `json:"z"`
@@ -1396,7 +1421,7 @@ func navNodesForExport(nodes []NavNode) []NavNodeExport {
 func charactersForExport(characters []Character) []CharacterExport {
 	out := make([]CharacterExport, 0, len(characters))
 	for _, c := range characters {
-		out = append(out, CharacterExport{Role: c.Role, X: c.X, Y: c.Y, Z: c.Z})
+		out = append(out, CharacterExport{Role: c.Role, Kit: c.Kit, X: c.X, Y: c.Y, Z: c.Z})
 	}
 	return out
 }

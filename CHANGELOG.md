@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-09-27
+- NOCK: Characters can now author which of the 5 robot kits (Mannequin/Stan/Mike/Leela/George) they render as -- S492's own real "deeper gap," closed. New `Character.Kit`/`CharacterExport.Kit` (`internal/shankpit`), `AIKit*` consts, `validateCharacters` range check (0-5, same "caught immediately" discipline Role already has), and a new "Kit (visual model)" dropdown next to Role in `ShankpitLevelEditor.tsx`'s `CharacterInspector` (`KIT_OPTIONS`, api.ts). Stored as part of the same JSON blob Character already lives in, no migration needed; every pre-existing character decodes to `AIKitAuto` (Go zero value), unchanged. `go test ./...` clean (4 new tests); `tsc -b && vite build` clean, verified the new option labels landed in the rebuilt `dist/` bundle. SHANKPIT companion commit (`d567232`) wires the authored value all the way to the client render. Founder real-time: "i don't see the robots tools in IDUNA" (sess-20260923-1030-4a526255)
 - Add mixforge.okemily.com Cloudflare DNS record (terraform), companion to MIXFORGE's own nginx vhost + systemd deploy (sess-20260923-1030-4a526255)
 - Deployed NOCK keyframe animator + rig remapping to the live service (was committed but not yet built/restarted); rebuilt binary, verified new frontend bundle embedded, restarted iduna.service (sess-20260923-1030-4a526255)
 - Merged abandoned busy-newton SHANKPIT leaderboard branch; deduped against an independently-built competing handler that would have double-registered the same route (sess-20260923-1030-4a526255)

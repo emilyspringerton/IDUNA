@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import {
   AI_ROLE_OPTIONS,
+  KIT_OPTIONS,
   SHANKPIT_GRID_CELL_SIZE,
   SPAWNER_TEAM_BLUE,
   SPAWNER_TEAM_FFA,
@@ -1580,6 +1581,16 @@ function CharacterInspector({
         </select>
       </label>
       <label>
+        Kit (visual model){' '}
+        <select value={character.kit} onChange={(e) => onChange({ ...character, kit: Number(e.target.value) })}>
+          {KIT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
         X <input type="number" step={0.5} value={character.x} onChange={(e) => onChange({ ...character, x: num(e.target.value) })} />
       </label>
       <label>
@@ -2033,7 +2044,7 @@ export default function ShankpitLevelEditor() {
   const addCharacter = () => {
     pushHistory()
     const id = nextCharacterId(draft.characters)
-    setCharacters([...draft.characters, { id, role: AI_ROLE_OPTIONS[0].value, x: spawner.x, y: spawner.y, z: spawner.z }])
+    setCharacters([...draft.characters, { id, role: AI_ROLE_OPTIONS[0].value, kit: KIT_OPTIONS[0].value, x: spawner.x, y: spawner.y, z: spawner.z }])
   }
 
   const updateCharacter = (updated: ShankpitCharacter) => {
@@ -2537,10 +2548,10 @@ export default function ShankpitLevelEditor() {
               <h3>Characters (story_ai NPCs)</h3>
               <p className="hint">
                 Spawn on the dedicated server in any mode (S480) -- Role picks the AI's real combat/behavior
-                brain only, not its visual model; every character currently renders as one of 5 fixed robot
-                kits, cycled by connection order, not author-chosen (a real, named gap -- see
-                docs2/specs/STORY_SYSTEM_NORTHSTAR.md). Position edited numerically, same v0 scope as
-                Objects/Waypoints above; shown in the 3D view as a magenta capsule.
+                brain, Kit picks which of the 5 real robot models it renders as (S492 -- "Auto" keeps the
+                prior connection-order round-robin/witness_ai-role look for characters that don't opt in).
+                Position edited numerically, same v0 scope as Objects/Waypoints above; shown in the 3D view
+                as a magenta capsule.
               </p>
               <button type="button" onClick={addCharacter}>
                 + Add character
