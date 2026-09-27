@@ -1149,6 +1149,16 @@ func main() {
 	logsH := &handlers.LogsHandler{Store: unifiedLog, HECToken: getenv("IDUNA_HEC_TOKEN", "")}
 	handlers.RegisterLogsRoutes(mux, logsH, keys)
 
+	// MIXFORGE cookie-upload receiver (2026-09-27) -- see internal/http/handlers/
+	// mixforge_cookies.go's own header comment for the full real rationale (a real Chrome
+	// extension, not a VS Code extension or a Chromium fork). Empty token disables it, same
+	// fail-closed default as the HEC token above.
+	mixforgeCookiesH := &handlers.MixforgeCookiesHandler{
+		Token:    getenv("MIXFORGE_COOKIE_UPLOAD_TOKEN", ""),
+		FilePath: getenv("MIXFORGE_COOKIES_FILE_PATH", filepath.Join(idunaRootForLog, "..", "MIXFORGE", "var", "ytdlp-cookies.txt")),
+	}
+	mux.Handle("/api/v1/mixforge/cookies", http.HandlerFunc(mixforgeCookiesH.Handle))
+
 	// S226-02/S226-03: wire real auth + admin events into the unified log now that unifiedLog
 	// exists (same real "construct early, wire the field once its own dependency exists" pattern
 	// portalH.Proj below already uses). All of these were already constructed above and
