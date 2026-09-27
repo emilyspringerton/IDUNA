@@ -1251,6 +1251,42 @@ export interface VideoTimeline {
   updated_at: string
 }
 
+// ---- Robot registry (GOLDEN BAND datasheet robot rigs, 2026-09-27) ----
+// See IDUNA internal/nock/robot_store.go and GOLDENBAND format/GROBOT_FORMAT.md.
+
+export interface RobotJoint {
+  name: string
+  child_link: string
+  parent: number
+  continuous: boolean
+  origin_xyz: [number, number, number]
+  axis: [number, number, number]
+  lower: number
+  upper: number
+  velocity: number // rad/s, datasheet max joint speed
+  effort: number // N*m, datasheet max joint torque
+  damping: number
+  mass: number // kg, child link
+  com: [number, number, number]
+  principal_moments: [number, number, number]
+}
+
+export interface Robot {
+  id: number
+  name: string
+  manufacturer: string
+  model: string
+  joint_count: number
+  moving_mass_kg: number
+  spec_hash: string
+  spec_json?: string
+  has_skel: boolean
+  rig?: { name: string; tcp_joint: number; spec_hash: string; joints: RobotJoint[] }
+  source_location?: string
+  created_at: string
+  updated_at: string
+}
+
 // ---- Sounds + shareable filter chains (IDUNA internal/nock/sound_store.go,
 // handlers/nock_sounds.go). Founder real-time 2026-09-27: "we need a way to upload and record in
 // nock as well as pass filters around". Upload is a raw audio body with metadata in the query.
@@ -1388,4 +1424,38 @@ export const soundFilters = {
   delete: (id: number) => req<void>(`/sound-filters/${id}`, { method: 'DELETE' }),
   /** The public, login-free URL an engine (SHANKPIT) fetches this chain from. */
   publicUrl: (name: string) => `${window.location.origin}/api/v1/nock-sound-filters/${encodeURIComponent(name)}`,
+}
+
+export interface RobotSyncReport {
+  dir: string
+  revision?: string
+  items: { name: string; action: 'created' | 'updated' | 'unchanged' | 'skipped' | 'error'; detail?: string }[]
+  not_in_git?: string[]
+}
+
+const ROBOTS_BASE = '/admin/nock/api/robots'
+
+async function robreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${ROBOTS_BASE}${path}`, { credentials: 'include', ...opts })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  return (await res.json()) as T
+}
+
+export const robots = {
+  list: () => robreq<Robot[]>(''),
+  get: (id: number) => robreq<Robot>(`/${id}`),
+  upload: (spec: File, grobot: File, gskel: File | null) => {
+    const fd = new FormData()
+    fd.append('spec', spec)
+    fd.append('grobot', grobot)
+    if (gskel) fd.append('gskel', gskel)
+    fd.append('source_location', 'NOCK upload')
+    return robreq<Robot>('', { method: 'POST', body: fd })
+  },
+  delete: (id: number) => robreq<{ deleted: number }>(`/${id}`, { method: 'DELETE' }),
+  syncFromGit: () => robreq<RobotSyncReport>('/sync', { method: 'POST' }),
+  downloadUrl: (id: number, kind: 'spec' | 'grobot' | 'gskel') => `${ROBOTS_BASE}/${id}/${kind}`,
 }

@@ -14,6 +14,7 @@ import Sprays from './Sprays'
 import VideoEditor from './VideoEditor'
 import Sounds from './Sounds'
 import Booth from './Booth'
+import Robots from './Robots'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -1274,8 +1275,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'video' | 'sounds' | 'booth' | 'code'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'video', 'sounds', 'booth', 'code']
+type Tab = 'projects' | 'textures' | 'animations' | 'robots' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'video' | 'sounds' | 'booth' | 'code'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'robots', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'video', 'sounds', 'booth', 'code']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1366,6 +1367,9 @@ export default function App() {
           <button className={tab === 'animations' ? 'active' : ''} onClick={() => setTab('animations')}>
             Animations
           </button>
+          <button className={tab === 'robots' ? 'active' : ''} onClick={() => setTab('robots')}>
+            Robots
+          </button>
           <button className={tab === 'door-scripts' ? 'active' : ''} onClick={() => setTab('door-scripts')}>
             Door Scripts
           </button>
@@ -1419,6 +1423,8 @@ export default function App() {
         <div className="layout-single">
           <Animations />
         </div>
+      ) : tab === 'robots' ? (
+        <Robots />
       ) : tab === 'door-scripts' ? (
         <div className="layout-single">
           <DoorScripts />

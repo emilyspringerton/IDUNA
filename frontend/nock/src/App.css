@@ -911,3 +911,8 @@ input[type="range"].vertical { writing-mode: vertical-lr; direction: rtl; height
 .pad-num { @apply font-bold; }
 .pad-name { @apply truncate text-muted; max-width: 100%; }
 .pad kbd { @apply self-end text-muted; }
+
+/* Robots tab (2026-09-27) */
+.robot-table { border-collapse: collapse; margin: 0.75rem 0; }
+.robot-table th, .robot-table td { padding: 0.3rem 0.9rem; text-align: left; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.robot-table tr.active td { background: rgba(127, 127, 127, 0.12); }

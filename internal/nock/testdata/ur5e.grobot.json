@@ -1,0 +1,374 @@
+{
+  "grobot_version": 1,
+  "name": "ur5e",
+  "manufacturer": "Universal Robots",
+  "model": "UR5e",
+  "sources": [
+    {
+      "id": "ur-ros2-description",
+      "title": "Universal Robots, Universal_Robots_ROS2_Description, config/ur5e/{default_kinematics,physical_parameters,joint_limits}.yaml",
+      "url": "https://github.com/UniversalRobots/Universal_Robots_ROS2_Description/tree/89bbe795f38a7ab00fb66fe8831dfff79dc99edf/config/ur5e",
+      "commit": "89bbe795f38a7ab00fb66fe8831dfff79dc99edf",
+      "retrieved": "2026-09-27",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "id": "ur-user-manual",
+      "title": "Universal Robots e-Series User Manual (joint position/velocity limits; cited by UR's joint_limits.yaml)",
+      "url": "https://s3-eu-west-1.amazonaws.com/ur-support-site/69091/99404_UR5e_User_Manual_en_Global.pdf"
+    },
+    {
+      "id": "ur-max-joint-torques",
+      "title": "Universal Robots support article \"Max. joint torques\" (joint effort limits; cited by UR's joint_limits.yaml)",
+      "url": "https://www.universal-robots.com/articles/ur-articles/max-joint-torques"
+    }
+  ],
+  "notes": [
+    "Masses, centers of mass, inertia tensors and joint frames are Universal Robots' own published values (their calibrated nominal kinematics, not a per-robot calibration).",
+    "base_link_inertia is the fixed base; its mass is recorded for completeness but never simulated (UR's own file flags it: 'This mass might be incorrect').",
+    "Joint damping/friction and acceleration limits are not publicly available from the manufacturer; damping is 0 and acceleration is unconstrained here."
+  ],
+  "base_link": "base_link_inertia",
+  "links": [
+    {
+      "name": "base_link_inertia",
+      "mass": 4,
+      "com": [
+        0,
+        0,
+        0
+      ],
+      "inertia_rpy": [
+        0,
+        0,
+        0
+      ],
+      "inertia": {
+        "ixx": 1,
+        "ixy": 0,
+        "ixz": 0,
+        "iyy": 1,
+        "iyz": 0,
+        "izz": 1
+      },
+      "source": "ur-ros2-description",
+      "note": "fixed to the world, never simulated; UR's own file flags this mass as possibly incorrect; inertia is a unit placeholder (UR publishes none for the base)"
+    },
+    {
+      "name": "shoulder_link",
+      "mass": 3.761,
+      "com": [
+        0,
+        -0.00193,
+        -0.02561
+      ],
+      "inertia_rpy": [
+        1.570796326794897,
+        0,
+        0
+      ],
+      "inertia": {
+        "ixx": 0.0070021,
+        "ixy": 7.3e-7,
+        "ixz": -0.00001053,
+        "iyy": 0.00648091,
+        "iyz": 0.00049994,
+        "izz": 0.00657286
+      },
+      "source": "ur-ros2-description"
+    },
+    {
+      "name": "upper_arm_link",
+      "mass": 8.058,
+      "com": [
+        -0.2125,
+        0,
+        0.11336
+      ],
+      "inertia_rpy": [
+        0,
+        0,
+        0
+      ],
+      "inertia": {
+        "ixx": 0.01505885,
+        "ixy": -0.000054,
+        "ixz": 0.00000563,
+        "iyy": 0.33388086,
+        "iyz": -0.00000181,
+        "izz": 0.33247207
+      },
+      "source": "ur-ros2-description"
+    },
+    {
+      "name": "forearm_link",
+      "mass": 2.846,
+      "com": [
+        -0.2422,
+        0,
+        0.0265
+      ],
+      "inertia_rpy": [
+        0,
+        0,
+        0
+      ],
+      "inertia": {
+        "ixx": 0.00399632,
+        "ixy": -0.00001365,
+        "ixz": 0.00137272,
+        "iyy": 0.07879254,
+        "iyz": -0.0000066,
+        "izz": 0.0784851
+      },
+      "source": "ur-ros2-description"
+    },
+    {
+      "name": "wrist_1_link",
+      "mass": 1.37,
+      "com": [
+        0,
+        -0.01634,
+        -0.0018
+      ],
+      "inertia_rpy": [
+        1.570796326794897,
+        0,
+        0
+      ],
+      "inertia": {
+        "ixx": 0.00165491,
+        "ixy": -0.00000282,
+        "ixz": -0.00000438,
+        "iyy": 0.00135962,
+        "iyz": 0.00010157,
+        "izz": 0.00126279
+      },
+      "source": "ur-ros2-description"
+    },
+    {
+      "name": "wrist_2_link",
+      "mass": 1.3,
+      "com": [
+        0,
+        0.01634,
+        -0.0018
+      ],
+      "inertia_rpy": [
+        -1.570796326794897,
+        0,
+        0
+      ],
+      "inertia": {
+        "ixx": 0.00135617,
+        "ixy": -0.00000274,
+        "ixz": 0.00000444,
+        "iyy": 0.00127827,
+        "iyz": -0.00005048,
+        "izz": 0.00096614
+      },
+      "source": "ur-ros2-description"
+    },
+    {
+      "name": "wrist_3_link",
+      "mass": 0.365,
+      "com": [
+        0,
+        0,
+        -0.001159
+      ],
+      "inertia_rpy": [
+        0,
+        0,
+        0
+      ],
+      "inertia": {
+        "ixx": 0.00018694,
+        "ixy": 6e-8,
+        "ixz": -1.7e-7,
+        "iyy": 0.00018908,
+        "iyz": -9.2e-7,
+        "izz": 0.00025756
+      },
+      "source": "ur-ros2-description"
+    }
+  ],
+  "joints": [
+    {
+      "name": "shoulder_pan_joint",
+      "type": "revolute",
+      "parent": "base_link_inertia",
+      "child": "shoulder_link",
+      "origin_xyz": [
+        0,
+        0,
+        0.1625
+      ],
+      "origin_rpy": [
+        0,
+        0,
+        0
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "lower": -6.283185307179586,
+      "upper": 6.283185307179586,
+      "velocity": 3.141592653589793,
+      "effort": 150,
+      "damping": 0,
+      "source": "ur-ros2-description",
+      "note": "effort: ur-max-joint-torques; position/velocity: ur-user-manual (both as transcribed by the manufacturer into joint_limits.yaml)"
+    },
+    {
+      "name": "shoulder_lift_joint",
+      "type": "revolute",
+      "parent": "shoulder_link",
+      "child": "upper_arm_link",
+      "origin_xyz": [
+        0,
+        0,
+        0
+      ],
+      "origin_rpy": [
+        1.570796327,
+        0,
+        0
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "lower": -6.283185307179586,
+      "upper": 6.283185307179586,
+      "velocity": 3.141592653589793,
+      "effort": 150,
+      "damping": 0,
+      "source": "ur-ros2-description",
+      "note": "effort: ur-max-joint-torques; position/velocity: ur-user-manual (both as transcribed by the manufacturer into joint_limits.yaml)"
+    },
+    {
+      "name": "elbow_joint",
+      "type": "revolute",
+      "parent": "upper_arm_link",
+      "child": "forearm_link",
+      "origin_xyz": [
+        -0.425,
+        0,
+        0
+      ],
+      "origin_rpy": [
+        0,
+        0,
+        0
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "lower": -3.141592653589793,
+      "upper": 3.141592653589793,
+      "velocity": 3.141592653589793,
+      "effort": 150,
+      "damping": 0,
+      "source": "ur-ros2-description",
+      "note": "effort: ur-max-joint-torques; position/velocity: ur-user-manual (both as transcribed by the manufacturer into joint_limits.yaml); UR's file limits the elbow to +/-180 deg because the shoulder physically blocks further rotation"
+    },
+    {
+      "name": "wrist_1_joint",
+      "type": "revolute",
+      "parent": "forearm_link",
+      "child": "wrist_1_link",
+      "origin_xyz": [
+        -0.3922,
+        0,
+        0.1333
+      ],
+      "origin_rpy": [
+        0,
+        0,
+        0
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "lower": -6.283185307179586,
+      "upper": 6.283185307179586,
+      "velocity": 3.141592653589793,
+      "effort": 28,
+      "damping": 0,
+      "source": "ur-ros2-description",
+      "note": "effort: ur-max-joint-torques; position/velocity: ur-user-manual (both as transcribed by the manufacturer into joint_limits.yaml)"
+    },
+    {
+      "name": "wrist_2_joint",
+      "type": "revolute",
+      "parent": "wrist_1_link",
+      "child": "wrist_2_link",
+      "origin_xyz": [
+        0,
+        -0.0997,
+        -2.044881182297852e-11
+      ],
+      "origin_rpy": [
+        1.570796327,
+        0,
+        0
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "lower": -6.283185307179586,
+      "upper": 6.283185307179586,
+      "velocity": 3.141592653589793,
+      "effort": 28,
+      "damping": 0,
+      "source": "ur-ros2-description",
+      "note": "effort: ur-max-joint-torques; position/velocity: ur-user-manual (both as transcribed by the manufacturer into joint_limits.yaml)"
+    },
+    {
+      "name": "wrist_3_joint",
+      "type": "revolute",
+      "parent": "wrist_2_link",
+      "child": "wrist_3_link",
+      "origin_xyz": [
+        0,
+        0.0996,
+        -2.042830148012698e-11
+      ],
+      "origin_rpy": [
+        1.570796326589793,
+        3.141592653589793,
+        3.141592653589793
+      ],
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "lower": -6.283185307179586,
+      "upper": 6.283185307179586,
+      "velocity": 3.141592653589793,
+      "effort": 28,
+      "damping": 0,
+      "source": "ur-ros2-description",
+      "note": "effort: ur-max-joint-torques; position/velocity: ur-user-manual (both as transcribed by the manufacturer into joint_limits.yaml)"
+    }
+  ],
+  "tcp": {
+    "link": "wrist_3_link",
+    "xyz": [
+      0,
+      0,
+      0
+    ]
+  }
+}

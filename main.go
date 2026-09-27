@@ -704,6 +704,35 @@ func main() {
 	mux.Handle("/admin/nock/api/animations", nockAnimationsProtected)
 	mux.Handle("/admin/nock/api/animations/", nockAnimationsProtected)
 
+	// NOCK robot registry (founder real-time, 2026-09-27: "upgrade shankpit and nock to formal
+	// rigid body physics we need to get goldenband rigged up with real robot data from industrial
+	// data sheets"). GOLDEN BAND datasheet robot rigs -- the source-cited .grobot.json spec plus
+	// the compiled physics rig it provably came from; see internal/nock/robot_store.go.
+	// The robot data's source of truth is git: on every startup the registry re-imports GOLDENBAND's
+	// robots/*.grobot.json + assets/robots/* (same function as the NOCK "Sync from git" button and
+	// `nock robots-sync`). NOCK_ROBOTS_GIT_DIR=off disables both the startup sync and the button.
+	robotGitDir := getenv("NOCK_ROBOTS_GIT_DIR", "/home/fatbaby/GOLDENBAND")
+	if robotGitDir == "off" {
+		robotGitDir = ""
+	}
+	robotStore := &nock.RobotStore{DB: db}
+	if robotGitDir != "" {
+		go func() {
+			rep, err := robotStore.SyncFromGit(context.Background(), robotGitDir)
+			if err != nil {
+				log.Printf("nock robots: startup git sync skipped: %v", err)
+				return
+			}
+			for _, it := range rep.Items {
+				log.Printf("nock robots: git sync %s: %s %s", it.Name, it.Action, it.Detail)
+			}
+		}()
+	}
+	nockRobotsH := &handlers.NockRobotsHandler{Store: robotStore, GitDir: robotGitDir}
+	nockRobotsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockRobotsH))
+	mux.Handle("/admin/nock/api/robots", nockRobotsProtected)
+	mux.Handle("/admin/nock/api/robots/", nockRobotsProtected)
+
 	// NOCK door script repository (SHANKPIT Story System Phase 1, S459-81 -- founder real-time:
 	// "you know what we are tryna do fill in the gaps", closing the "via the nock tools" gap
 	// named at the very start of that whole design thread). Same real shape as the texture/
