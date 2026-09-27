@@ -46,7 +46,7 @@ func buildCubeSceneGLTF(t *testing.T) []byte {
 	return raw
 }
 
-func near(a, b float64) bool { return math.Abs(a-b) < 1e-5 }
+func gltfNear(a, b float64) bool { return math.Abs(a-b) < 1e-5 }
 
 func TestGLTFToWidgetBoxes_HierarchyRotationColorDoor(t *testing.T) {
 	boxes, err := GLTFToWidgetBoxes(buildCubeSceneGLTF(t), 1)
@@ -57,7 +57,7 @@ func TestGLTFToWidgetBoxes_HierarchyRotationColorDoor(t *testing.T) {
 		t.Fatalf("expected 3 boxes (one per mesh node), got %d: %+v", len(boxes), boxes)
 	}
 	floor, door, plane := boxes[0], boxes[1], boxes[2]
-	if floor.Name != "Floor" || !near(floor.SX, 10) || !near(floor.SY, 0.2) || !near(floor.SZ, 10) || !near(floor.CY, 0) {
+	if floor.Name != "Floor" || !gltfNear(floor.SX, 10) || !gltfNear(floor.SY, 0.2) || !gltfNear(floor.SZ, 10) || !gltfNear(floor.CY, 0) {
 		t.Errorf("floor box wrong: %+v", floor)
 	}
 	if floor.R != 1 || floor.G != 0 || floor.B != 0 {
@@ -67,11 +67,11 @@ func TestGLTFToWidgetBoxes_HierarchyRotationColorDoor(t *testing.T) {
 		t.Error("floor must not be a door")
 	}
 	// Parent translation (0,5,0) + child translation (3,0,0); 90deg Y rotation swaps x/z extents.
-	if !door.IsDoor || !near(door.CX, 3) || !near(door.CY, 5) || !near(door.CZ, 0) ||
-		!near(door.SX, 0.2) || !near(door.SY, 2) || !near(door.SZ, 1) {
+	if !door.IsDoor || !gltfNear(door.CX, 3) || !gltfNear(door.CY, 5) || !gltfNear(door.CZ, 0) ||
+		!gltfNear(door.SX, 0.2) || !gltfNear(door.SY, 2) || !gltfNear(door.SZ, 1) {
 		t.Errorf("door box wrong: %+v", door)
 	}
-	if !near(plane.SY, MinBoxExtent) || !near(plane.SX, 4) {
+	if !gltfNear(plane.SY, MinBoxExtent) || !gltfNear(plane.SX, 4) {
 		t.Errorf("flat plane should be widened to MinBoxExtent thickness: %+v", plane)
 	}
 }
@@ -81,7 +81,7 @@ func TestGLTFToWidgetBoxes_Scale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convert: %v", err)
 	}
-	if d := boxes[1]; !near(d.CX, 6) || !near(d.CY, 10) || !near(d.SY, 4) {
+	if d := boxes[1]; !gltfNear(d.CX, 6) || !gltfNear(d.CY, 10) || !gltfNear(d.SY, 4) {
 		t.Errorf("scale 2 not applied to door: %+v", d)
 	}
 }
