@@ -224,7 +224,15 @@ func TestRobotSyncFromGit(t *testing.T) {
 	if len(rep.NotInGit) != 1 || rep.NotInGit[0] != "ur5e" {
 		t.Fatalf("not_in_git: %+v", rep)
 	}
-	if _, err := store.SyncFromGit(ctx, t.TempDir()); err == nil {
-		t.Error("a directory with no robots/ must be an error, not a silent no-op")
+	// A real checkout on a branch without the robot data says so, naming the branch.
+	bare := t.TempDir()
+	os.MkdirAll(filepath.Join(bare, ".git", "refs", "heads"), 0o755)
+	os.WriteFile(filepath.Join(bare, ".git", "HEAD"), []byte("ref: refs/heads/master\n"), 0o644)
+	os.WriteFile(filepath.Join(bare, ".git", "refs", "heads", "master"), []byte("52c62a630118ab1b8089c78e0d0183f46b89a8b9\n"), 0o644)
+	if _, err := store.SyncFromGit(ctx, bare); err == nil || !strings.Contains(err.Error(), "branch master @ 52c62a630118") || !strings.Contains(err.Error(), "has no robot data") {
+		t.Errorf("no-data checkout must name the branch and say what's missing, got %v", err)
+	}
+	if _, err := store.SyncFromGit(ctx, filepath.Join(bare, "nope")); err == nil || !strings.Contains(err.Error(), "no GOLDENBAND checkout at") {
+		t.Errorf("missing checkout must say so, got %v", err)
 	}
 }

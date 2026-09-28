@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+
+## 2026-09-28
+- fix(nock): robot "Sync from git" failure is now explained, not a raw JSON blob. Founder: "the sync robots button does not work" -- root cause: IDUNA main carries the sync, but GOLDENBAND master (what /home/fatbaby/GOLDENBAND is on) doesn't carry the robot data yet (it's only on GOLDENBAND's claude/determined-mccarthy-f5ou9d). SyncFromGit now says whether the checkout is missing or on a branch without robots/ (naming branch + commit, and the fix); the Robots tab shows the server's sentence and detects an expired Back Office session. Reproduced against a real GOLDENBAND master checkout before and after. (sess-20260927-1025-5b0d7c3e)
 ## 2026-09-28
 - Investigated founder-reported 'SHANKPIT levels is down, blank screen' -- root cause: /admin/nock has no ErrorBoundary so any tab's uncaught render error blanks the whole app, and the live iduna binary hadn't been rebuilt since before this session's own risky 6-branch abandoned-branch merge sweep landed. Rebuilt+redeployed the binary from current HEAD (go build/test clean) via systemctl --user restart. Added real UX screenshot testing per the founder's own follow-up ask: frontend/nock/scripts/ux_screenshot_test.mjs logs in for real (new SCREENSHOT-CI admin agent, cmd/create-admin-agent, no cookie bypass), clicks through all 17 real nav tabs against production, screenshots each, fails on any near-empty #root or uncaught page error. Run live just now: all 17 tabs pass, SHANKPIT Levels included, real screenshot proof saved. (sess-20260923-1030-4a526255)
 

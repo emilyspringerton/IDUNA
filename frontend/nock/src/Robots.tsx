@@ -161,12 +161,13 @@ export default function Robots() {
 
   const syncFromGit = async () => {
     setError(null)
+    setSync(null)
     setSyncing(true)
     try {
       setSync(await robots.syncFromGit())
       refresh()
     } catch (e) {
-      setError(String(e))
+      setError(`Sync from git failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSyncing(false)
     }

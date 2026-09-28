@@ -387,7 +387,7 @@ func (s *RobotStore) SyncFromGit(ctx context.Context, dir string) (*RobotSyncRep
 		return nil, err
 	}
 	if len(specs) == 0 {
-		return nil, fmt.Errorf("nock: no robots/*.grobot.json under %s -- is this a GOLDENBAND checkout (with the robot data merged)?", dir)
+		return nil, noRobotsError(dir)
 	}
 	sort.Strings(specs)
 	rep := &RobotSyncReport{Dir: dir, Revision: gitRevision(dir)}
@@ -452,4 +452,24 @@ func (s *RobotStore) SyncFromGit(ctx context.Context, dir string) (*RobotSyncRep
 		}
 	}
 	return rep, nil
+}
+
+// noRobotsError explains, in words a person can act on, why a sync found nothing: the checkout
+// is missing entirely, or it exists but the branch it's on doesn't carry the robot data (found
+// live 2026-09-28: IDUNA main had the sync, GOLDENBAND master didn't have robots/ yet, and the
+// button just said "no robots/*.grobot.json").
+func noRobotsError(dir string) error {
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return fmt.Errorf("no GOLDENBAND checkout at %s -- clone github.com/emilyspringerton/goldenband there, or point NOCK_ROBOTS_GIT_DIR at one", dir)
+	}
+	where := dir
+	if head, err := os.ReadFile(filepath.Join(dir, ".git", "HEAD")); err == nil {
+		h := strings.TrimSpace(string(head))
+		branch := strings.TrimPrefix(strings.TrimPrefix(h, "ref: "), "refs/heads/")
+		if rev := gitRevision(dir); rev != "" {
+			branch += " @ " + rev[:min(12, len(rev))]
+		}
+		where = fmt.Sprintf("%s (branch %s)", dir, branch)
+	}
+	return fmt.Errorf("the GOLDENBAND checkout at %s has no robot data (robots/*.grobot.json) -- the branch it's on doesn't include it yet; merge the robot data into that branch, then run `git -C %s pull` and sync again", where, dir)
 }

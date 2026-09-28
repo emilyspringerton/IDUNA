@@ -1449,7 +1449,16 @@ async function robreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`${ROBOTS_BASE}${path}`, { credentials: 'include', ...opts })
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
-    throw new Error(`${res.status}: ${text}`)
+    // Show the server's own {"error": "..."} sentence, not raw JSON.
+    let msg = text
+    try {
+      const j = JSON.parse(text)
+      if (j && typeof j.error === 'string') msg = j.error
+    } catch {
+      /* not JSON (e.g. a login redirect page) -- keep the text */
+    }
+    if (res.redirected || text.trimStart().startsWith('<')) msg = 'your Back Office session expired -- reload and log in again'
+    throw new Error(msg.replace(/^nock: /, ''))
   }
   return (await res.json()) as T
 }
