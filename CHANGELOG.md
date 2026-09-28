@@ -1,5 +1,8 @@
 # IDUNA Changelog
 
+## 2026-09-28
+- /api/v1/mixforge/cookies: token now falls back to MIXFORGE/var/mixforge-secrets.env (MIXFORGE_SECRETS_FILE), re-read per request, so the cookie-exporter extension works without the token ever being put into IDUNA's own env (previously nothing did, leaving the endpoint 503 "disabled"). First tests for the handler (env/file token, precedence, 401/400/405, 0600 file mode). Verified live with a real IDUNA binary (session_019PK1Mu91uSfALchorLxXNY)
+
 ## 2026-09-27
 - New POST /api/v1/mixforge/cookies -- receives a real cookies.txt from the MIXFORGE cookie-exporter Chrome extension, gated by a bearer token, writes it for room_server.mjs's yt-dlp downloads (sess-20260923-1030-4a526255)
 - MIXFORGE now live at mixforge.okemily.com -- DNS applied (fixed a Cloudflare comment-length bug in Terraform along the way), nginx+cert deployed, and a real 770-permissions traversal bug found and fixed via scoped setfacl grants (first home-dir-served static vhost in the monorepo) (sess-20260923-1030-4a526255)

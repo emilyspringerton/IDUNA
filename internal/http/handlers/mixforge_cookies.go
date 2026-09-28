@@ -21,9 +21,17 @@
 // IDUNA's own admin-session cookie auth, because the extension's own POST is a plain
 // cross-origin fetch with no IDUNA session available to it. An empty/unset token disables the
 // endpoint entirely, same fail-closed default as HEC.
+//
+// Token source (2026-09-28): the MIXFORGE_COOKIE_UPLOAD_TOKEN env var wins when set; otherwise
+// the token is read from TokenFile (MIXFORGE/var/mixforge-secrets.env, written by
+// MIXFORGE/scripts/gen_cookie_upload_token.sh) on every request. Before this, nothing ever put the
+// token into IDUNA's own process env, so the endpoint was permanently "disabled" in practice.
+// Re-reading per request means minting or rotating the token needs no IDUNA restart.
 package handlers
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/subtle"
 	"io"
 	"net/http"
@@ -34,8 +42,34 @@ import (
 
 // MixforgeCookiesHandler serves POST /api/v1/mixforge/cookies.
 type MixforgeCookiesHandler struct {
-	Token    string // required; empty disables the endpoint entirely
-	FilePath string // where the uploaded cookies.txt gets written (atomically)
+	Token     string // takes precedence over TokenFile when non-empty
+	TokenFile string // env-style file holding MIXFORGE_COOKIE_UPLOAD_TOKEN=..., re-read per request
+	FilePath  string // where the uploaded cookies.txt gets written (atomically)
+}
+
+// token returns the configured upload token, or "" (endpoint disabled) if neither source has one.
+func (h *MixforgeCookiesHandler) token() string {
+	if h.Token != "" {
+		return h.Token
+	}
+	if h.TokenFile == "" {
+		return ""
+	}
+	data, err := os.ReadFile(h.TokenFile)
+	if err != nil {
+		return ""
+	}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		line = strings.TrimPrefix(line, "export ")
+		v, ok := strings.CutPrefix(line, "MIXFORGE_COOKIE_UPLOAD_TOKEN=")
+		if !ok {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(v), `"'`)
+	}
+	return ""
 }
 
 func (h *MixforgeCookiesHandler) Handle(w http.ResponseWriter, r *http.Request) {
@@ -43,16 +77,17 @@ func (h *MixforgeCookiesHandler) Handle(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST only"})
 		return
 	}
-	if h.Token == "" || h.FilePath == "" {
+	token := h.token()
+	if token == "" || h.FilePath == "" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"error": "disabled: MIXFORGE_COOKIE_UPLOAD_TOKEN / MIXFORGE_COOKIES_FILE_PATH not configured",
+			"error": "disabled: no upload token (run MIXFORGE/scripts/gen_cookie_upload_token.sh) or MIXFORGE_COOKIES_FILE_PATH unset",
 		})
 		return
 	}
 	auth := r.Header.Get("Authorization")
 	const prefix = "Bearer "
 	if !strings.HasPrefix(auth, prefix) ||
-		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(h.Token)) != 1 {
+		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(token)) != 1 {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid token"})
 		return
 	}

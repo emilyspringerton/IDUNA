@@ -1151,11 +1151,13 @@ func main() {
 
 	// MIXFORGE cookie-upload receiver (2026-09-27) -- see internal/http/handlers/
 	// mixforge_cookies.go's own header comment for the full real rationale (a real Chrome
-	// extension, not a VS Code extension or a Chromium fork). Empty token disables it, same
-	// fail-closed default as the HEC token above.
+	// extension, not a VS Code extension or a Chromium fork). Token comes from the env var or,
+	// failing that, MIXFORGE/var/mixforge-secrets.env (re-read per request); no token at all
+	// disables it, same fail-closed default as the HEC token above.
 	mixforgeCookiesH := &handlers.MixforgeCookiesHandler{
-		Token:    getenv("MIXFORGE_COOKIE_UPLOAD_TOKEN", ""),
-		FilePath: getenv("MIXFORGE_COOKIES_FILE_PATH", filepath.Join(idunaRootForLog, "..", "MIXFORGE", "var", "ytdlp-cookies.txt")),
+		Token:     getenv("MIXFORGE_COOKIE_UPLOAD_TOKEN", ""),
+		TokenFile: getenv("MIXFORGE_SECRETS_FILE", filepath.Join(idunaRootForLog, "..", "MIXFORGE", "var", "mixforge-secrets.env")),
+		FilePath:  getenv("MIXFORGE_COOKIES_FILE_PATH", filepath.Join(idunaRootForLog, "..", "MIXFORGE", "var", "ytdlp-cookies.txt")),
 	}
 	mux.Handle("/api/v1/mixforge/cookies", http.HandlerFunc(mixforgeCookiesH.Handle))
 
