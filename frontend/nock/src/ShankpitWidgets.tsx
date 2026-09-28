@@ -11,6 +11,7 @@ import {
   type ShankpitWidgetSummary,
 } from './api'
 import { WallInspector, cameraPositionFrom, type CameraState } from './ShankpitLevelEditor'
+import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 
 // ShankpitWidgets.tsx -- S482, founder real-time, direct correction of the earlier S479-follow-up
 // door-composition work: "i still dont know how to add a door... i keep asking for an actual
@@ -77,6 +78,7 @@ function WidgetViewport3D({
   onCommit: () => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [webglUnavailable, setWebglUnavailable] = useState(false)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const meshesRef = useRef<THREE.Mesh[]>([])
   const wallsRef = useRef(walls)
@@ -100,7 +102,11 @@ function WidgetViewport3D({
     sceneRef.current = scene
 
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    const renderer = createWebglRenderer({ antialias: true })
+    if (!renderer) {
+      setWebglUnavailable(true)
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     container.appendChild(renderer.domElement)
 
@@ -249,6 +255,13 @@ function WidgetViewport3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walls, selected])
 
+  if (webglUnavailable) {
+    return (
+      <div className="shankpit-viewport webgl-unavailable">
+        <p className="hint">{WEBGL_UNAVAILABLE_MESSAGE}</p>
+      </div>
+    )
+  }
   return <div ref={containerRef} className="shankpit-viewport" />
 }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 import {
   AI_ROLE_OPTIONS,
   KIT_OPTIONS,
@@ -468,6 +469,7 @@ function Viewport3D({
   characters: ShankpitCharacter[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [webglUnavailable, setWebglUnavailable] = useState(false)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
@@ -531,7 +533,11 @@ function Viewport3D({
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000)
     cameraRef.current = camera
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    const renderer = createWebglRenderer({ antialias: true })
+    if (!renderer) {
+      setWebglUnavailable(true)
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     container.appendChild(renderer.domElement)
     rendererRef.current = renderer
@@ -1248,6 +1254,13 @@ function Viewport3D({
     })
   }
 
+  if (webglUnavailable) {
+    return (
+      <div className="shankpit-viewport webgl-unavailable">
+        <p className="hint">{WEBGL_UNAVAILABLE_MESSAGE}</p>
+      </div>
+    )
+  }
   return <div ref={containerRef} className="shankpit-viewport" />
 }
 

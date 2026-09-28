@@ -15,6 +15,7 @@ import VideoEditor from './VideoEditor'
 import Sounds from './Sounds'
 import Booth from './Booth'
 import Robots from './Robots'
+import { TabErrorBoundary } from './TabErrorBoundary'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -1415,6 +1416,7 @@ export default function App() {
         </nav>
       </header>
 
+      <TabErrorBoundary key={tab}>
       {tab === 'textures' ? (
         <div className="layout-single">
           <TextureLibrary />
@@ -1509,6 +1511,7 @@ export default function App() {
           </main>
         </div>
       )}
+      </TabErrorBoundary>
     </div>
   )
 }

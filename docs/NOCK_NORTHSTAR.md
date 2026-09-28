@@ -478,3 +478,43 @@ A companion, separate surface named "SHANKPIT Levels" also exists natively — `
 see `SHANKPIT/CHANGELOG.md`'s own 2026-09-28 entry and `SHANKPIT/scripts/ux_screenshot_test.sh`
 for that side (real Xvfb + a synthetic XTEST Enter keypress, no `xdotool` needed) — also currently
 passing, real screenshot proof included.
+
+## Real root cause found: THREE.WebGLRenderer crashes with no ErrorBoundary (2026-09-28, follow-up)
+
+The screenshot test above passed clean — and the founder still saw a blank screen. Asked for their
+actual browser console output, which named the real bug immediately: `Uncaught Error: THREE.
+WebGLRenderer: Error creating WebGL context` (`BindToCurrentSequence failed`, `Sandboxed = yes`) —
+their browser couldn't create a WebGL context (hardware acceleration disabled / a sandboxed
+policy). `new THREE.WebGLRenderer(...)` throws synchronously in that case, and with **no
+ErrorBoundary anywhere in this app**, the throw propagated up through React's own commit phase and
+unmounted the **entire** app, not just the SHANKPIT Levels tab — reproduced for real by launching
+Chromium with `--disable-webgl(2)` against the exact same live server: `#root` went from ~3500
+chars to 0, an uncaught page error, a genuinely blank page.
+
+Six components construct a `WebGLRenderer` the same way: `ShankpitLevelEditor.tsx`,
+`ShankpitWidgets.tsx`, `Robots.tsx`, `Animator.tsx`, `AnimationEditor.tsx`, `AnimationViewer.tsx`.
+Real fix, two layers:
+
+1. **`src/webglSupport.ts`** (new) — `createWebglRenderer(options)` wraps construction in a
+   try/catch, returns `null` on failure instead of throwing. All six call sites now check for
+   `null` and show a real, readable fallback message (`WEBGL_UNAVAILABLE_MESSAGE`) in that
+   component's own existing error-display mechanism (four of the six already had an `error` state
+   for this; the other two — `ShankpitLevelEditor`'s `Viewport3D` and `ShankpitWidgets` — gained a
+   small local `webglUnavailable` state and a fallback render, same shape).
+2. **`src/TabErrorBoundary.tsx`** (new) — a real class-based ErrorBoundary (the only way React
+   supports one) wrapping the whole tab-content switch in `App.tsx`, keyed on `tab` so switching
+   tabs always gets a fresh boundary. This is the real, general defense-in-depth: whatever crashes
+   next, in a tab nobody's individually guarded, now takes down only that tab's content — the
+   header/nav stay live so a founder can just click a different tab instead of getting a fully
+   blank page needing a hard reload.
+
+**Live-verified, not just built**: rebuilt + redeployed `iduna.service` with the fix, then
+reproduced the founder's exact scenario against production with WebGL disabled — `SHANKPIT Levels`
+now renders the full level list + inspector panels with a real, readable "This 3D view needs
+WebGL..." message in place of the 3D viewport, zero uncaught errors, and switching to another tab
+afterward still works. `scripts/ux_screenshot_test.mjs` now runs the entire 17-tab sweep **twice**
+— once with WebGL available (the original, insufficient version of this test) and once with
+`--disable-webgl(2)` (the pass that actually would have caught this) — 34/34 checks pass. The
+first version of this test's real, honest gap: it used Playwright's default Chromium, which has
+WebGL enabled, so it never exercised the actual failure condition — named here so the lesson
+isn't lost, not glossed over.

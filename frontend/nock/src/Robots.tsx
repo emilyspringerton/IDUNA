@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { robots, type Robot, type RobotSyncReport } from './api'
 import { buildBones, parseGSkel, type ParsedJoint } from './goldenband'
+import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 
 // Robots.tsx -- NOCK's robot registry (founder real-time, 2026-09-27: "upgrade shankpit and nock
 // to formal rigid body physics we need to get goldenband rigged up with real robot data from
@@ -28,7 +29,11 @@ function RigView({ robot }: { robot: Robot }) {
     scene.background = new THREE.Color(0x11141a)
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100)
     camera.position.set(1.4, 1.1, 1.6)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    const renderer = createWebglRenderer({ antialias: true })
+    if (!renderer) {
+      setError(WEBGL_UNAVAILABLE_MESSAGE)
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     container.appendChild(renderer.domElement)
     scene.add(new THREE.HemisphereLight(0xffffff, 0x222233, 1.2))

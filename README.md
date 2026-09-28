@@ -294,6 +294,16 @@ domain-scoped) — `https://okemily.com` by default. Screenshots land in
 `frontend/nock/scripts/ux-screenshots/` (gitignored). Not a pixel-diff — it catches "did this
 render real content with zero crashes," not subtle visual regressions.
 
+**Real bug this test initially missed, then caught**: the actual reported blank screen was
+`THREE.WebGLRenderer` throwing uncaught when a browser can't create a WebGL context (hardware
+acceleration disabled, a sandboxed policy) — six components construct one the same way, and with
+no `ErrorBoundary` anywhere in the app, that throw unmounted everything. The first version of this
+test used Chromium's default (WebGL-on) config and passed clean, missing it entirely. Fixed for
+real (`src/webglSupport.ts` guards all six construction sites with a readable fallback message;
+`src/TabErrorBoundary.tsx` contains any future per-tab crash to that tab instead of the whole app)
+and the test now runs its full sweep twice — WebGL on and off (`--disable-webgl(2)`) — so this
+exact regression class is now actually covered, not just checked-the-box.
+
 ---
 
 ## Bob — database admin agent

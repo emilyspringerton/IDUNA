@@ -22,6 +22,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { animations, type AnimationSummary } from './api'
 import { parseGSkel, parseGMesh, parseGBand, buildAnimationClip, buildBones } from './goldenband'
+import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 
 interface Props {
   animation: AnimationSummary
@@ -48,7 +49,12 @@ export default function AnimationViewer({ animation, onClose }: Props) {
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x11141a)
     const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 2000)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    const renderer = createWebglRenderer({ antialias: true })
+    if (!renderer) {
+      setError(WEBGL_UNAVAILABLE_MESSAGE)
+      setLoading(false)
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     container.appendChild(renderer.domElement)
 

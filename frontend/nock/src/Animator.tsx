@@ -21,6 +21,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { animations, type AnimationSummary } from './api'
 import { buildBones, parseGMesh, parseGSkel, type ParsedJoint } from './goldenband'
+import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 import {
   clampToDuration,
   deleteKeysAt,
@@ -116,7 +117,12 @@ export default function Animator({ animation, onClose, onSaved }: Props) {
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x11141a)
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 2000)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    const renderer = createWebglRenderer({ antialias: true })
+    if (!renderer) {
+      setError(WEBGL_UNAVAILABLE_MESSAGE)
+      setPhase('error')
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     container.appendChild(renderer.domElement)
     scene.add(new THREE.HemisphereLight(0xffffff, 0x222233, 1.1))

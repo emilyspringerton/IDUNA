@@ -423,6 +423,9 @@ textarea {
   width: 100% !important;
   height: 100% !important;
 }
+.shankpit-viewport.webgl-unavailable {
+  @apply flex cursor-default items-center justify-center bg-panel p-4 text-center;
+}
 
 .platform-inspector {
   @apply flex flex-col gap-2;
