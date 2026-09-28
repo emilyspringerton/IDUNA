@@ -104,10 +104,24 @@ func (l *UploadLink) Active(now time.Time) bool {
 }
 
 // Segment is one cut on a timeline: [InMS, OutMS) of clip ClipID.
+//
+// TransitionMS/FadeInMS/FadeOutMS (2026-09-28, founder real-time: "ensure we have full non
+// linear video editing for the video and audio clips via nock tools") make this genuinely
+// non-linear rather than cuts-only: TransitionMS crossfades this segment in over the tail of the
+// PREVIOUS one (meaningless/ignored on segment 0 -- there is no previous segment); FadeInMS/
+// FadeOutMS are this clip's own fade to/from black+silence, independent of any transition. Every
+// number here is computed the same way in three places, kept in sync by hand (no shared schema
+// across the Go/wasm/ffmpeg boundary): PARENA/stdlib/video/nle.prn (xfade-out-gain/xfade-in-gain/
+// fade-envelope) drives the live client-side preview (frontend/nock/src/video/TimelinePreview.tsx)
+// and this store's own validateEDL clamps below; render()'s ffmpeg xfade/acrossfade/fade filters
+// (see renderWithTransitions) are the real, final, server-side application of the same numbers.
 type Segment struct {
-	ClipID int64 `json:"clip_id"`
-	InMS   int64 `json:"in_ms"`
-	OutMS  int64 `json:"out_ms"`
+	ClipID       int64 `json:"clip_id"`
+	InMS         int64 `json:"in_ms"`
+	OutMS        int64 `json:"out_ms"`
+	TransitionMS int64 `json:"transition_ms,omitempty"`
+	FadeInMS     int64 `json:"fade_in_ms,omitempty"`
+	FadeOutMS    int64 `json:"fade_out_ms,omitempty"`
 }
 
 // EDL is a timeline's edit decision list plus its output format.
@@ -791,7 +805,9 @@ func (s *VideoStore) validateEDL(ctx context.Context, e *EDL) error {
 	if e.Segments == nil {
 		e.Segments = []Segment{}
 	}
-	for i, seg := range e.Segments {
+	var prevDurSec float64
+	for i := range e.Segments {
+		seg := &e.Segments[i]
 		v, err := s.GetVideo(ctx, seg.ClipID)
 		if err != nil {
 			return fmt.Errorf("nock: segment %d: %w", i, err)
@@ -802,6 +818,32 @@ func (s *VideoStore) validateEDL(ctx context.Context, e *EDL) error {
 		if v.DurationMS > 0 && seg.OutMS > v.DurationMS {
 			return fmt.Errorf("nock: segment %d: out (%dms) is past the end of clip %q (%dms)", i, seg.OutMS, v.Name, v.DurationMS)
 		}
+		if seg.TransitionMS < 0 || seg.FadeInMS < 0 || seg.FadeOutMS < 0 {
+			return fmt.Errorf("nock: segment %d: transition_ms/fade_in_ms/fade_out_ms must be >= 0", i)
+		}
+		// A value too large to fit is clamped (not rejected) and written back, same rule the
+		// live preview (TimelinePreview.tsx) and PARENA's own nle.prn fade-envelope use, so a
+		// saved timeline never lies about what will actually play. TransitionMS is meaningless on
+		// the first segment -- there is no previous segment to blend from.
+		durSec := float64(seg.OutMS-seg.InMS) / 1000
+		if i == 0 {
+			seg.TransitionMS = 0
+		} else if tr := float64(seg.TransitionMS) / 1000; tr > durSec || tr > prevDurSec {
+			seg.TransitionMS = int64(math.Min(durSec, prevDurSec) * 1000)
+		}
+		fadeIn := float64(seg.FadeInMS) / 1000
+		if fadeIn > durSec {
+			fadeIn = durSec
+			seg.FadeInMS = int64(fadeIn * 1000)
+		}
+		if fadeOut := float64(seg.FadeOutMS) / 1000; fadeOut > durSec-fadeIn {
+			fadeOut = durSec - fadeIn
+			if fadeOut < 0 {
+				fadeOut = 0
+			}
+			seg.FadeOutMS = int64(fadeOut * 1000)
+		}
+		prevDurSec = durSec
 	}
 	return nil
 }
@@ -985,6 +1027,7 @@ func (s *VideoStore) render(ctx context.Context, t *Timeline) error {
 		e.Width, e.Height, e.Width, e.Height, e.FPS)
 
 	var list strings.Builder
+	hasTransition := false
 	for i, seg := range e.Segments {
 		v, err := s.GetVideo(ctx, seg.ClipID)
 		if err != nil {
@@ -1002,8 +1045,17 @@ func (s *VideoStore) render(ctx context.Context, t *Timeline) error {
 		} else {
 			args = append(args, "-map", "1:a:0", "-shortest")
 		}
+		// Fade in/out is baked in here, per segment, before any crossfade chain touches the
+		// result -- a clip's own fade composes fine with concat OR xfade either way, unlike a
+		// crossfade TRANSITION (which blends two adjacent segments and needs the filter_complex
+		// chain below instead of a hard concat).
+		durSec := float64(seg.OutMS-seg.InMS) / 1000
+		segVF, segAF := fadeFilters(vf, durSec, float64(seg.FadeInMS)/1000, float64(seg.FadeOutMS)/1000)
+		args = append(args, "-vf", segVF)
+		if segAF != "" {
+			args = append(args, "-af", segAF)
+		}
 		args = append(args,
-			"-vf", vf,
 			"-c:v", "libx264", "-preset", "medium", "-crf", "20", "-video_track_timescale", "90000",
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 			part)
@@ -1011,15 +1063,22 @@ func (s *VideoStore) render(ctx context.Context, t *Timeline) error {
 			return fmt.Errorf("segment %d (%s): %w", i, v.Name, err)
 		}
 		fmt.Fprintf(&list, "file '%s'\n", filepath.Base(part))
-	}
-	listPath := filepath.Join(work, "list.txt")
-	if err := os.WriteFile(listPath, []byte(list.String()), 0o644); err != nil {
-		return err
+		if seg.TransitionMS > 0 {
+			hasTransition = true
+		}
 	}
 	outRel := filepath.Join("renders", fmt.Sprintf("timeline-%d.mp4", t.ID))
 	tmpOut := filepath.Join(work, "out.mp4")
-	if err := s.run(ctx, "-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", tmpOut); err != nil {
-		return fmt.Errorf("concat: %w", err)
+	if !hasTransition {
+		listPath := filepath.Join(work, "list.txt")
+		if err := os.WriteFile(listPath, []byte(list.String()), 0o644); err != nil {
+			return err
+		}
+		if err := s.run(ctx, "-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", tmpOut); err != nil {
+			return fmt.Errorf("concat: %w", err)
+		}
+	} else if err := s.renderWithTransitions(ctx, e, work, tmpOut); err != nil {
+		return fmt.Errorf("crossfade render: %w", err)
 	}
 	if err := os.Rename(tmpOut, s.abs(outRel)); err != nil {
 		return err
@@ -1027,6 +1086,84 @@ func (s *VideoStore) render(ctx context.Context, t *Timeline) error {
 	_, err = s.DB.Exec(`UPDATE nock_video_timelines SET render_status = 'ready', render_error = NULL, render_path = ?, rendered_at = ? WHERE id = ?`,
 		outRel, s.now().Format(time.RFC3339), t.ID)
 	return err
+}
+
+// fadeFilters appends a segment's own fade-in/fade-out to the shared scale/pad/fps/format video
+// filter (baseVF), and builds the matching audio fade chain (empty if neither fade is set).
+// fadeInSec/fadeOutSec are already clamped by validateEDL to fit within durSec.
+func fadeFilters(baseVF string, durSec, fadeInSec, fadeOutSec float64) (vf string, af string) {
+	vf = baseVF
+	if fadeInSec > 0 {
+		vf += fmt.Sprintf(",fade=t=in:st=0:d=%.3f", fadeInSec)
+		af = fmt.Sprintf("afade=t=in:st=0:d=%.3f", fadeInSec)
+	}
+	if fadeOutSec > 0 {
+		st := durSec - fadeOutSec
+		if st < 0 {
+			st = 0
+		}
+		vf += fmt.Sprintf(",fade=t=out:st=%.3f:d=%.3f", st, fadeOutSec)
+		if af != "" {
+			af += ","
+		}
+		af += fmt.Sprintf("afade=t=out:st=%.3f:d=%.3f", st, fadeOutSec)
+	}
+	return vf, af
+}
+
+// minXfadeSec is a real, named simplification: when at least one segment in a render requests a
+// crossfade, EVERY adjacent cut in that same render goes through the xfade/acrossfade filter
+// chain below (ffmpeg has no single command that mixes a hard concat cut and a filter-graph
+// crossfade at different points in one pass). A cut with no transition_ms gets this floor instead
+// of a true zero-duration crossfade, which xfade/acrossfade don't accept -- imperceptibly short,
+// not hidden.
+const minXfadeSec = 0.05
+
+// renderWithTransitions builds one ffmpeg filter_complex chaining xfade (video) + acrossfade
+// (audio) across every already-normalized part file in sequence. Every part shares the same
+// scale/fps/pix_fmt/sample-rate/channel-layout (see the normalize step above), which xfade/
+// acrossfade require of their inputs.
+func (s *VideoStore) renderWithTransitions(ctx context.Context, e EDL, work, outPath string) error {
+	n := len(e.Segments)
+	durs := make([]float64, n)
+	for i, seg := range e.Segments {
+		durs[i] = float64(seg.OutMS-seg.InMS) / 1000
+	}
+	args := []string{"-y"}
+	for i := 0; i < n; i++ {
+		args = append(args, "-i", filepath.Join(work, fmt.Sprintf("part%04d.mp4", i)))
+	}
+	var filters []string
+	prevV, prevA := "0:v", "0:a"
+	running := durs[0]
+	for i := 1; i < n; i++ {
+		tr := float64(e.Segments[i].TransitionMS) / 1000
+		if tr > durs[i] {
+			tr = durs[i]
+		}
+		if tr > durs[i-1] {
+			tr = durs[i-1]
+		}
+		if tr <= 0 {
+			tr = minXfadeSec
+		}
+		offset := running - tr
+		if offset < 0 {
+			offset = 0
+		}
+		vOut, aOut := fmt.Sprintf("v%d", i), fmt.Sprintf("a%d", i)
+		filters = append(filters, fmt.Sprintf("[%s][%d:v]xfade=transition=fade:duration=%.3f:offset=%.3f[%s]", prevV, i, tr, offset, vOut))
+		filters = append(filters, fmt.Sprintf("[%s][%d:a]acrossfade=d=%.3f:c1=tri:c2=tri[%s]", prevA, i, tr, aOut))
+		running = running + durs[i] - tr
+		prevV, prevA = vOut, aOut
+	}
+	args = append(args,
+		"-filter_complex", strings.Join(filters, ";"),
+		"-map", "["+prevV+"]", "-map", "["+prevA+"]",
+		"-c:v", "libx264", "-preset", "medium", "-crf", "20", "-video_track_timescale", "90000",
+		"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+		"-movflags", "+faststart", outPath)
+	return s.run(ctx, args...)
 }
 
 func msToSec(ms int64) string {

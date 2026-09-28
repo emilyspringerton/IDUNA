@@ -1,14 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { videos, type NockVideo, type VideoEDL, type VideoSegment, type VideoTimeline, type VideoUploadLink } from './api'
+import TimelinePreview from './video/TimelinePreview'
+import { loadNleDsp, type NleDsp } from './video/nleEngine'
 
-// VideoEditor.tsx -- founder real-time, 2026-09-27: "blue ocean we need a nock video editor that
-// can take uploads from any phone via nock." Three panes, one tab:
+// VideoEditor.tsx -- the MIXFORGE EDITOR: NOCK's non-linear video+audio editing booth. Founder
+// real-time, 2026-09-27: "blue ocean we need a nock video editor that can take uploads from any
+// phone via nock", then 2026-09-28: "ensure NOCK tools video editor is PARENA wasm powered and
+// shares components with MIXFORGE's shared components... ensure we have full non linear video
+// editing for the video and audio clips via nock tools we need a full documentary editing booth",
+// "keep the mixforge branding in nock call it the MIXFORGE EDITOR", and "the mpc should work off
+// of video streams to pull clips in addition to the traditional import and manual snip workflow."
+//
+// Four panes, one tab:
 //   1. Phone upload: mint a short-lived link, show it as a QR code, any phone camera scans it and
 //      uploads from its camera roll (/nock/upload/<token> -- no app, no login on the phone).
 //   2. Clip library: everything uploaded (phone or desktop), with a 720p browser-safe proxy so
-//      iPhone HEVC plays everywhere.
-//   3. Timeline: mark in/out on a clip, append the cut, reorder, render to one MP4 via ffmpeg.
-// v0 is cuts-only (no transitions/titles/audio mixing) -- see internal/nock/video_store.go.
+//      iPhone HEVC plays everywhere. Each clip's viewer has BOTH acquisition paths onto the
+//      timeline: the original manual mark-in/mark-out, and an MPC-style pad row that captures a
+//      clip live off the playing video stream (quick-grab "last N seconds" pads, plus a
+//      press-and-hold pad that marks in on press / out on release, PARENA-computed via
+//      video/nleEngine.ts's pad_capture_in/pad_capture_out).
+//   3. Timeline: non-linear multi-clip editing -- ordered segments with in/out points PLUS a
+//      crossfade transition into each segment and a per-segment fade in/out envelope, both
+//      computed by PARENA/stdlib/video/nle.prn (compiled to video/nle.wasm). A live,
+//      PARENA-wasm-powered preview (video/TimelinePreview.tsx) composites the whole assembled
+//      timeline client-side -- seek anywhere, hear/see the real crossfades -- without waiting on
+//      a server render.
+//   4. Render: the same live preview's math is re-applied server-side via ffmpeg's xfade/
+//      acrossfade/fade filters to produce one distributable MP4 -- see internal/nock/video_store.go.
+//
+// "Shares components with MIXFORGE": video/nleEngine.ts's instantiateDsp and video/waveform.ts are
+// direct ports of MIXFORGE/web/engine.mjs's instantiateDsp and MIXFORGE/web/waveform.mjs (same
+// wasm-boot + peak-waveform-canvas pattern) -- not a cross-repo import (MIXFORGE is a build-step-
+// free static site in a separate repo; NOCK is a separate Vite/React/TS app), the same real
+// pattern, ported. dj.html/multiplayer.html themselves are untouched.
 
 const OUTPUT_PRESETS: { label: string; width: number; height: number }[] = [
   { label: '1080p landscape (16:9)', width: 1920, height: 1080 },
@@ -234,10 +259,51 @@ function ClipViewer({
   const [outMs, setOut] = useState(clip.duration_ms)
   const [name, setName] = useState(clip.name)
   const [error, setError] = useState<string | null>(null)
+  const [dsp, setDsp] = useState<NleDsp | null>(null)
+  const [holding, setHolding] = useState(false)
+  const holdPressSecRef = useRef(0)
+  const [justCaptured, setJustCaptured] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadNleDsp().then(setDsp)
+  }, [])
 
   const now = () => Math.round((ref.current?.currentTime ?? 0) * 1000)
+  const nowSec = () => ref.current?.currentTime ?? 0
   const src = clip.proxy_status === 'ready' ? videos.proxyUrl(clip.id) : videos.originalUrl(clip.id)
   const valid = outMs > inMs
+
+  // MPC-style pad capture off the playing stream (founder real-time: "the mpc should work off of
+  // video streams to pull clips in addition to the traditional import and manual snip workflow").
+  // Quick-grab pads add "the last N seconds ending now" straight to the timeline in one tap; the
+  // HOLD pad marks in on press / out on release, like a sampler gate. Both go through the exact
+  // same onAdd callback the manual mark-in/mark-out flow above already uses -- a third acquisition
+  // path onto the timeline, not a separate one.
+  const quickGrab = (prerollSec: number) => {
+    if (!dsp) return
+    const end = nowSec()
+    const start = dsp.pad_capture_in(end, prerollSec)
+    if (end - start < 0.1) return
+    onAdd({ clip_id: clip.id, in_ms: Math.round(start * 1000), out_ms: Math.round(end * 1000) })
+    setJustCaptured(`Captured ${fmtTime((end - start) * 1000)} → timeline`)
+    window.setTimeout(() => setJustCaptured(null), 2000)
+  }
+  const holdDown = () => {
+    if (!dsp) return
+    holdPressSecRef.current = nowSec()
+    setHolding(true)
+  }
+  const holdUp = () => {
+    if (!dsp) return
+    setHolding(false)
+    const press = holdPressSecRef.current
+    const release = nowSec()
+    const start = dsp.pad_capture_in(press, 0)
+    const end = dsp.pad_capture_out(press, release, dsp.default_min_clip_seconds())
+    onAdd({ clip_id: clip.id, in_ms: Math.round(start * 1000), out_ms: Math.round(Math.min(end, clip.duration_ms / 1000) * 1000) })
+    setJustCaptured(`Captured ${fmtTime((end - start) * 1000)} → timeline`)
+    window.setTimeout(() => setJustCaptured(null), 2000)
+  }
 
   return (
     <section className="video-panel">
@@ -281,6 +347,26 @@ function ClipViewer({
           Add {fmtTime(outMs - inMs)} to timeline
         </button>
       </div>
+      <div className="video-form-row nle-pad-row">
+        <span className="hint">MPC capture (off the playing stream):</span>
+        {[2, 5, 10, 30].map((s) => (
+          <button key={s} type="button" className="nle-pad" disabled={!dsp} onClick={() => quickGrab(s)} title={`Grab the last ${s}s ending at the current playhead`}>
+            −{s}s
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`nle-pad nle-pad-hold ${holding ? 'active' : ''}`}
+          disabled={!dsp}
+          onPointerDown={holdDown}
+          onPointerUp={holdUp}
+          onPointerLeave={() => holding && holdUp()}
+          title="Press and hold while playing: press = in point, release = out point"
+        >
+          HOLD TO MARK
+        </button>
+        {justCaptured && <span className="hint">{justCaptured}</span>}
+      </div>
       {!valid && <p className="error">Out must be after in.</p>}
       {error && <p className="error">{error}</p>}
     </section>
@@ -309,7 +395,16 @@ function TimelinePanel({
   onDelete: () => void
 }) {
   const byId = useMemo(() => new Map(clips.map((c) => [c.id, c])), [clips])
-  const total = edl.segments.reduce((a, s) => a + (s.out_ms - s.in_ms), 0)
+  // Total accounts for crossfade overlap (a transition makes two clips share time, not add to
+  // it) -- clamped the same way the live preview/server render clamp it, so this number matches
+  // what actually plays.
+  const total = edl.segments.reduce((a, s, i) => {
+    const dur = s.out_ms - s.in_ms
+    if (i === 0) return a + dur
+    const prevDur = edl.segments[i - 1].out_ms - edl.segments[i - 1].in_ms
+    const tr = Math.min(Math.max(0, s.transition_ms ?? 0), dur, prevDur)
+    return a + dur - tr
+  }, 0)
   const presetIdx = OUTPUT_PRESETS.findIndex((p) => p.width === edl.width && p.height === edl.height)
 
   const move = (i: number, d: number) => {
@@ -373,6 +468,38 @@ function TimelinePanel({
                   <input type="number" step={0.1} min={0} value={s.out_ms / 1000} onChange={(e) => patch(i, { out_ms: Math.round(Number(e.target.value) * 1000) })} />
                 </label>
                 <span className="hint">{fmtTime(s.out_ms - s.in_ms)}</span>
+                {i > 0 && (
+                  <label title="Crossfade blending in from the previous segment (PARENA-computed, equal-power)">
+                    xfade
+                    <input
+                      type="number"
+                      step={0.1}
+                      min={0}
+                      value={(s.transition_ms ?? 0) / 1000}
+                      onChange={(e) => patch(i, { transition_ms: Math.max(0, Math.round(Number(e.target.value) * 1000)) })}
+                    />
+                  </label>
+                )}
+                <label title="This clip's own fade-in from black + silence">
+                  fade in
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    value={(s.fade_in_ms ?? 0) / 1000}
+                    onChange={(e) => patch(i, { fade_in_ms: Math.max(0, Math.round(Number(e.target.value) * 1000)) })}
+                  />
+                </label>
+                <label title="This clip's own fade-out to black + silence">
+                  fade out
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    value={(s.fade_out_ms ?? 0) / 1000}
+                    onChange={(e) => patch(i, { fade_out_ms: Math.max(0, Math.round(Number(e.target.value) * 1000)) })}
+                  />
+                </label>
                 <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move up">
                   ↑
                 </button>
@@ -520,6 +647,7 @@ export default function VideoEditor() {
 
   return (
     <div className="video-editor">
+      <h2 className="nle-brand">MIXFORGE EDITOR</h2>
       <div className="video-col">
         <PhoneUploadPanel onUploaded={refreshClips} />
         <section className="video-panel">
@@ -562,6 +690,7 @@ export default function VideoEditor() {
           </div>
           {error && <p className="error">{error}</p>}
         </section>
+        {timeline && edl && <TimelinePreview clips={clips} edl={edl} />}
         {timeline && edl && (
           <TimelinePanel
             clips={clips}

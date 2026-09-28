@@ -823,6 +823,29 @@ textarea {
 .video-form-row select {
   @apply w-auto;
 }
+/* ---- MIXFORGE EDITOR extras: live wasm preview + MPC pad capture (2026-09-28) ---- */
+.nle-brand {
+  @apply col-span-full m-0 text-lg font-bold tracking-wide text-accent;
+}
+.nle-preview-canvas-wrap {
+  @apply w-full overflow-hidden rounded bg-black;
+  max-height: 60vh;
+}
+.nle-preview-canvas {
+  @apply h-full w-full object-contain;
+}
+.nle-hidden-video {
+  @apply hidden;
+}
+.nle-pad-row {
+  @apply rounded border border-line bg-bg p-2;
+}
+.nle-pad {
+  @apply btn btn-sm btn-outline;
+}
+.nle-pad-hold.active {
+  @apply btn-error;
+}
 /* ---- Sounds tab (2026-09-27) ---- */
 .sounds-grid {
   @apply grid gap-4;

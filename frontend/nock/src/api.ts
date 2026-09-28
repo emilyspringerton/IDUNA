@@ -1231,6 +1231,16 @@ export interface VideoSegment {
   clip_id: number
   in_ms: number
   out_ms: number
+  /** Crossfade duration blending in from the PREVIOUS segment, ms. 0/undefined = hard cut.
+   * Meaningless on segment 0 (no previous segment) -- ignored there. Computed by
+   * PARENA/stdlib/video/nle.prn's xfade-out-gain/xfade-in-gain (video/nleEngine.ts), both in the
+   * live client-side preview (video/TimelinePreview.tsx) and the server-side ffmpeg render. */
+  transition_ms?: number
+  /** This clip's own fade-in/fade-out (to/from black + silence), independent of any adjacent
+   * transition -- e.g. a documentary clip that should fade up even with no crossfade partner.
+   * Computed by nle.prn's fade-envelope. */
+  fade_in_ms?: number
+  fade_out_ms?: number
 }
 
 export interface VideoEDL {

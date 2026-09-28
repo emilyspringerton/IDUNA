@@ -1401,7 +1401,7 @@ export default function App() {
             Sprays
           </button>
           <button className={tab === 'video' ? 'active' : ''} onClick={() => setTab('video')}>
-            Video
+            MIXFORGE EDITOR
           </button>
           <button className={tab === 'sounds' ? 'active' : ''} onClick={() => setTab('sounds')}>
             Sounds

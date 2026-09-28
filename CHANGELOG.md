@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-09-28
+
+- MIXFORGE EDITOR: NOCK's video editor is now PARENA-wasm powered (stdlib/video/nle.prn -> nle.wasm, same MIXFORGE build pipeline) and shares MIXFORGE's own wasm-boot + peak-waveform component pattern (ported, not cross-repo-imported). Real non-linear editing added: crossfade transitions + fade envelopes, computed identically by a live client-side preview (TimelinePreview.tsx) and the server ffmpeg render (xfade/acrossfade/fade filters). New third clip-acquisition path: MPC-style pad capture off a playing clip (quick-grab + press-and-hold), alongside upload and manual mark-in/mark-out. Tab renamed 'Video' -> 'MIXFORGE EDITOR'. go build/vet/test clean (3 new tests), tsc -b && vite build clean, 14/14 nle.wasm kernel checks pass. (sess-20260923-1030-4a526255)
+
+
 ## 2026-09-27
 - New POST /api/v1/mixforge/cookies -- receives a real cookies.txt from the MIXFORGE cookie-exporter Chrome extension, gated by a bearer token, writes it for room_server.mjs's yt-dlp downloads (sess-20260923-1030-4a526255)
 - MIXFORGE now live at mixforge.okemily.com -- DNS applied (fixed a Cloudflare comment-length bug in Terraform along the way), nginx+cert deployed, and a real 770-permissions traversal bug found and fixed via scoped setfacl grants (first home-dir-served static vhost in the monorepo) (sess-20260923-1030-4a526255)

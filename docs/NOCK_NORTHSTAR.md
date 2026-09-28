@@ -335,3 +335,107 @@ app. Untested on physical phones (Playwright iPhone emulation + real HEVC/rotate
 **Deploy checklist**: `ffmpeg`/`ffprobe` on the IDUNA host; `NOCK_VIDEO_DIR`; `NOCK_VIDEO_MAX_MB`;
 nginx `client_max_body_size` ≥ that for `/nock/upload/` and `/admin/nock/api/videos` (and generous
 `proxy_read_timeout`/`proxy_request_buffering off` so multi-GB phone uploads stream through).
+
+## MIXFORGE EDITOR: PARENA-wasm non-linear editing + MPC clip capture (2026-09-28)
+
+Founder real-time, three messages folded into one real pass: "ensure NOCK tools video editor is
+PARENA wasm powered and shares components with MIXFORGE's shared components... ensure we have
+full non linear video editing for the video and audio clips via nock tools we need a full
+documentary editing booth"; "keep the mixforge branding in nock call it the MIXFORGE EDITOR"; "the
+mpc should work off of video streams to pull clips in addition to the traditional import and
+manual snip workflow." Per Principle 19 ("a big, unscoped ask gets scoped, not swallowed whole"):
+"full non-linear editing" as a category covers multi-track compositing, titles, motion graphics,
+color grading, speed ramps and more — none of that is what got built. What's real below is a
+specific, honest slice: crossfade transitions + fade envelopes, computed once by PARENA and
+applied identically in a live client-side preview and the final server render, plus a third,
+faster clip-acquisition path (MPC pad capture) alongside the two that already existed (desktop/
+phone upload, manual mark-in/mark-out).
+
+**"Shares components with MIXFORGE" — literal, not aspirational.** `frontend/nock/src/video/
+nleEngine.ts`'s `instantiateDsp` and `frontend/nock/src/video/waveform.ts` are direct ports of
+`MIXFORGE/web/engine.mjs`'s own `instantiateDsp` and `MIXFORGE/web/waveform.mjs` (the exact same
+offscreen-canvas peak-render + playhead-repaint pattern). Not a cross-repo import — MIXFORGE is a
+build-step-free static site in a separate repo, NOCK is a separate Vite/React/TS app — the same
+real pattern, ported by hand, same as every other cross-repo idiom-sharing in this monorepo
+(`internal/modelgit.Syncer` from `internal/gitsync.PushWithRetry`, CONSTRUCT generation, etc.).
+`dj.html`/`multiplayer.html` themselves are completely untouched.
+
+**Real, new PARENA module**: `PARENA/stdlib/video/nle.prn` — equal-power crossfade curves
+(`xfade-out-gain`/`xfade-in-gain`, literally the same `quarter-cos` construction
+`stdlib/mixforge/mixer.prn`'s own `pan-left`/`pan-right` already use — no cross-import between the
+two modules, same "each module stands alone" precedent mixer.prn/sampler.prn already set), a
+per-clip fade-in/fade-out envelope (`fade-envelope`) independent of any adjacent transition, and
+MPC pad-capture window math (`pad-capture-in`/`pad-capture-out`, time-based rather than
+sampler.prn's own beat-synced `capture-frames` — documentary footage has no BPM grid). Compiled to
+`frontend/nock/src/video/nle.wasm` via the identical pipeline `MIXFORGE/scripts/build_dsp_wasm.sh`
+established (`parena build` → LLVM IR → `llc -mtriple=wasm32-unknown-unknown` → `wasm-ld`), see
+`frontend/nock/scripts/build_nle_wasm.sh`. Real, live-verified: 14/14 kernel checks
+(`frontend/nock/scripts/nle_test.mjs`) — equal-power crossfade sweep, fade-envelope ramps at every
+boundary, pad-capture min-length/preroll clamping — all pass against the actual built `nle.wasm`,
+not mocked. Found and fixed a real, live, unrelated bug while first running this pipeline: the
+checked-out `PARENA/parena` binary predated a same-day `emit_llvm.c` fix `stdlib/mixforge/
+{mixer,sampler}.prn` themselves needed — `make build` in PARENA picked it up (see MIXFORGE's own
+`CHANGELOG.md`, same-day Bazel entry).
+
+**Live, client-side, non-linear preview** (`frontend/nock/src/video/TimelinePreview.tsx`): the
+literal "non-linear" deliverable — seek anywhere across the WHOLE assembled multi-clip timeline
+via a scrub bar and see/hear the real composited crossfade, without waiting on a server render.
+Two hidden `<video>` elements ping-pong between "current" and "previous" segment during a
+transition window; a `<canvas>` composites them with `globalAlpha` from `xfade_out_gain`/
+`xfade_in_gain`/`fade_envelope`; two `GainNode`s (via `MediaElementAudioSourceNode`) cross-fade the
+audio identically. The exact same offset/duration accumulation math
+(`running = running + dur[i] - transition[i]`) is used independently on both sides of the Go/TS
+boundary — `internal/nock/video_store.go`'s `renderWithTransitions` (the ffmpeg side) and
+`TimelinePreview.tsx`'s `computeGeometry` (the preview side) — checked by hand to agree, not by a
+shared schema (none exists across this boundary, same as every other Go/TS/C convention in this
+monorepo). Honest limits, same "roughly synchronized" spirit as MIXFORGE's own room playback: a
+150ms drift threshold before a video element is reseeked; single video track only, no
+picture-in-picture/overlay tracks.
+
+**Real EDL extension** (`internal/nock/video_store.go`): `Segment` gained `TransitionMS`/
+`FadeInMS`/`FadeOutMS` (all optional, 0/absent = old cuts-only behavior, so every already-saved
+timeline is unaffected). `validateEDL` clamps rather than rejects an over-long value (a transition
+longer than either adjacent clip, or fades that together exceed a clip's own length) and writes
+the clamped number back, so a saved timeline never claims a longer effect than what actually
+plays — same clamp rule the frontend preview and PARENA's own `fade-envelope` boundary condition
+use. Negative values are real, rejected errors (not silently clamped to 0), matching this file's
+existing "out must be after in" rejection style. **Real server-side render**: a per-segment
+`fade=`/`afade=` ffmpeg filter bakes in each clip's own fade during the existing per-segment
+normalize step (composes fine with either render path); when any segment requests a transition, the
+whole render switches from the old concat-demuxer/stream-copy path to a `filter_complex` chain of
+`xfade`(video)/`acrossfade`(audio) across every normalized part
+(`VideoStore.renderWithTransitions`). Named, real simplification: within that chain, a cut with no
+requested transition gets a 50ms floor rather than a true zero-duration crossfade — `xfade`/
+`acrossfade` don't accept zero — imperceptible, not hidden (`minXfadeSec`'s own doc comment).
+Real tests: `TestEDLClampsTransitionFadeAndRejectsNegative`/`TestFadeFilters` (pure Go, no ffmpeg
+needed) plus `TestTimelineRenderWithCrossfade` (real ffmpeg, same `requireFFmpeg`-skip convention
+every other real-media test in this file already uses — **skipped in this sandbox, no ffmpeg
+installed here**, same pre-existing constraint `TestTimelineRenderMixedSources` already lived
+with before this change; both are real and will run in any environment with ffmpeg present, not
+new fakes).
+
+**Real third acquisition path: MPC pad capture** (`ClipViewer` in `VideoEditor.tsx`) — founder:
+"the mpc should work off of video streams to pull clips in addition to the traditional import and
+manual snip workflow." Four quick-grab pads ("−2s"/"−5s"/"−10s"/"−30s" — "grab the last N seconds
+ending at the current playhead," for the reaction-shot-you-just-noticed-was-good case) plus one
+press-and-hold pad (press = mark in, release = mark out, extended to a minimum length for a too-
+quick tap) sit under the existing clip viewer, both wired through `pad_capture_in`/
+`pad_capture_out` and the SAME `onAdd` callback the manual mark-in/mark-out flow already calls —
+a third route onto the timeline, not a parallel, separate one. No backend change needed for this
+part: the pad math runs entirely client-side against the clip already loaded in the viewer.
+
+**Branding**: the NOCK tab previously labeled "Video" is now "MIXFORGE EDITOR" (founder: "keep the
+mixforge branding in nock"); the component itself carries a matching in-page heading. The
+internal tab id (`'video'`) is unchanged — only the visible label and the file's own doc comment
+changed, so no stored/URL state breaks.
+
+**Real, honest, not done** (named, not silently skipped): a full logged-in browser walkthrough of
+the new preview/pad-capture UI — same real, already-standing limitation this doc names generally
+for `/admin/nock` (needs the founder's own real admin cookie session, deliberately not bypassed).
+Verified instead via: `tsc -b && vite build` clean, the real 14/14 `nle_test.mjs` kernel suite
+against the actual built `nle.wasm`, `go build/vet/test ./internal/nock/...` clean (18 pre-existing
++ 3 new tests, two of the three new ones ffmpeg-gated and skipped in this sandbox as noted above).
+Also not done, real and named: multiple video tracks/picture-in-picture, titles/text overlays,
+speed ramps, color grading, transition types beyond a single equal-power dissolve (`xfade=fade`),
+and live-stream (webcam/getUserMedia) capture — "streams" here means an already-uploaded clip
+playing back in the browser, not a live camera feed; a real, separate future phase if wanted.
