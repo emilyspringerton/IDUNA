@@ -11,6 +11,10 @@ node_modules
 dist-ssr
 *.local
 
+# Real screenshots from scripts/ux_screenshot_test.mjs -- local visual-review artifacts, not
+# committed (same reasoning as any other generated test output).
+scripts/ux-screenshots/
+
 # dist/ is deliberately NOT ignored here -- internal/http/handlers/nock_page.go's own go:embed
 # bakes this directory straight into the IDUNA binary, so the built output has to be a real,
 # committed file, not a build artifact recreated by a Go-only `go build`/CI pipeline that never

@@ -281,6 +281,19 @@ copy of that rig:
 - Retargeting needs matching rest poses (T to T, A to A) and has no IK or foot locking.
 - There is no weight painting, skeleton building, or mesh modelling yet.
 
+### Real UX screenshot testing (2026-09-28)
+
+`/admin/nock` has no `ErrorBoundary`, so an uncaught render error in any one tab's component
+blanks the *entire* app (this is what "SHANKPIT levels is down, just a blank screen" turned out to
+look like, live). `frontend/nock/scripts/ux_screenshot_test.mjs` (`npm run test:ux-screenshots`,
+inside `frontend/nock/`) logs in for real through `/admin/login` (a dedicated agent,
+`SCREENSHOT-CI`, provisioned the same way EDDY/HOUSE/BOOTS already are — no cookie forging), clicks
+through all 17 real nav tabs against a real running server, screenshots each one, and fails if any
+tab renders near-empty or throws. Must target a real `*.okemily.com` host (the session cookie is
+domain-scoped) — `https://okemily.com` by default. Screenshots land in
+`frontend/nock/scripts/ux-screenshots/` (gitignored). Not a pixel-diff — it catches "did this
+render real content with zero crashes," not subtle visual regressions.
+
 ---
 
 ## Bob — database admin agent
