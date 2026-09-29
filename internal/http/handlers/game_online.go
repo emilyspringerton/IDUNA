@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"net/http"
 	"os"
 	"regexp"
@@ -1739,8 +1740,18 @@ func (h *GameOnlineHandler) recordingCreate(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	mime := r.Header.Get("Content-Type")
-	ext, ok := allowedRecordingExt[mime]
+	// Real, live-found bug: a browser MediaRecorder's mimeType (and therefore its Blob's .type,
+	// which is what the client sends verbatim as Content-Type) is "audio/webm;codecs=opus", not
+	// bare "audio/webm" -- an exact-match lookup against allowedRecordingExt always missed,
+	// rejecting every real recording. mime.ParseMediaType strips params for the allowlist check
+	// and the extension; the ORIGINAL header (codecs included) is still what's stored as
+	// mime_type, since that's what a later <audio> tag needs for accurate playback.
+	ct := r.Header.Get("Content-Type")
+	base, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		base = ct
+	}
+	ext, ok := allowedRecordingExt[base]
 	if !ok {
 		mmoWriteError(w, http.StatusBadRequest, "unsupported Content-Type -- expected an audio/* type (webm, ogg, mpeg, mp4, wav)")
 		return
@@ -1763,11 +1774,11 @@ func (h *GameOnlineHandler) recordingCreate(w http.ResponseWriter, r *http.Reque
 	id := uuid.NewString()
 	if _, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO mixforge_recordings (id, game, player_id, name, mime_type, size_bytes, audio_data) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, cfg.Slug, pid, name, mime, len(body), body); err != nil {
+		id, cfg.Slug, pid, name, ct, len(body), body); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": name, "mime_type": mime, "size_bytes": len(body)})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": name, "mime_type": ct, "size_bytes": len(body)})
 }
 
 // recordingsList is GET /api/v1/games/{game}/recordings -- the caller's own recordings only,

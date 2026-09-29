@@ -78,6 +78,27 @@ func TestMixforgeRecordings_SaveListDownloadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMixforgeRecordings_AcceptsRealBrowserContentTypeWithCodecParam is a real, live-found
+// regression: a browser MediaRecorder's mimeType (and therefore its Blob's .type, sent verbatim
+// as Content-Type) is "audio/webm;codecs=opus", not bare "audio/webm" -- confirmed against
+// production via a real Playwright run before this fix landed, every real recording was rejected
+// with "unsupported Content-Type". The original header (codec param included) must still be what
+// gets stored as mime_type, since that's what a later <audio> tag needs for accurate playback.
+func TestMixforgeRecordings_AcceptsRealBrowserContentTypeWithCodecParam(t *testing.T) {
+	e := newGameEnv(t)
+	_, _, token := e.register(t, "mixforge", "DJ")
+	code, created := e.postRecording(t, "mixforge", token, "audio/webm;codecs=opus", []byte("real opus bytes"), "set")
+	if code != 200 {
+		t.Fatalf("want 200 got %d body=%v", code, created)
+	}
+	if created["mime_type"] != "audio/webm;codecs=opus" {
+		t.Fatalf("mime_type should preserve the original header incl. codec param, got %v", created["mime_type"])
+	}
+	if created["name"] != "set.webm" {
+		t.Fatalf("name should still get a .webm extension from the base type, got %v", created["name"])
+	}
+}
+
 func TestMixforgeRecordings_RejectsUnsupportedContentType(t *testing.T) {
 	e := newGameEnv(t)
 	_, _, token := e.register(t, "mixforge", "DJ")
