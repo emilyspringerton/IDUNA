@@ -215,8 +215,8 @@ func TestGuestFlow_RegisterLoginVerifyMatchStats(t *testing.T) {
 // TestGuest_EmptyNameAutoGeneratesLoreName -- S512: "Do not ask the player to choose a username
 // on boot... automatically assign them a lore-friendly display name (e.g., Runner-A7B2 or
 // Asset-99X)." Real 25-ticket grant checked in the same pass since both land on the same fresh-
-// guest response. Only 3 iterations -- the per-IP signup cap (game_signup_log, 3/24h) would 429
-// a 4th real registration from this test's own shared RemoteAddr.
+// guest response. Only 3 iterations -- comfortably under the per-IP signup cap
+// (game_signup_log, maxSignupsPerIPPerDay/24h) so a real 429 never gets in this test's way.
 func TestGuest_EmptyNameAutoGeneratesLoreName(t *testing.T) {
 	e := newGameEnv(t)
 	seen := map[string]bool{}
@@ -1169,9 +1169,10 @@ func TestDraftRunReward_MatchesFounderTable(t *testing.T) {
 	pidBot, _, _ := e.register(t, "deadweight", "Bot")
 	var matchID int64
 	for _, c := range cases {
-		// register()'s own anti-abuse cap (3 new accounts / IP / 24h, all real requests in this
-		// test share httptest's blank RemoteAddr) would otherwise refuse this table test's own
-		// 11 registrations -- clear the log between them since that's not what this test covers.
+		// register()'s own anti-abuse cap (maxSignupsPerIPPerDay new accounts / IP / 24h, all real
+		// requests in this test share httptest's blank RemoteAddr) would otherwise refuse this
+		// table test's own 11 registrations -- clear the log between them since that's not what
+		// this test covers.
 		_, _ = e.db.Exec(`DELETE FROM game_signup_log`)
 		seat0, _, tok := e.register(t, "deadweight", fmt.Sprintf("P%d", c.wins))
 		if code, _ := draftRunStartReq(e, t, tok); code != 200 {

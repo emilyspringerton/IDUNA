@@ -249,7 +249,13 @@ func (h *GameOnlineHandler) playerToken(cfg games.Config, subPrefix, playerID, n
 	return tok, exp.Unix(), err
 }
 
-const maxSignupsPerIPPerDay = 3 // founder: "Max 3 new accounts per IP address per 24 hours. No email verification required yet."
+// Founder: "Max 3 new accounts per IP address per 24 hours. No email verification required yet."
+// Relaxed 3 -> 10 (2026-09-29, founder real-time, DEADWEIGHT browser client: "too many accounts
+// today can we relax that to like 10 a day for now") -- still per-IP-per-game (game_signup_log's
+// own `game = ?` filter), so this affects every game on this shared guestRegister path, not just
+// DEADWEIGHT specifically. "For now": a quick unblock for active testing, not a considered
+// permanent anti-abuse posture -- revisit if real abuse shows up at the higher number.
+const maxSignupsPerIPPerDay = 10
 
 // requestIP mirrors allow()'s own X-Forwarded-For-then-RemoteAddr resolution -- kept as a
 // separate helper since the 24h signup cap (a DB-backed count, not the per-minute token bucket

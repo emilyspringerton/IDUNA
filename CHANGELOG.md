@@ -1,6 +1,16 @@
 # IDUNA Changelog
 
 ## 2026-09-29
+- `internal/http/handlers/game_online.go`: relaxed the per-IP-per-game daily guest-signup cap
+  (`maxSignupsPerIPPerDay`) from 3 to 10. Founder real-time, hitting it while testing DEADWEIGHT's
+  browser client: "in DEADWEIGHT browser client - it says too many accounts today can we relax
+  that to like 10 a day for now." Still per-IP-per-game (`game_signup_log`'s own `game = ?`
+  filter), so this is a shared-handler change affecting every game on this path (DEADWEIGHT,
+  BIG_O, BRAWLPIT, SLOWBOT_LEAGUE, etc.), not a DEADWEIGHT-only carve-out. Explicitly named a
+  temporary testing unblock ("for now"), not a reconsidered permanent anti-abuse posture. `go
+  test ./internal/http/handlers/...` green (unrelated per-minute rate-limit test untouched);
+  binary rebuilt and `iduna.service` restarted, live-verified (4 fresh guest registrations
+  succeeded against a shared test IP that already had signups logged today).
 - S583: QR-code Back Office login, founder real-time ("i dont have the password manager set up i
   need a page in iDUNA admin that lets me scan a QR code to log in ... make there a button to
   create a login code just like the nock video uploader"). New `admin_qr_login_codes` table +
