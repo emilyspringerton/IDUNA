@@ -145,6 +145,8 @@ func main() {
 	}
 	adminH.Init()
 	adminLoginH := &handlers.AdminLoginHandler{Store: iamStore, Keys: keys, Issuer: issuer, CookieDomain: os.Getenv("IDUNA_ADMIN_COOKIE_DOMAIN")}
+	adminQRLoginH := &handlers.AdminQRLoginHandler{DB: db, BaseURL: baseURL, StartLimiter: util.NewWindowRateLimiter(20, time.Minute)}
+	adminQRLoginApproveH := &handlers.AdminQRLoginApproveHandler{DB: db, Keys: keys, Issuer: issuer}
 	applesH := &handlers.ApplesHandler{Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
 	pushTokensH := &handlers.PushTokensHandler{Store: iamStore}
 	intelligenceH := &handlers.IntelligenceHandler{Store: iamStore}
@@ -500,6 +502,16 @@ func main() {
 	// Admin login/logout — public (no auth required).
 	mux.Handle("/admin/login", adminLoginH)
 	mux.Handle("/admin/logout", adminLoginH)
+
+	// QR-code Back Office login (S583, founder real-time: "i dont have the password manager set
+	// up i need a page in iDUNA admin that lets me scan a QR code to log in"). The mint/QR-image/
+	// status-poll trio is public -- it IS the login path, same as /admin/login itself -- but
+	// /approve/{token} is real, permission-gated iduna.admin, the actual security boundary. See
+	// handlers/admin_qr_login.go's own header comment for the full design.
+	mux.Handle("/admin/login/qr/api/codes", adminQRLoginH)
+	mux.Handle("/admin/login/qr/api/codes/", adminQRLoginH)
+	adminQRLoginApproveProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(adminQRLoginApproveH))
+	mux.Handle("/admin/login/qr/approve/", adminQRLoginApproveProtected)
 
 	// Admin UI — requires iduna.admin permission; cookie auth for browser navigation.
 	adminProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(adminH))

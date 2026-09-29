@@ -1,6 +1,40 @@
 # IDUNA Changelog
 
 ## 2026-09-29
+- S583: QR-code Back Office login, founder real-time ("i dont have the password manager set up i
+  need a page in iDUNA admin that lets me scan a QR code to log in ... make there a button to
+  create a login code just like the nock video uploader"). New `admin_qr_login_codes` table +
+  `handlers/admin_qr_login.go`: mint a short-lived (5min) code, render it as a QR encoding
+  `/admin/login/qr/approve/{token}`, poll for approval. Real, deliberate security difference from
+  the NOCK upload-link precedent this borrows its shape from: the token itself is never a bearer
+  credential -- `/approve/{token}` requires an already-authenticated `iduna.admin` session (the
+  exact same `RequireCookieAuth`+`iduna.admin` gate every other admin route uses), so
+  scanning/photographing the QR code alone can never grant access, only an already-logged-in
+  device (or one that freshly logs in) can approve it. The approving request's own JWT claims are
+  copied verbatim into a brand-new session token for the waiting browser -- same agent, same
+  permissions, fresh expiry -- and the code is consumed the instant that cookie is delivered, so a
+  replayed poll can never mint a second session. New "Log in with QR code instead" section on
+  `/admin/login` itself. 9 new tests (full mint->QR->approve->cookie-delivery->replay-safety round
+  trip, deny, expiry, and that approve genuinely 401s with no session). `go build/test ./...`
+  clean. Live-verified against production end to end: minted a real code, logged in as a real
+  (disposable, suspended immediately after) test admin agent, approved with its real cookie
+  (bypassing curl's Domain-scoped cookie jar by passing the `Cookie` header directly, since
+  `IDUNA_ADMIN_COOKIE_DOMAIN=.okemily.com` doesn't match a direct `localhost:8080` request), polled
+  status and got back a real, verified iduna_session cookie for the same agent/permissions, polled
+  again and confirmed "consumed" with no cookie -- then confirmed the suspended test agent is
+  immediately locked out (401) by the existing live-status recheck. Rebuilt + restarted
+  `iduna.service` (checked connections first: all loopback).
+- Fixed two other real, founder-reported gaps in the same pass: (1) the NOCK video editor's own
+  phone-upload QR flow ("nock tools video uploader qr... doesnt work") -- root cause found live,
+  not assumed: the admin side that generates the QR (`/admin/nock/api/video-upload-links/{id}/qr`)
+  worked fine, but the URL it actually ENCODES, `/nock/upload/{token}` (the public phone page), had
+  no nginx location block on okemily.com at all and 404'd from the static-site fallback before
+  ever reaching IDUNA -- fixed in `OKEMILY/ops/nginx-okemily.conf` (queued as
+  `sudo-queue/97-okemily-nock-upload-proxy-nginx.sh`, needs the founder to run it). (2) The
+  existing dynamic QR code registry (`/admin/qr`, fully built, create-arbitrary-codes-and-all) was
+  never linked from the Back Office nav menu ("we built a whole infrastructure for QR codes in
+  IDUNA but it never got shipped to the menu") -- one-line fix in `admin.go`'s nav list, live
+  verified against production (a real logged-in session now sees the "QR Codes" link render).
 - S513 fix, live-found via a real Playwright run against production right after the nginx proxy
   deploy: `recordingCreate` rejected every real recording with "unsupported Content-Type" -- a
   browser MediaRecorder's mimeType (and its Blob's `.type`, sent verbatim as the request's

@@ -565,6 +565,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/promptoverse-queue">Prompt-o-verse Queue</a>
   <a href="/admin/drive-slurp">Drive Slurp</a>
   <a href="/admin/kanban">Kanban</a>
+  <a href="/admin/qr">QR Codes</a>
   <a href="/admin/nock">NOCK / BRAWLPIT Levels</a>
   <a href="https://exec.okemily.com" target="_blank" rel="noopener noreferrer">OpenExecutive</a>
   <a href="/admin/openexecutive">OpenExecutive Admin</a>

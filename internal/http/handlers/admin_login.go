@@ -256,8 +256,64 @@ var adminLoginPageTmpl = template.Must(template.New("admin-login").Parse(`<!doct
         <button class="submit" type="submit">Sign In</button>
       </form>
       <p class="footnote">Agent credentials only &mdash; this is not the <a href="/portal/login">Developer Portal</a> sign-in.</p>
+
+      <button type="button" class="qr-toggle" id="qr-toggle">Log in with QR code instead</button>
+      <div class="qr-panel" id="qr-panel" hidden>
+        <p class="sub qr-hint">Scan this with a device that's already signed in (or that has the agent secret saved), then approve there.</p>
+        <img id="qr-img" alt="Scan to approve login" width="192" height="192">
+        <p id="qr-status" class="qr-status">Generating code&hellip;</p>
+      </div>
     </div>
   </div>
 </div>
+<script>
+(function () {
+  var toggle = document.getElementById('qr-toggle');
+  var panel = document.getElementById('qr-panel');
+  var img = document.getElementById('qr-img');
+  var statusEl = document.getElementById('qr-status');
+  var poller = null, started = false;
+
+  function stopPolling() { if (poller) { clearInterval(poller); poller = null; } }
+
+  function start() {
+    if (started) return;
+    started = true;
+    fetch('/admin/login/qr/api/codes', { method: 'POST', credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (code) {
+        img.src = code.qr_url;
+        statusEl.textContent = 'Waiting for approval…';
+        poller = setInterval(function () {
+          fetch(code.status_url, { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (s) {
+              if (s.status === 'approved') {
+                stopPolling();
+                statusEl.textContent = 'Approved — signing in…';
+                window.location.href = '/admin';
+              } else if (s.status === 'denied') {
+                stopPolling();
+                statusEl.textContent = 'Denied on the other device.';
+              } else if (s.status === 'expired' || s.status === 'consumed') {
+                stopPolling();
+                statusEl.textContent = 'Code expired — reload the page to try again.';
+              }
+            });
+        }, 1500);
+      })
+      .catch(function () {
+        statusEl.textContent = 'Could not generate a code — try reloading the page.';
+      });
+  }
+
+  toggle.addEventListener('click', function () {
+    var showing = !panel.hidden;
+    panel.hidden = showing;
+    toggle.textContent = showing ? 'Log in with QR code instead' : 'Hide QR code';
+    if (!showing) start();
+  });
+})();
+</script>
 </body>
 </html>`))

@@ -235,6 +235,9 @@ Migrations live in `migrations/truestore/` named `YYYYMMDDNNNN_description.sql`.
 | `GET/POST/PATCH/DELETE` | `/admin/qr/api/codes[/:slug]` | cookie (iduna.admin) | Same registry, JSON API |
 | `GET` | `/q/:slug` | none | The real redirect a phone camera/printed flyer hits — 302 to the code's current `target_url` |
 | `GET` | `/q/:slug.png` | none | The live-rendered QR image itself, embeddable/printable with no admin session |
+| `POST` | `/admin/login/qr/api/codes` | none | Mint a QR Back Office login code (see `/admin/login`'s own "Log in with QR code instead") |
+| `GET` | `/admin/login/qr/api/codes/:token/qr` \| `/status` | none | The login code's QR image, and the poll endpoint the minting browser waits on — the FIRST poll to observe `approved` gets the real `iduna_session` cookie set on its own response, then the code is consumed |
+| `GET/POST` | `/admin/login/qr/approve/:token` | cookie (iduna.admin) | The real security boundary — approving a pending code requires an *already* authenticated iduna.admin session (or a fresh agent login redirecting back here); the token itself is never a bearer credential |
 | `GET` | `/play/big_o` \| `/play/brawlpit` | none | Public account-creation pages — create/resume a guest account via `/api/v1/games/{game}/guest-*`, no native client required for either game yet |
 | `POST` | `/api/v1/games/{game}/guest-register` \| `guest-login` \| `guest-upgrade` | none / player JWT | Generic per-game guest-account flow (`internal/games.Registry`) — DEADWEIGHT, BIG_O, and BRAWLPIT all ride this same code path |
 | `POST` | `/admin/nock/api/shankpit-widgets/import-gltf` | cookie (iduna.admin) | NOCK glTF → SHANKPIT widget bridge: multipart `file` (.glb / embedded .gltf, same input as the Animations tab importer), `name`, optional `scale`, `preview=1` to convert without saving. One axis-aligned box wall per mesh node (world-space bounds, full node hierarchy transforms, `baseColorFactor` color); nodes named `door*` become scriptless doors. Exact for cube blockouts, lossy for rotated/detailed meshes (bounding box only). Unit-tested; not yet tried against a real Blender export. Also a button in NOCK's Widgets tab. |
@@ -332,6 +335,10 @@ Irreversible DB operations (permanent bans, audit log modification, agent decomm
 - Identity and entitlement lookup at `GET /api/v1/identities/me`
 - Back Office admin ledgers at `/admin` (users, agents, audit events, Apples)
   - Login page: `http://localhost:8080/admin/login` — sign in with an agent that has `iduna.admin` permission
+  - Or "Log in with QR code instead" on that same page — scan with a device that already has a live
+    `iduna.admin` session (or that will freshly log in), approve there, and the waiting browser signs
+    itself in with no `agent_secret` typed on it at all. Genuinely useful on a machine with no
+    password manager set up — the secret still has to be typed *somewhere*, just not there.
   - To grant admin to an agent: assign the `iduna.admin` role via the IDUNA CLI or directly in the DB:
     `INSERT INTO role_assignments(user_id,role_id,operator_id) ...` (see migrations)
   - To authenticate as EMILY for admin access, use her agent credentials configured in `EMILY_SECRET`
