@@ -28,6 +28,15 @@ type Config struct {
 	// own init()), never hardcoded, since a real Steam App ID doesn't exist until the founder's
 	// own Steamworks partner account issues one.
 	SteamAppID string
+	// RecordingsEnabled gates /api/v1/games/{game}/recordings (S513, MIXFORGE's client-side mix
+	// recorder): false means the endpoint 404s for this game, same "not wired up yet" honesty as
+	// SteamAppID above. Gated by PlayPerm, not a separate permission -- there's no additional
+	// privilege being granted here beyond "this is a real player of this game," same reasoning
+	// the games.go package doc already applies to guest accounts. Storage is a BLOB column on
+	// the mixforge_recordings row itself (mirrors nock_sounds' own real, 2-days-prior precedent
+	// for "browser MediaRecorder audio" storage: internal/nock's audio_data BLOB, not a blob
+	// directory on disk), so there's no path/directory config to carry here.
+	RecordingsEnabled bool
 }
 
 // Registry is keyed by slug. Guest accounts and match results are enabled for every entry;
@@ -90,5 +99,17 @@ var Registry = map[string]Config{
 		// human-only Valve-partner-account gate as DEADWEIGHT_STEAM_APPID above).
 		// steam-login 404s for this game until it's set.
 		SteamAppID: os.Getenv("D2_STEAM_APPID"),
+	},
+	// S513, founder real-time, 2026-09-29: "mixforge add a record button that works on the
+	// client side it lets you record the mix and then you can download it or save it to your
+	// IDUNA sso account." MIXFORGE (web/dj.html, web/multiplayer.html) had no player identity
+	// or account-scoped storage of any kind before this -- same "PlayPerm only, no bot/match/
+	// checkpoint/ticket perms" narrow cut big_o's own row already established, since there's no
+	// server-authoritative match concept in a DJ mixer. RecordingsDir is the one genuinely new
+	// resource this game needs: a per-player blob store for recorded mixes.
+	"mixforge": {
+		Slug:              "mixforge",
+		PlayPerm:          "mixforge.play",
+		RecordingsEnabled: true,
 	},
 }

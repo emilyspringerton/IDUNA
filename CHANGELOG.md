@@ -1,5 +1,27 @@
 # IDUNA Changelog
 
+## 2026-09-29
+- S513: MIXFORGE player identity + recorded-mix storage (founder real-time: "mixforge add a
+  record button that works on the client side it lets you record the mix and then you can
+  download it or save it to your IDUNA sso account"). New `internal/games.Registry["mixforge"]`
+  row (`mixforge.play`, `RecordingsEnabled`) -- MIXFORGE had zero IDUNA player identity before
+  this, same narrow "PlayPerm only" cut `big_o`/`brawlpit` already established. Three new
+  `GameOnlineHandler` routes reusing the existing generic `/api/v1/games/{game}/...` machinery
+  (no new handler file): `POST recordings` (raw audio bytes body, Content-Type identifies the
+  format, allowlisted to real audio/* MediaRecorder outputs, 200MB cap), `GET recordings` (own
+  recordings only, newest first), `GET recordings/{id}` (byte-for-byte download, 404s -- never
+  403s -- on another player's ID). Storage is a BLOB column on `mixforge_recordings`
+  (`202609290002`), the same real, 2-days-prior precedent `nock_sounds` already set for
+  browser-`MediaRecorder`-shaped audio, not a new blob-directory-on-disk convention. Player
+  identity is the existing guest-register/email-login/SSO-exchange machinery unchanged -- no
+  guest-account bootstrap needed on MIXFORGE's side for the "save to my account" path, since
+  `ssoExchange` already claims a first-touch, never-scoped IDUNA identity for whichever game
+  calls it first. `SSO_ALLOWED_REDIRECT_HOSTS` gained `mixforge.okemily.com`/`iam.okemily.com`
+  alongside the existing `wotan.okemily.com`. 4 new handler tests (round-trip byte-for-byte,
+  content-type rejection, cross-player 404, per-game disabled-feature 404); full `go test ./...`
+  clean. Live-verified against the real production instance post-restart: guest-register, save,
+  list, and the row landing in `var/iduna.db` all confirmed with real curl calls. (sess-20260923-1030-4a526255)
+
 ## 2026-09-28
 - REAL root cause found and fixed for 'SHANKPIT levels is down, blank screen': THREE.WebGLRenderer throws uncaught when a browser can't create a WebGL context (founder's own browser had hardware acceleration disabled/sandboxed -- confirmed via their real console error), and /admin/nock has no ErrorBoundary anywhere, so that throw unmounted the ENTIRE app, not just the one tab. Six components construct a WebGLRenderer the same way (ShankpitLevelEditor, ShankpitWidgets, Robots, Animator, AnimationEditor, AnimationViewer) -- all six now guarded via new src/webglSupport.ts (createWebglRenderer wraps construction in try/catch, shows a real readable fallback message instead of crashing). New src/TabErrorBoundary.tsx wraps the whole tab-content switch in App.tsx as real defense-in-depth: any future per-tab crash now only blanks that tab, not the whole app. Live-verified: rebuilt+redeployed iduna.service, reproduced the founder's exact scenario against production with Chromium's --disable-webgl, confirmed SHANKPIT Levels now renders fully (level list + inspectors) with a real fallback message where the 3D view would be, zero uncaught errors, other tabs still usable afterward. ux_screenshot_test.mjs now runs its full 17-tab sweep twice (WebGL on and off) -- the first version of this test used default WebGL-on Chromium and missed this bug entirely, named honestly in NORTHSTAR/README rather than glossed over. 34/34 checks pass. (sess-20260923-1030-4a526255)
 - Investigated founder-reported 'SHANKPIT levels is down, blank screen' -- root cause: /admin/nock has no ErrorBoundary so any tab's uncaught render error blanks the whole app, and the live iduna binary hadn't been rebuilt since before this session's own risky 6-branch abandoned-branch merge sweep landed. Rebuilt+redeployed the binary from current HEAD (go build/test clean) via systemctl --user restart. Added real UX screenshot testing per the founder's own follow-up ask: frontend/nock/scripts/ux_screenshot_test.mjs logs in for real (new SCREENSHOT-CI admin agent, cmd/create-admin-agent, no cookie bypass), clicks through all 17 real nav tabs against production, screenshots each, fails on any near-empty #root or uncaught page error. Run live just now: all 17 tabs pass, SHANKPIT Levels included, real screenshot proof saved. (sess-20260923-1030-4a526255)

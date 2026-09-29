@@ -141,6 +141,12 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.duelRespond(w, r, cfg, parts[2], true)
 	case len(parts) == 4 && parts[1] == "duels" && parts[3] == "decline" && r.Method == http.MethodPost:
 		h.duelRespond(w, r, cfg, parts[2], false)
+	case len(parts) == 2 && parts[1] == "recordings" && r.Method == http.MethodPost:
+		h.recordingCreate(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "recordings" && r.Method == http.MethodGet:
+		h.recordingsList(w, r, cfg)
+	case len(parts) == 3 && parts[1] == "recordings" && r.Method == http.MethodGet:
+		h.recordingDownload(w, r, cfg, parts[2])
 	default:
 		http.NotFound(w, r)
 	}
@@ -1680,4 +1686,148 @@ func (h *GameOnlineHandler) leaderboard(w http.ResponseWriter, r *http.Request, 
 		out = append(out, s)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// --- Recordings (S513, MIXFORGE's client-side mix recorder) ------------------------------
+
+// allowedRecordingExt maps the exact Content-Type a browser MediaRecorder/Blob produces to a
+// download filename extension -- a narrow allowlist (reject, not sniff) matching the same
+// judgment DEADWEIGHT's own upload paths already apply to untrusted client input. audio/webm
+// (Chrome/Firefox default Opus container) and audio/ogg (Firefox's alternate) are the two real
+// MediaRecorder outputs; mpeg/mp4/wav are included for a future non-MediaRecorder upload path
+// (e.g. an already-exported file) at zero extra cost.
+var allowedRecordingExt = map[string]string{
+	"audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mpeg": ".mp3",
+	"audio/mp4": ".m4a", "audio/wav": ".wav", "audio/x-wav": ".wav",
+}
+
+const maxRecordingBytes = 200 << 20 // 200MB -- comfortably covers a multi-hour Opus/WebM mix at 64-128kbps
+
+// requirePlayer resolves and validates a bearer player token scoped to cfg -- the same inline
+// player_id/game/PlayPerm check guestUpgrade and verify already do, extracted here since the
+// three recording endpoints below repeat it verbatim.
+func (h *GameOnlineHandler) requirePlayer(w http.ResponseWriter, r *http.Request, cfg games.Config) (pid string, ok bool) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return "", false
+	}
+	pid, _ = claims["player_id"].(string)
+	if pid == "" {
+		mmoWriteError(w, http.StatusForbidden, "recordings need a player token, not an agent token")
+		return "", false
+	}
+	if g, _ := claims["game"].(string); g != cfg.Slug || !hasPerm(claims, cfg.PlayPerm) {
+		mmoWriteError(w, http.StatusForbidden, "token is not valid for this game")
+		return "", false
+	}
+	return pid, true
+}
+
+// recordingCreate is POST /api/v1/games/{game}/recordings: the raw recorded-mix bytes as the
+// request body (a browser Blob straight off MediaRecorder, not multipart -- there's exactly one
+// file per request and no other form fields, so multipart would only add client/server
+// boilerplate). Content-Type identifies the format; an optional X-Recording-Name header supplies
+// a caller-chosen label. Stored as a BLOB column on the row itself (mirrors nock_sounds' own
+// real, days-prior precedent for "browser MediaRecorder audio" storage -- 202609270002_nock_
+// sounds.sql -- rather than a new blob-directory-on-disk convention).
+func (h *GameOnlineHandler) recordingCreate(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	if !cfg.RecordingsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	pid, ok := h.requirePlayer(w, r, cfg)
+	if !ok {
+		return
+	}
+	mime := r.Header.Get("Content-Type")
+	ext, ok := allowedRecordingExt[mime]
+	if !ok {
+		mmoWriteError(w, http.StatusBadRequest, "unsupported Content-Type -- expected an audio/* type (webm, ogg, mpeg, mp4, wav)")
+		return
+	}
+	name := strings.TrimSpace(r.Header.Get("X-Recording-Name"))
+	if name == "" {
+		name = "mix-" + time.Now().UTC().Format("20060102-150405") + ext
+	} else if !strings.HasSuffix(strings.ToLower(name), ext) {
+		name += ext
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRecordingBytes))
+	if err != nil {
+		mmoWriteError(w, http.StatusRequestEntityTooLarge, "recording too large (max 200MB)")
+		return
+	}
+	if len(body) == 0 {
+		mmoWriteError(w, http.StatusBadRequest, "empty recording")
+		return
+	}
+	id := uuid.NewString()
+	if _, err := h.DB.ExecContext(r.Context(),
+		`INSERT INTO mixforge_recordings (id, game, player_id, name, mime_type, size_bytes, audio_data) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, cfg.Slug, pid, name, mime, len(body), body); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": name, "mime_type": mime, "size_bytes": len(body)})
+}
+
+// recordingsList is GET /api/v1/games/{game}/recordings -- the caller's own recordings only,
+// newest first. No admin/cross-player read path exists here (unlike leaderboard/stats above,
+// which are intentionally public) since a recorded mix is private data, not a game stat.
+func (h *GameOnlineHandler) recordingsList(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	if !cfg.RecordingsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	pid, ok := h.requirePlayer(w, r, cfg)
+	if !ok {
+		return
+	}
+	rows, err := h.DB.QueryContext(r.Context(),
+		`SELECT id, name, mime_type, size_bytes, created_at FROM mixforge_recordings
+		 WHERE game = ? AND player_id = ? ORDER BY created_at DESC LIMIT 200`, cfg.Slug, pid)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, name, mime, createdAt string
+		var size int64
+		if err := rows.Scan(&id, &name, &mime, &size, &createdAt); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		out = append(out, map[string]any{"id": id, "name": name, "mime_type": mime, "size_bytes": size, "created_at": createdAt})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"recordings": out})
+}
+
+// recordingDownload is GET /api/v1/games/{game}/recordings/{id} -- streams the raw bytes back
+// with the original Content-Type, for a "play it back" <audio> tag or a save-as download. Scoped
+// by id AND game AND player_id in one query so a recording ID from another player (or another
+// game, if a slug were ever reused) 404s exactly like a nonexistent one -- never a distinguishable
+// 403 that would confirm the ID exists.
+func (h *GameOnlineHandler) recordingDownload(w http.ResponseWriter, r *http.Request, cfg games.Config, id string) {
+	if !cfg.RecordingsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	pid, ok := h.requirePlayer(w, r, cfg)
+	if !ok {
+		return
+	}
+	var name, mime string
+	var data []byte
+	err := h.DB.QueryRowContext(r.Context(),
+		`SELECT name, mime_type, audio_data FROM mixforge_recordings WHERE id = ? AND game = ? AND player_id = ?`,
+		id, cfg.Slug, pid).Scan(&name, &mime, &data)
+	if err != nil {
+		mmoWriteError(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data)
 }
