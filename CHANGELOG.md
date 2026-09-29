@@ -1,6 +1,17 @@
 # IDUNA Changelog
 
 ## 2026-09-29
+- S513 fix, live-found via a real Playwright run against production right after the nginx proxy
+  deploy: `recordingCreate` rejected every real recording with "unsupported Content-Type" -- a
+  browser MediaRecorder's mimeType (and its Blob's `.type`, sent verbatim as the request's
+  Content-Type) is `audio/webm;codecs=opus`, not bare `audio/webm`, so the exact-match
+  `allowedRecordingExt` lookup always missed. Now parses the base media type
+  (`mime.ParseMediaType`) for the allowlist/extension while still storing the original header
+  (codec param included) as `mime_type` for accurate `<audio>` playback later. New regression
+  test using the exact Content-Type a real browser sends. Rebuilt + restarted `iduna.service`
+  (checked live connections first, all loopback), then re-ran the same Playwright script end to
+  end against production: record -> sign in via popup -> save -> shows up in "my mixes" with a
+  working download. IDUNA@acba484. (sess-20260923-1030-4a526255)
 - S513: MIXFORGE player identity + recorded-mix storage (founder real-time: "mixforge add a
   record button that works on the client side it lets you record the mix and then you can
   download it or save it to your IDUNA sso account"). New `internal/games.Registry["mixforge"]`
