@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"iduna/internal/http/handlers"
 	"iduna/internal/http/middleware"
 	"iduna/internal/store"
+	"iduna/internal/userlog"
 )
 
 // Uses the REAL migrations (through the real mysql->sqlite translation), so this also proves
@@ -48,9 +50,10 @@ func testGames() map[string]games.Config {
 }
 
 type gameEnv struct {
-	h    *handlers.GameOnlineHandler
-	keys *authjwt.Keys
-	db   *sql.DB
+	h        *handlers.GameOnlineHandler
+	keys     *authjwt.Keys
+	db       *sql.DB
+	eventLog userlog.EventLog
 }
 
 func newGameEnv(t *testing.T) *gameEnv {
@@ -60,7 +63,12 @@ func newGameEnv(t *testing.T) *gameEnv {
 		t.Fatal(err)
 	}
 	db := newGameDB(t)
-	return &gameEnv{h: &handlers.GameOnlineHandler{DB: db, Keys: keys, Games: testGames()}, keys: keys, db: db}
+	el, err := userlog.NewFileEventLog(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = el.Close() })
+	return &gameEnv{h: &handlers.GameOnlineHandler{DB: db, Keys: keys, Games: testGames(), EventLog: el}, keys: keys, db: db, eventLog: el}
 }
 
 func (e *gameEnv) agentToken(t *testing.T, perms ...string) string {
@@ -1034,6 +1042,53 @@ func TestSetDisplayName_LetsAPlayerChooseTheirOwnUsername(t *testing.T) {
 	_ = otherPid
 	if code, _, _ := e.do("POST", "/api/v1/games/deadweight/set-display-name", otherTok, map[string]string{"display_name": "Hijack"}); code != http.StatusForbidden {
 		t.Errorf("cross-game token should be forbidden from renaming a deadweight player: %d", code)
+	}
+}
+
+// TestGameOnlineHandler_EmitsAccountLifecycleEventsIntoUnifiedLog -- founder real-time
+// (2026-09-29): "we need to be logging the username changes and stuff ... add it to the iduna
+// unified logging we never started using that." Before this, GameOnlineHandler (every game's
+// guest/steam/email/SSO account path) emitted nothing at all into the unified log, unlike
+// GoogleAuthHandler/LocalAuthHandler/etc. Covers the real ask directly: a display-name change is
+// logged with BOTH the old and new name (the whole point of an audit trail), and guest-register
+// is logged too ("and stuff").
+func TestGameOnlineHandler_EmitsAccountLifecycleEventsIntoUnifiedLog(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, tok := e.register(t, "deadweight", "Runner-A7B2")
+
+	if code, _, raw := e.do("POST", "/api/v1/games/deadweight/set-display-name", tok, map[string]string{"display_name": "Gary"}); code != http.StatusOK {
+		t.Fatalf("set-display-name: %d %s", code, raw)
+	}
+
+	recs, err := e.eventLog.ReadFrom(context.Background(), 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sawRegister, sawRename bool
+	for _, rec := range recs {
+		switch rec.Event.Type {
+		case "iduna:games.guest_register":
+			sawRegister = true
+			if !strings.Contains(string(rec.Event.Data), pid) {
+				t.Errorf("guest_register event missing player_id %s: %s", pid, rec.Event.Data)
+			}
+		case "iduna:games.display_name_change":
+			sawRename = true
+			data := string(rec.Event.Data)
+			if !strings.Contains(data, `"old_display_name":"Runner-A7B2"`) {
+				t.Errorf("display_name_change event missing old name: %s", data)
+			}
+			if !strings.Contains(data, `"new_display_name":"Gary"`) {
+				t.Errorf("display_name_change event missing new name: %s", data)
+			}
+		}
+	}
+	if !sawRegister {
+		t.Errorf("expected an iduna:games.guest_register event, got: %+v", recs)
+	}
+	if !sawRename {
+		t.Errorf("expected an iduna:games.display_name_change event, got: %+v", recs)
 	}
 }
 

@@ -1,6 +1,33 @@
 # IDUNA Changelog
 
 ## 2026-09-29
+- **GameOnlineHandler wired into the unified logging backend; new live SSE stream.** Founder
+  real-time: "we need to be logging the username changes and stuff make sure we are using log
+  streaming like in fatbaby user reflux for the logging if we arent already - add it to the iduna
+  unified logging we never started using that." Real, checked-not-assumed gap: `game_online.go`
+  (every game's guest/steam/email/SSO account lifecycle, including the new `set-display-name`)
+  had ZERO emission into the unified log (`var/eventlog/`) -- unlike `GoogleAuthHandler`/
+  `LocalAuthHandler`/`AdminHandler`/etc., which already do. Added `EventLog userlog.EventLog`
+  (optional, fire-and-forget, reuses `emitAuthEvent` verbatim) and wired it at every real
+  account-lifecycle success point: `iduna:games.guest_register`, `.email_linked`, `.email_login`,
+  `.sso_login`, `.steam_login`, and -- the explicit ask -- `.display_name_change` (carries BOTH
+  `old_display_name` and `new_display_name`, the whole point of an audit trail). `main.go` now
+  constructs `GameOnlineHandler` with `EventLog: unifiedLog` (previously constructed inline with
+  no event log at all).
+  Real streaming: checked whether IDUNA already had this ("like in fatbaby [reflux]" -- PRRJECT_
+  FATBABY's own `internal/server/sse.go`, an SSE dashboard polling a sequence-numbered event
+  store) -- it does, `UserEventStreamHandler` (`stream.go`), a faithful port of that exact pattern,
+  generic over the same `userlog.EventLog` interface. It was wired ONLY to the separate, narrower
+  "IDUNA local users" log (`/api/v1/stream/user-events`) -- the unified log itself had no live-tail
+  endpoint. Added `GET /services/search/stream` (`logs.go`'s `RegisterLogsRoutes`), reusing
+  `UserEventStreamHandler` against the unified store, gated by the same `logs.read` permission as
+  `/services/search/jobs`. New tests: `TestGameOnlineHandler_EmitsAccountLifecycleEventsIntoUnifiedLog`,
+  `TestStreamRequiresPermission`, `TestStreamDeliversAlreadyIngestedEvent` (a real event ingested
+  via `/services/collector` arrives over the new stream). `go build/test ./...` clean; binary
+  rebuilt, `iduna.service` restarted; live-verified end to end -- a real register -> sso-exchange
+  -> set-display-name against the running server landed both `iduna:games.sso_login` and
+  `iduna:games.display_name_change` (with the correct old/new names) in the real
+  `var/eventlog/events/*.ndjson` file.
 - **Doxxing fix + real "choose your username" path.** Founder real-time, DEADWEIGHT browser
   client: "there is an issue with the iduna sso for DEADWEIGHT it just uses your email without
   the @gmail.com or whatever thats not good bro it could dox someone never show the email

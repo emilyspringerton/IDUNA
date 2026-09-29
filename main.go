@@ -1252,7 +1252,12 @@ func main() {
 	}
 	mux.Handle("/api/v1/games/deadweight/matches", matchReplayH)
 	mux.Handle("/api/v1/games/deadweight/matches/", matchReplayH)
-	mux.Handle("/api/v1/games/", &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30)})
+	// EventLog wired to unifiedLog (2026-09-29): this whole handler -- every game's guest/steam/
+	// email/SSO account lifecycle, including the new set-display-name -- had never emitted into
+	// the unified logging backend before (founder real-time: "we need to be logging the username
+	// changes and stuff ... add it to the iduna unified logging we never started using that").
+	gameOnlineH := &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30), EventLog: unifiedLog}
+	mux.Handle("/api/v1/games/", gameOnlineH)
 
 	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
 	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:

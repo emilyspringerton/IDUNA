@@ -29,6 +29,7 @@ import (
 	authjwt "iduna/internal/auth/jwt"
 	"iduna/internal/games"
 	"iduna/internal/http/middleware"
+	"iduna/internal/userlog"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -47,6 +48,15 @@ type GameOnlineHandler struct {
 	Issuer  string
 	Games   map[string]games.Config   // nil = games.Registry
 	Limiter *middleware.IPRateLimiter // guest-register / guest-login; nil = unlimited (tests)
+	// EventLog wires this handler's real account-lifecycle events (registration, login,
+	// display-name changes, ...) into IDUNA's unified logging backend -- founder real-time,
+	// 2026-09-29: "we need to be logging the username changes and stuff ... add it to the iduna
+	// unified logging we never started using that." Real, checked-not-assumed gap before this:
+	// this whole handler (every game's guest/steam/email/SSO account path) had zero emission into
+	// the unified log, unlike GoogleAuthHandler/LocalAuthHandler/AdminHandler/etc. which already
+	// do (see auth.go's emitAuthEvent, reused here verbatim). Optional -- nil skips emission
+	// entirely, same fire-and-forget contract every other EventLog field in this repo has.
+	EventLog userlog.EventLog
 }
 
 func (h *GameOnlineHandler) games() map[string]games.Config {
@@ -350,6 +360,9 @@ func (h *GameOnlineHandler) guestRegister(w http.ResponseWriter, r *http.Request
 	}
 	h.topUpTicketsIfDue(r.Context(), cfg, playerID)
 	tickets := h.ticketBalance(r.Context(), cfg, playerID)
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:games.guest_register", "iduna-games", map[string]any{
+		"game": cfg.Slug, "player_id": playerID, "display_name": name, "ip": ip,
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"player_id": playerID, "guest_secret": secret, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": tickets, "account_state": h.accountState(r.Context(), playerID),
@@ -474,6 +487,9 @@ func (h *GameOnlineHandler) guestUpgrade(w http.ResponseWriter, r *http.Request,
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:games.email_linked", "iduna-games", map[string]any{
+		"game": cfg.Slug, "player_id": pid, "display_name": name, "email": req.Email,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "token": tok, "expires_at": exp, "account_state": "base"})
 }
 
@@ -553,6 +569,9 @@ func (h *GameOnlineHandler) emailLogin(w http.ResponseWriter, r *http.Request, c
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
+	emitAuthEvent(ctx, h.EventLog, "iduna:games.email_login", "iduna-games", map[string]any{
+		"game": cfg.Slug, "player_id": pid, "display_name": name,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": h.ticketBalance(ctx, cfg, pid), "account_state": "base", // logged in via credentials, always base
@@ -603,6 +622,9 @@ func (h *GameOnlineHandler) ssoExchange(w http.ResponseWriter, r *http.Request, 
 		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
+	emitAuthEvent(ctx, h.EventLog, "iduna:games.sso_login", "iduna-games", map[string]any{
+		"game": cfg.Slug, "player_id": pid, "display_name": name,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": h.ticketBalance(ctx, cfg, pid), "account_state": "base",
@@ -644,6 +666,9 @@ func (h *GameOnlineHandler) setDisplayName(w http.ResponseWriter, r *http.Reques
 		mmoWriteError(w, http.StatusBadRequest, "display_name must be 1-16 printable characters")
 		return
 	}
+	var oldName string
+	_ = h.DB.QueryRowContext(r.Context(),
+		`SELECT display_name FROM players WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&oldName)
 	res, err := h.DB.ExecContext(r.Context(),
 		`UPDATE players SET display_name = ? WHERE player_id = ? AND game = ? AND disabled_at IS NULL`,
 		name, pid, cfg.Slug)
@@ -655,6 +680,13 @@ func (h *GameOnlineHandler) setDisplayName(w http.ResponseWriter, r *http.Reques
 		mmoWriteError(w, http.StatusNotFound, "unknown player")
 		return
 	}
+	// The explicit ask this endpoint exists for (founder real-time: "we need to be logging the
+	// username changes and stuff") -- old + new name together is what makes this event actually
+	// useful for an audit trail (a real, distinct case from the account-creation/login events
+	// above, which have no "before" state to compare against).
+	emitAuthEvent(r.Context(), h.EventLog, "iduna:games.display_name_change", "iduna-games", map[string]any{
+		"game": cfg.Slug, "player_id": pid, "old_display_name": oldName, "new_display_name": name,
+	})
 	subPrefix := "guest"
 	if sub, _ := claims["sub"].(string); sub != "" {
 		if i := strings.IndexByte(sub, ':'); i > 0 {
@@ -824,6 +856,9 @@ func (h *GameOnlineHandler) steamLogin(w http.ResponseWriter, r *http.Request, c
 		h.topUpTicketsIfDue(ctx, cfg, playerID)
 	}
 	tickets := h.ticketBalance(ctx, cfg, playerID)
+	emitAuthEvent(ctx, h.EventLog, "iduna:games.steam_login", "iduna-games", map[string]any{
+		"game": cfg.Slug, "player_id": playerID, "display_name": name, "is_new": isNew,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player_id": playerID, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": tickets, "is_new": isNew, "account_state": h.accountState(ctx, playerID),

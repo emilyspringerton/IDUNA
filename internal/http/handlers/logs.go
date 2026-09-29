@@ -241,13 +241,27 @@ func (h *LogsHandler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
-// RegisterLogsRoutes wires LogsHandler's own two real endpoints into mux, matching this repo's
+// RegisterLogsRoutes wires LogsHandler's own three real endpoints into mux, matching this repo's
 // own established per-route middleware convention (middleware.RequireAuth + RequirePermission
-// for the protected search endpoint; the collector endpoint does its own dedicated HEC-token
+// for the two protected endpoints; the collector endpoint does its own dedicated HEC-token
 // check instead, matching Splunk's own real HEC design — a separate, lighter-weight auth
 // mechanism from the main JWT system, intended for arbitrary event-emitting callers).
+//
+// GET /services/search/stream — real, live SSE tailing of the unified log (founder real-time,
+// 2026-09-29: "make sure we are using log streaming like in fatbaby user reflux for the logging
+// if we arent already"). Not a new implementation: IDUNA already has exactly this pattern, ported
+// from PRRJECT_FATBABY's own eventstore-backed SSE dashboard (internal/server/sse.go there) —
+// UserEventStreamHandler (stream.go), generic over the same userlog.EventLog interface this
+// handler's own Store already satisfies, previously wired ONLY to the separate, narrower
+// "IDUNA local users" log (var/user-events/, /api/v1/stream/user-events). The unified log itself
+// (var/eventlog/ — where every real game/account/auth/admin event actually lands) had no live-tail
+// endpoint at all until now. Same gate as the synchronous search endpoint (logs.read), same
+// underlying store — a caller can now watch iduna:games.* (and every other unified-log event
+// type) arrive in real time instead of only polling /services/search/jobs after the fact.
 func RegisterLogsRoutes(mux *http.ServeMux, h *LogsHandler, keys *jwt.Keys) {
 	mux.HandleFunc("POST /services/collector", h.HandleCollector)
 	mux.Handle("GET /services/search/jobs",
 		middleware.RequireAuth(keys)(middleware.RequirePermission("logs.read")(http.HandlerFunc(h.HandleSearch))))
+	mux.Handle("GET /services/search/stream",
+		middleware.RequireAuth(keys)(middleware.RequirePermission("logs.read")(&UserEventStreamHandler{Log: h.Store})))
 }

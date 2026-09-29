@@ -2,10 +2,13 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"iduna/internal/auth/jwt"
 	"iduna/internal/http/handlers"
@@ -234,5 +237,70 @@ func TestSearchRejectsBadRegex(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("want 400, got %d", rr.Code)
+	}
+}
+
+// TestStreamRequiresPermission -- the new GET /services/search/stream (founder real-time,
+// 2026-09-29: "make sure we are using log streaming ... if we arent already") is gated by the
+// exact same logs.read permission as the synchronous search endpoint, not left open.
+func TestStreamRequiresPermission(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	mux, _ := newLogsMux(t, keys, "secret-hec-token")
+
+	token := makeAgentToken(t, keys, "rogue", []string{"read.only"})
+	req := httptest.NewRequest(http.MethodGet, "/services/search/stream", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("want 403, got %d", rr.Code)
+	}
+}
+
+// TestStreamDeliversAlreadyIngestedEvent -- a real, live SSE tail of the SAME unified log
+// /services/collector writes into and /services/search/jobs reads from: an event ingested before
+// the stream connects still arrives over the stream (UserEventStreamHandler's own poll-a-cursor
+// loop starts from from_seq, default 1, i.e. full replay), proving this is the same store, not a
+// second, disconnected one. Takes ~2s (the handler's own fixed poll interval) -- inherent to the
+// existing UserEventStreamHandler implementation this reuses verbatim, not something this test
+// controls.
+func TestStreamDeliversAlreadyIngestedEvent(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	mux, _ := newLogsMux(t, keys, "secret-hec-token")
+
+	body := `{"event":{"player_id":"p1","old_display_name":"Runner-A7B2","new_display_name":"Gary"},"sourcetype":"iduna:games.display_name_change","source":"iduna-games"}`
+	req2 := httptest.NewRequest(http.MethodPost, "/services/collector", bytes.NewBufferString(body))
+	req2.Header.Set("Authorization", "Splunk secret-hec-token")
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("seeding event failed: %d %s", rr2.Code, rr2.Body.String())
+	}
+
+	streamToken := makeAgentToken(t, keys, "operator", []string{"logs.read"})
+	ctx, cancel := context.WithCancel(context.Background())
+	streamReq := httptest.NewRequest(http.MethodGet, "/services/search/stream", nil).WithContext(ctx)
+	streamReq.Header.Set("Authorization", "Bearer "+streamToken)
+	streamRR := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		mux.ServeHTTP(streamRR, streamReq)
+		close(done)
+	}()
+	time.Sleep(2500 * time.Millisecond) // past the handler's own 2s poll tick
+	cancel()
+	<-done
+
+	if streamRR.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", streamRR.Code, streamRR.Body.String())
+	}
+	streamed := streamRR.Body.String()
+	if !strings.Contains(streamed, "event: user_event") {
+		t.Errorf("expected at least one user_event SSE frame, got: %s", streamed)
+	}
+	if !strings.Contains(streamed, "iduna:games.display_name_change") || !strings.Contains(streamed, "Gary") {
+		t.Errorf("expected the seeded display-name-change event to be streamed, got: %s", streamed)
 	}
 }

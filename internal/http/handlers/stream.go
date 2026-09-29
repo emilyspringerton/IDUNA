@@ -11,9 +11,13 @@ import (
 	"iduna/internal/userlog"
 )
 
-// UserEventStreamHandler serves GET /api/v1/stream/user-events as a
-// Server-Sent Events (SSE) stream of user-event log records. Colab notebooks
-// can subscribe and react to local_user.* events in real time.
+// UserEventStreamHandler serves a Server-Sent Events (SSE) stream of userlog.EventLog records.
+// Generic over the EventLog interface (2026-09-29) -- originally built and named for
+// /api/v1/stream/user-events (the narrower "IDUNA local users" log, local_user.* events, for
+// Colab notebooks), and reused verbatim -- same interface, same poll-a-sequence-cursor pattern
+// ported from PRRJECT_FATBABY's own eventstore SSE dashboard -- for GET /services/search/stream
+// (the unified log, every iduna:*.* event type) via logs.go's RegisterLogsRoutes. The "user-event"
+// wording below is this handler's own historical name, not a claim about which log is streaming.
 //
 // Query params:
 //
