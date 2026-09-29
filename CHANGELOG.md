@@ -1,6 +1,36 @@
 # IDUNA Changelog
 
 ## 2026-09-29
+- **Doxxing fix + real "choose your username" path.** Founder real-time, DEADWEIGHT browser
+  client: "there is an issue with the iduna sso for DEADWEIGHT it just uses your email without
+  the @gmail.com or whatever thats not good bro it could dox someone never show the email
+  address data publicly" + "when they go back to deadweight they can choose their username."
+  Root cause (`internal/http/handlers/player_email_auth.go`'s `handleRegister`): IDUNA's own
+  unified SSO login page (`sso_login.go`, iam.okemily.com) only ever POSTs email+password to
+  `POST /api/v1/auth/email/register` -- `display_name` is always empty on that path -- and the
+  old default fell back to the literal text before "@" in the email address, permanently stored
+  as a public leaderboard/profile name. Fixed to fall back to the same lore-friendly generated
+  name (`randomGuestName`, "Runner-A7B2" style) guest accounts already use instead, closing the
+  leak for every game on this shared endpoint, not just DEADWEIGHT. Remediated three real (not
+  test-fixture) already-exposed live rows found via direct query (email-local-part == stored
+  display_name), including the founder's own DEADWEIGHT account -- reassigned to generated
+  names; players can rename themselves normally going forward.
+  New `POST /api/v1/games/{game}/set-display-name` (`game_online.go`): the first real
+  display-name-update endpoint for any game on this handler -- `steamLogin`'s own comment
+  ("the player can rename later via whatever display-name-update path this game adds") and this
+  same doxxing bug both pointed at the same real, previously-missing gap. Requires a real player
+  bearer token scoped to the calling game (guest/steam/email/SSO all qualify), reuses
+  `cleanDisplayName`'s existing 1-16-printable-character rule, reissues a fresh token whose
+  `display_name` claim matches immediately. New tests: `TestEmailRegister_
+  DefaultDisplayNameNeverLeaksEmail`, `TestSetDisplayName_LetsAPlayerChooseTheirOwnUsername`
+  (rename + validation + agent-token/cross-game refusal). Also fixed a real, found-live gap in
+  the previous session's own signup-cap-relaxation work: `TestSignupRateLimit_
+  ThreePerIPPerDay` still hardcoded the OLD cap of 3 in its actual assertions (not just a
+  comment, which the prior pass had already updated) -- `go test ./...` should have caught this
+  at the time and didn't; renamed/fixed to the real cap of 10
+  (`TestSignupRateLimit_TenPerIPPerDay`). `go build/test ./...` clean; binary rebuilt,
+  `iduna.service` restarted, live-verified end to end (fresh register -> non-PII name; sso-
+  exchange -> set-display-name -> fresh token carries the new name).
 - `internal/http/handlers/game_online.go`: relaxed the per-IP-per-game daily guest-signup cap
   (`maxSignupsPerIPPerDay`) from 3 to 10. Founder real-time, hitting it while testing DEADWEIGHT's
   browser client: "in DEADWEIGHT browser client - it says too many accounts today can we relax

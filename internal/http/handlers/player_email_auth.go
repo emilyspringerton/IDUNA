@@ -87,13 +87,20 @@ func (h *PlayerEmailAuthHandler) handleRegister(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		return
 	}
+	// Never derive a public display name from the email address (founder real-time, 2026-09-29:
+	// "it just uses your email without the @gmail.com or whatever thats not good bro it could dox
+	// someone never show the email address data publicly"). This endpoint is what IDUNA's own
+	// unified SSO login page (sso_login.go, iam.okemily.com) calls on register -- its two-pane form
+	// only ever collects email+password, so req.DisplayName is empty on every real SSO signup,
+	// meaning EVERY account created that way used to get "emilyspringerton" (the exact local part
+	// of the real email address) as a permanent, publicly-shown leaderboard/profile name. Falls
+	// back to the same lore-friendly, non-identifying generator guest accounts already use
+	// (randomGuestName, game_online.go) instead -- a caller that legitimately wants a real chosen
+	// name (registerAndClaim-style flows) still passes DisplayName explicitly and skips this path
+	// entirely. The caller-facing contract (a game's own "choose your username" UI) is the intended
+	// way a player replaces this generated default -- see GameOnlineHandler.setDisplayName.
 	if req.DisplayName == "" {
-		at := strings.Index(req.Email, "@")
-		if at > 0 {
-			req.DisplayName = req.Email[:at]
-		} else {
-			req.DisplayName = req.Email
-		}
+		req.DisplayName = randomGuestName()
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)

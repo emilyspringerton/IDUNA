@@ -971,6 +971,72 @@ func TestSSOExchange_NoSuchPlayerIsARealNotFound(t *testing.T) {
 	}
 }
 
+// TestSetDisplayName_LetsAPlayerChooseTheirOwnUsername -- founder real-time (2026-09-29), same
+// thread as the email-doxxing default-name fix: "when they go back to deadweight they can choose
+// their username." Covers the real, previously-missing path steamLogin's own comment already
+// named ("the player can rename later via whatever display-name-update path this game adds") --
+// works for any player token (guest here; sso-exchange/email tokens carry the identical
+// player_id+game+permissions shape), persists to the players row, and the freshly-issued token
+// actually carries the new name (not just the HTTP response body).
+func TestSetDisplayName_LetsAPlayerChooseTheirOwnUsername(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, tok := e.register(t, "deadweight", "Runner-A7B2")
+
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/set-display-name", tok, map[string]string{"display_name": "Gary"})
+	if code != http.StatusOK {
+		t.Fatalf("set-display-name: %d %s", code, raw)
+	}
+	if m["player_id"] != pid {
+		t.Fatalf("player_id = %v, want %s", m["player_id"], pid)
+	}
+	if m["display_name"] != "Gary" {
+		t.Fatalf("display_name = %v, want Gary", m["display_name"])
+	}
+	newTok, _ := m["token"].(string)
+	if newTok == "" {
+		t.Fatalf("expected a freshly-issued token, got none: %s", raw)
+	}
+	claims, err := authjwt.Verify(e.keys, newTok)
+	if err != nil {
+		t.Fatalf("verify new token: %v", err)
+	}
+	if claims["display_name"] != "Gary" {
+		t.Fatalf("new token display_name claim = %v, want Gary", claims["display_name"])
+	}
+	if claims["player_id"] != pid || claims["game"] != "deadweight" {
+		t.Fatalf("new token lost its player identity/game scope: %v", claims)
+	}
+
+	var stored string
+	if err := e.db.QueryRow(`SELECT display_name FROM players WHERE player_id=?`, pid).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != "Gary" {
+		t.Fatalf("players.display_name = %q, want Gary", stored)
+	}
+
+	// Validation: same 1-16-printable-character rule every other display-name path enforces.
+	if code, _, _ := e.do("POST", "/api/v1/games/deadweight/set-display-name", newTok, map[string]string{"display_name": ""}); code != http.StatusBadRequest {
+		t.Errorf("empty display_name should be rejected: %d", code)
+	}
+	if code, _, _ := e.do("POST", "/api/v1/games/deadweight/set-display-name", newTok, map[string]string{"display_name": "waytoolongofadisplayname"}); code != http.StatusBadRequest {
+		t.Errorf("overlong display_name should be rejected: %d", code)
+	}
+
+	// An agent token (no player_id claim) must never be able to rename a player.
+	agentTok := e.agentToken(t, "deadweight.play")
+	if code, _, _ := e.do("POST", "/api/v1/games/deadweight/set-display-name", agentTok, map[string]string{"display_name": "Hijack"}); code != http.StatusForbidden {
+		t.Errorf("agent token should be forbidden from set-display-name: %d", code)
+	}
+
+	// A token scoped to a different game must not be able to rename this player.
+	otherPid, _, otherTok := e.register(t, "othergame", "Someone")
+	_ = otherPid
+	if code, _, _ := e.do("POST", "/api/v1/games/deadweight/set-display-name", otherTok, map[string]string{"display_name": "Hijack"}); code != http.StatusForbidden {
+		t.Errorf("cross-game token should be forbidden from renaming a deadweight player: %d", code)
+	}
+}
+
 // TestEmailLogin_ClaimsAnUnscopedAccountAndRefusesAnotherGamesAccount -- the exact real scenario
 // the founder hit: register generically via IDUNA's SSO, then use the DEADWEIGHT client/web's own
 // email-login with the same credentials -- it must now succeed (claiming the identity for
@@ -1024,17 +1090,22 @@ func TestGuestUpgrade_RequiresPlayerTokenAndValidEmail(t *testing.T) {
 	}
 }
 
-func TestSignupRateLimit_ThreePerIPPerDay(t *testing.T) {
+// TestSignupRateLimit_TenPerIPPerDay -- cap relaxed 3 -> 10 (2026-09-29, founder real-time,
+// DEADWEIGHT browser client: "too many accounts today can we relax that to like 10 a day for
+// now"). Hardcodes 10 rather than importing game_online.go's own unexported
+// maxSignupsPerIPPerDay (this file is package handlers_test) -- if that constant ever changes
+// again, this test's own name and loop bound are the deliberate, visible tripwire.
+func TestSignupRateLimit_TenPerIPPerDay(t *testing.T) {
 	e := newGameEnv(t)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 10; i++ {
 		code, _, raw := e.do("POST", "/api/v1/games/deadweight/guest-register", "", map[string]string{"display_name": "P"})
 		if code != 201 {
 			t.Fatalf("signup %d should succeed: %d %s", i, code, raw)
 		}
 	}
-	code, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-register", "", map[string]string{"display_name": "P4"})
+	code, _, _ := e.do("POST", "/api/v1/games/deadweight/guest-register", "", map[string]string{"display_name": "P11"})
 	if code != http.StatusTooManyRequests {
-		t.Fatalf("4th signup from the same IP within 24h should be refused, got %d", code)
+		t.Fatalf("11th signup from the same IP within 24h should be refused, got %d", code)
 	}
 }
 

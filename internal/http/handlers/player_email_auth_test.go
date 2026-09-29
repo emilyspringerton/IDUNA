@@ -264,3 +264,50 @@ func TestEmailRegister_NoGameLeavesClaimAbsent(t *testing.T) {
 		t.Fatalf("expected no game claim at all, got %v", claims["game"])
 	}
 }
+
+// TestEmailRegister_DefaultDisplayNameNeverLeaksEmail -- real bug, founder real-time (2026-09-29):
+// "it just uses your email without the @gmail.com or whatever thats not good bro it could dox
+// someone never show the email address data publicly." IDUNA's own unified SSO login page
+// (sso_login.go) only ever POSTs email+password to this exact endpoint -- display_name is always
+// empty on that path -- so the old "email local part" default meant every real SSO signup got the
+// literal text before "@" in their email address as a permanent, publicly-shown display name.
+func TestEmailRegister_DefaultDisplayNameNeverLeaksEmail(t *testing.T) {
+	db := newTestEmailAuthDB(t)
+	defer db.Close()
+	h := &handlers.PlayerEmailAuthHandler{DB: db, Keys: newTestKeys(t), Issuer: "test"}
+
+	regBody := `{"email":"emilyspringerton@gmail.com","password":"correcthorsebattery"}`
+	w := doEmailAuth(h, "/api/v1/auth/email/register", regBody)
+	if w.Code != http.StatusOK {
+		t.Fatalf("register: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var reg struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &reg); err != nil {
+		t.Fatalf("decode register response: %v", err)
+	}
+	if reg.DisplayName == "emilyspringerton" || strings.Contains(strings.ToLower(reg.DisplayName), "emilyspringerton") {
+		t.Fatalf("default display name must never be derived from the email address, got %q", reg.DisplayName)
+	}
+	if reg.DisplayName == "" {
+		t.Fatalf("expected a non-empty generated display name")
+	}
+
+	// An explicit, caller-chosen display name must still pass through untouched -- this fix only
+	// changes the EMPTY-string default, never a real caller-supplied name.
+	regBody2 := `{"email":"chosen@example.com","password":"correcthorsebattery","display_name":"Gary"}`
+	w2 := doEmailAuth(h, "/api/v1/auth/email/register", regBody2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("register: status=%d body=%s", w2.Code, w2.Body.String())
+	}
+	var reg2 struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.Unmarshal(w2.Body.Bytes(), &reg2); err != nil {
+		t.Fatalf("decode register response: %v", err)
+	}
+	if reg2.DisplayName != "Gary" {
+		t.Fatalf("expected explicit display_name to pass through, got %q", reg2.DisplayName)
+	}
+}

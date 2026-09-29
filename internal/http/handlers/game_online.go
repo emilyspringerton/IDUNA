@@ -102,6 +102,8 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.emailLogin(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "sso-exchange" && r.Method == http.MethodPost:
 		h.ssoExchange(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "set-display-name" && r.Method == http.MethodPost:
+		h.setDisplayName(w, r, cfg)
 	case len(parts) == 3 && parts[1] == "draft-run" && parts[2] == "start" && r.Method == http.MethodPost:
 		h.draftRunStart(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "draft-run" && r.Method == http.MethodGet:
@@ -605,6 +607,66 @@ func (h *GameOnlineHandler) ssoExchange(w http.ResponseWriter, r *http.Request, 
 		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": h.ticketBalance(ctx, cfg, pid), "account_state": "base",
 	})
+}
+
+// setDisplayName is the real "choose your username" path (founder real-time, 2026-09-29, same
+// thread as the email-doxxing fix in player_email_auth.go's handleRegister): the first real
+// display-name-update endpoint for any game on this shared handler -- steamLogin's own comment
+// ("the player can rename later via whatever display-name-update path this game adds") and
+// ssoExchange's email-derived defaults both pointed at a gap this closes for every game at once,
+// not just DEADWEIGHT. Requires a real player bearer token (guest, steam, or email/SSO -- any
+// token playerToken/ssoExchange/guestUpgrade issues carries player_id), scoped to THIS game, same
+// shape verify's own human-token branch checks. Reuses cleanDisplayName -- the exact 1-16
+// printable-character rule DEADWEIGHT's own client-side isValidDisplayName mirrors.
+func (h *GameOnlineHandler) setDisplayName(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, _ := claims["player_id"].(string)
+	if pid == "" {
+		mmoWriteError(w, http.StatusForbidden, "set-display-name needs a player token, not an agent token")
+		return
+	}
+	if g, _ := claims["game"].(string); g != cfg.Slug || !hasPerm(claims, cfg.PlayPerm) {
+		mmoWriteError(w, http.StatusForbidden, "token is not valid for this game")
+		return
+	}
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	name, ok := cleanDisplayName(req.DisplayName)
+	if !ok {
+		mmoWriteError(w, http.StatusBadRequest, "display_name must be 1-16 printable characters")
+		return
+	}
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE players SET display_name = ? WHERE player_id = ? AND game = ? AND disabled_at IS NULL`,
+		name, pid, cfg.Slug)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		mmoWriteError(w, http.StatusNotFound, "unknown player")
+		return
+	}
+	subPrefix := "guest"
+	if sub, _ := claims["sub"].(string); sub != "" {
+		if i := strings.IndexByte(sub, ':'); i > 0 {
+			subPrefix = sub[:i]
+		}
+	}
+	tok, exp, err := h.playerToken(cfg, subPrefix, pid, name)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "token": tok, "expires_at": exp})
 }
 
 // --- Steam auth (S507) -------------------------------------------------------------------
