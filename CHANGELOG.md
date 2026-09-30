@@ -1,5 +1,17 @@
 # IDUNA Changelog
 
+## 2026-09-30
+
+- New `cmd/nock_gen_tyler_levels` + `cmd/nock_gen_textures` (throwaway one-shot loaders, S536
+  MODE_TYLER demo, SHANKPIT/docs2/specs/TYLER_VALHANNA_MODE_NORTHSTAR.md): register TYLER
+  VALHANNA's two real levels (`TYLER_VALHANNA_ICELAND_1986` id 24, `CONSTRUCT` id 23) directly into
+  `internal/shankpit.LevelStore`'s live SQLite registry, and load two hand-authored PARENA
+  procedural texture sources (`institutional_tile.prn`/`ecs_screen_glow.prn`) via
+  `nock.TextureStore.CreateProceduralTexture` directly -- bypassing `cmd/nock`'s own
+  `texture-generate`'s Vertex AI credential requirement, since these are hand-written source, not
+  LLM-generated. Real ids 25/26 in NOCK's texture library, PNGs rendered and visually checked (one
+  real bug caught this way and fixed: a `min`/`max` mixup in the tile's own seam function).
+
 ## 2026-09-29
 - **GameOnlineHandler wired into the unified logging backend; new live SSE stream.** Founder
   real-time: "we need to be logging the username changes and stuff make sure we are using log
