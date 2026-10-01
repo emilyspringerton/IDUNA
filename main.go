@@ -760,6 +760,9 @@ func main() {
 	mux.Handle("/admin/nock/api/door-scripts/", nockDoorScriptsProtected)
 	nockDoorScriptsPublicH := &handlers.NockDoorScriptsPublicHandler{Store: doorScriptStore}
 	mux.Handle("/api/v1/nock-door-scripts/", nockDoorScriptsPublicH)
+	// Public, read-only, allowlisted (bullet-hole-*) by-name texture images -- SHANKPIT's native
+	// client fetches its per-gun bullet-hole decals from the NOCK texture library here.
+	mux.Handle("/api/v1/nock-textures/by-name/", &handlers.NockTexturesPublicHandler{Store: &nock.TextureStore{DB: db}})
 
 	// NOCK video editor (founder real-time, 2026-09-27: "blue ocean we need a nock video editor
 	// that can take uploads from any phone via nock"). Clip bytes live on disk under

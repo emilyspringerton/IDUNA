@@ -41,11 +41,26 @@ func main() {
 	}{
 		{"tyler-institutional-tile", "/home/fatbaby/PARENA/stdlib/shankpit/textures/institutional_tile.prn",
 			"cold institutional floor/wall tile for windowless server rooms and lab corridors, scaled-down grout grid", 256},
+		// SHANKPIT per-gun bullet-hole decals (founder real-time 2026-10-01) -- multiply-blended,
+		// pure-white-background; fetched by the game via GET /api/v1/nock-textures/by-name/<name>/image.
+		{"bullet-hole-magnum", "/home/fatbaby/PARENA/stdlib/shankpit/textures/bullet_hole_magnum.prn",
+			"magnum bullet hole: medium punched core with scorch halo and short cracks", 64},
+		{"bullet-hole-ar", "/home/fatbaby/PARENA/stdlib/shankpit/textures/bullet_hole_ar.prn",
+			"assault rifle bullet hole: small tight hole, light scorch", 64},
+		{"bullet-hole-shotgun", "/home/fatbaby/PARENA/stdlib/shankpit/textures/bullet_hole_shotgun.prn",
+			"shotgun pellet hole: tiny ragged pit with flaking, drawn many per blast", 64},
+		{"bullet-hole-sniper", "/home/fatbaby/PARENA/stdlib/shankpit/textures/bullet_hole_sniper.prn",
+			"sniper bullet hole: large core with wide spalled halo and long radiating cracks", 64},
 		{"tyler-ecs-screen-glow", "/home/fatbaby/PARENA/stdlib/shankpit/textures/ecs_screen_glow.prn",
 			"phosphor-green CRT terminal glow with scanlines and vignette, for an ECS-brand 1986 monitor prop", 256},
 	}
 
 	for _, t := range textures {
+		// Idempotent: re-running the loader must not duplicate or fail on an existing name.
+		if existing, err := ts.GetTextureByName(context.Background(), t.name); err == nil {
+			fmt.Printf("exists  texture id=%d name=%s (skipped)\n", existing.ID, existing.Name)
+			continue
+		}
 		src, err := os.ReadFile(t.path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "read", t.path, ":", err)

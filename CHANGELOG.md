@@ -1,5 +1,9 @@
 # IDUNA Changelog
 
+## 2026-10-01
+
+- NOCK: public read-only `GET /api/v1/nock-textures/by-name/{name}/image` (allowlisted `bullet-hole-` prefix only, 404 for everything else; `handlers/nock_textures_public.go`, wired in `main.go`) so SHANKPIT's native client can fetch its per-gun bullet-hole decals from the NOCK texture library; `cmd/nock_gen_textures` now idempotent and loads the four `bullet-hole-*` PARENA textures (loaded into the live NOCK DB as ids 27-30). Needs an IDUNA redeploy to take effect; `internal/nock/bullet_hole_guns_test.go` renders all four through the real pipeline.
+
 ## 2026-09-30
 
 - New `cmd/nock_gen_tyler_levels` + `cmd/nock_gen_textures` (throwaway one-shot loaders, S536
