@@ -760,6 +760,13 @@ func main() {
 	mux.Handle("/admin/nock/api/door-scripts/", nockDoorScriptsProtected)
 	nockDoorScriptsPublicH := &handlers.NockDoorScriptsPublicHandler{Store: doorScriptStore}
 	mux.Handle("/api/v1/nock-door-scripts/", nockDoorScriptsPublicH)
+	// NOCK EduVM snippets (card #495): saveable EduScript attached to widgets; admin CRUD + public read-only list
+	// for the SHANKPIT lobby's Architect's Orb. See internal/nock/edu_snippet_store.go.
+	eduSnippetStore := &nock.EduSnippetStore{DB: db}
+	nockEduSnippetsProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.NockEduSnippetsHandler{Store: eduSnippetStore}))
+	mux.Handle("/admin/nock/api/edu-snippets", nockEduSnippetsProtected)
+	mux.Handle("/admin/nock/api/edu-snippets/", nockEduSnippetsProtected)
+	mux.Handle("/api/v1/nock-edu-snippets", &handlers.NockEduSnippetsPublicHandler{Store: eduSnippetStore})
 	// Public, read-only, allowlisted (bullet-hole-*) by-name texture images -- SHANKPIT's native
 	// client fetches its per-gun bullet-hole decals from the NOCK texture library here.
 	mux.Handle("/api/v1/nock-textures/by-name/", &handlers.NockTexturesPublicHandler{Store: &nock.TextureStore{DB: db}})
