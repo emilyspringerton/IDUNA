@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-02
+- kanban: new Pending lane (rule 9) -- backend queue, 6-column board with a Pending column and send-to option, openapi enum; emily kanban list/move/add accept pending (sess-20260923-1030-4a526255)
 - Widget importer now accepts .stl (binary + ASCII): one bounding-box wall, Z-up converted to Y-up; dropzone/accept/hints updated (sess-20260923-1030-4a526255)
 - NOCK widget glTF import: drag-and-drop zone matching the character importer; clear error for native .blend uploads (sess-20260923-1030-4a526255)
 - feat(shankpit): public read-only model route GET /api/v1/shankpit-models/MODEL_<NAME> (#447) — serves a NOCK widget named MODEL_* as its box list so the native client can draw it in hand (the hammer: Blender -> Widgets glTF import -> MODEL_HAMMER). Non-MODEL_ widgets are never served; GET only. WidgetStore.GetWidgetByName. Tests added. Needs IDUNA rebuild+restart. (sess-20260923-1030-4a526255)
