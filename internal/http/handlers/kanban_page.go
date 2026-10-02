@@ -66,7 +66,7 @@ const kanbanPageHTML = `<!doctype html>
   h1 { margin: 0; font-family: "Cormorant Garamond", serif; font-weight: 500; font-size: 2rem; letter-spacing: 0.01em; }
   .sub { color: var(--text-muted); font-size: 0.85rem; }
   main { padding: 1.6rem 2rem 3rem; }
-  .board { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: 1.2rem; align-items: start; }
+  .board { display: grid; grid-template-columns: repeat(6, minmax(240px, 1fr)); gap: 1.2rem; align-items: start; }
   .col.inbox { background: color-mix(in srgb, var(--panel) 80%, var(--bg-soft) 20%); }
   .card.inbox-card { cursor: grab; border-style: dashed; }
   .card.inbox-card .id { color: var(--text-muted); }
@@ -198,6 +198,10 @@ const kanbanPageHTML = `<!doctype html>
       <h2>Priority <span class="count" id="count-priority">0</span></h2>
       <div class="cards" id="cards-priority"></div>
     </div>
+    <div class="col" data-queue="pending" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <h2>Pending <span class="count" id="count-pending">0</span></h2>
+      <div class="cards" id="cards-pending"></div>
+    </div>
     <div class="col" data-queue="cruise" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
       <h2>Cruise <span class="count" id="count-cruise">0</span></h2>
       <div class="cards" id="cards-cruise"></div>
@@ -224,7 +228,7 @@ function esc(s) {
   return d.innerHTML;
 }
 
-const QUEUE_LABELS = { backlog: 'Backlog', priority: 'Priority', cruise: 'Cruise' };
+const QUEUE_LABELS = { backlog: 'Backlog', priority: 'Priority', pending: 'Pending', cruise: 'Cruise' };
 
 // moveToSelectHTML: the "send to" quick-move control for one card -- see
 // this file's own CSS/JS comments on why this exists alongside drag.
@@ -242,7 +246,7 @@ const QUEUE_LABELS = { backlog: 'Backlog', priority: 'Priority', cruise: 'Cruise
 function moveToSelectHTML(kind, id, title, excludeQueue) {
   const titleAttr = title != null ? ' data-title="' + esc(title) + '"' : '';
   let opts = '<option value="">Send to…</option>';
-  for (const q of ['backlog', 'priority', 'cruise']) {
+  for (const q of ['backlog', 'priority', 'pending', 'cruise']) {
     if (q === excludeQueue) continue;
     opts += '<option value="' + q + '">' + QUEUE_LABELS[q] + '</option>';
   }
@@ -329,14 +333,14 @@ function renderInbox(items) {
 // without re-walking the DOM -- a real, non-drag path to the same S207-68
 // ask ("i should have the ability to sort the cards in a column"), since
 // drag-and-drop alone isn't reliably usable/testable on every input device.
-let kanbanOrder = { backlog: [], priority: [], cruise: [] };
+let kanbanOrder = { backlog: [], priority: [], pending: [], cruise: [] };
 
 function render(cards) {
-  const byQueue = { backlog: [], priority: [], cruise: [] };
+  const byQueue = { backlog: [], priority: [], pending: [], cruise: [] };
   for (const c of cards) {
     (byQueue[c.queue] || byQueue.backlog).push(c);
   }
-  for (const q of ['backlog', 'priority', 'cruise']) {
+  for (const q of ['backlog', 'priority', 'pending', 'cruise']) {
     const list = byQueue[q].sort((a, b) => a.position - b.position);
     kanbanOrder[q] = list.map(c => c.id);
     document.getElementById('count-' + q).textContent = list.length;

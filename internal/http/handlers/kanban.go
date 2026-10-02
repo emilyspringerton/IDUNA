@@ -154,7 +154,7 @@ func kanbanBoardIDFromQuery(r *http.Request) (int64, error) {
 	return strconv.ParseInt(raw, 10, 64)
 }
 
-var validKanbanQueues = map[string]bool{"backlog": true, "priority": true, "cruise": true}
+var validKanbanQueues = map[string]bool{"backlog": true, "priority": true, "cruise": true, "pending": true}
 
 func (h *KanbanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// KBUX-CACHE-001 (founder real-time, 2026-09-05: "my web interface shows 30 items in
@@ -219,7 +219,7 @@ func (h *KanbanHandler) list(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case queue != "" && q != "":
 		if !validKanbanQueues[queue] {
-			http.Error(w, "queue must be one of: backlog, priority, cruise", http.StatusBadRequest)
+			http.Error(w, "queue must be one of: backlog, priority, pending, cruise", http.StatusBadRequest)
 			return
 		}
 		pattern := kanbanSearchPattern(q)
@@ -229,7 +229,7 @@ func (h *KanbanHandler) list(w http.ResponseWriter, r *http.Request) {
 			 ORDER BY position ASC, id ASC`, queue, boardID, pattern, pattern)
 	case queue != "":
 		if !validKanbanQueues[queue] {
-			http.Error(w, "queue must be one of: backlog, priority, cruise", http.StatusBadRequest)
+			http.Error(w, "queue must be one of: backlog, priority, pending, cruise", http.StatusBadRequest)
 			return
 		}
 		rows, err = h.DB.QueryContext(r.Context(),
@@ -361,7 +361,7 @@ func (h *KanbanHandler) create(w http.ResponseWriter, r *http.Request) {
 		body.Queue = "backlog"
 	}
 	if !validKanbanQueues[body.Queue] {
-		http.Error(w, "queue must be one of: backlog, priority, cruise", http.StatusBadRequest)
+		http.Error(w, "queue must be one of: backlog, priority, pending, cruise", http.StatusBadRequest)
 		return
 	}
 
@@ -629,7 +629,7 @@ func (h *KanbanHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Queue != nil && !validKanbanQueues[*body.Queue] {
-		http.Error(w, "queue must be one of: backlog, priority, cruise", http.StatusBadRequest)
+		http.Error(w, "queue must be one of: backlog, priority, pending, cruise", http.StatusBadRequest)
 		return
 	}
 

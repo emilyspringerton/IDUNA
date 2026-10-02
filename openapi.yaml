@@ -394,7 +394,7 @@ paths:
         - name: queue
           in: query
           type: string
-          enum: [backlog, priority, cruise]
+          enum: [backlog, priority, pending, cruise]
           required: false
           description: "Filter to one column; omit for all columns"
       responses:
@@ -426,7 +426,7 @@ paths:
                 type: string
               queue:
                 type: string
-                enum: [backlog, priority, cruise]
+                enum: [backlog, priority, pending, cruise]
                 description: "Defaults to backlog if omitted"
       responses:
         201:
@@ -459,7 +459,7 @@ paths:
             properties:
               queue:
                 type: string
-                enum: [backlog, priority, cruise]
+                enum: [backlog, priority, pending, cruise]
               position:
                 type: integer
               title:
@@ -520,7 +520,7 @@ definitions:
         type: string
       queue:
         type: string
-        enum: [backlog, priority, cruise]
+        enum: [backlog, priority, pending, cruise]
       position:
         type: integer
       created_at:

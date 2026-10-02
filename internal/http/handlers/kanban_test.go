@@ -536,3 +536,28 @@ func TestKanban_RejectsMissingTitle(t *testing.T) {
 		t.Fatalf("status = %d, want 400 for a missing title", rec.Code)
 	}
 }
+
+// TestKanban_PendingLane -- rule 9's pending lane: a finished card parks in "pending" (a real
+// queue, listable and filterable) before the sprint-end pass moves it to done.
+func TestKanban_PendingLane(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := kanbanHandlerWithAuth(keys, db)
+
+	id := postKanbanCard(t, h, token, "S202-28", "Pending lane", "priority")
+	body, _ := json.Marshal(map[string]any{"queue": "pending"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/kanban/cards/"+jsonInt(id), bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch to pending status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := listKanbanCards(t, h, token, "pending"); len(got) != 1 || got[0].ID != id {
+		t.Fatalf("expected the card in pending, got %+v", got)
+	}
+	if got := listKanbanCards(t, h, token, "priority"); len(got) != 0 {
+		t.Fatalf("expected priority empty, got %+v", got)
+	}
+}
