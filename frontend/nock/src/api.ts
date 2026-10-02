@@ -752,6 +752,8 @@ export const KIT_OPTIONS: { value: number; label: string }[] = [
   { value: 5, label: 'George' },
 ]
 
+export type ShankpitFloorTint = { r: number; g: number; b: number; a: number }
+
 export interface ShankpitLevel {
   id: number
   name: string
@@ -767,6 +769,8 @@ export interface ShankpitLevel {
   // matter. Toggled via a dedicated setEnclosed API call, not part of the main save payload --
   // see shankpitLevels.setEnclosed's own doc comment.
   enclosed: boolean
+  // floor_tint (#533): per-level ground-plane colour + alpha (0..1), null = engine default; own endpoint like enclosed
+  floor_tint?: ShankpitFloorTint | null
   walls: ShankpitWall[]
   objects: ShankpitLevelObject[]
   spawners: ShankpitSpawner[]
@@ -909,6 +913,8 @@ export const shankpitLevels = {
   setStoryStart: (id: number) => sreq<ShankpitLevel>(`/${id}/story-start`, { method: 'PATCH' }),
   // setZombieDefault -- "set for zombies": copies a main-registry level into the zombies repository and flags it as the sandbox level.
   setZombieDefault: (id: number) => sreq<ShankpitLevel>(`/${id}/zombie-default`, { method: 'PATCH' }),
+  setFloorTint: (id: number, floor_tint: ShankpitFloorTint | null) =>
+    sreq<ShankpitLevel>(`/${id}/floor-tint`, { method: 'PATCH', body: JSON.stringify({ floor_tint }) }),
   // setEnclosed (S493) -- unlike setDefaultQueue/setStoryStart above (exclusive "set THIS one"
   // toggles, no body), enclosed is a plain per-level on/off flag, so this takes the desired state.
   setEnclosed: (id: number, enclosed: boolean) =>

@@ -24,6 +24,7 @@ import {
   type ShankpitMaterial,
   type ShankpitNavNode,
   type ShankpitSpawner,
+  type ShankpitFloorTint,
   type ShankpitSpawnerTeam,
   type ShankpitWall,
   type ShankpitWidgetSummary,
@@ -108,6 +109,15 @@ function nextWallId(walls: ShankpitWall[]): number {
 
 function nextObjectId(objects: ShankpitLevelObject[]): number {
   return objects.reduce((m, o) => Math.max(m, o.id), 0) + 1
+}
+
+const toHex = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')
+function rgbToHex(t: ShankpitFloorTint): string {
+  return `#${toHex(t.r)}${toHex(t.g)}${toHex(t.b)}`
+}
+function hexToRgb(hex: string, a: number): ShankpitFloorTint {
+  const n = parseInt(hex.slice(1), 16)
+  return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255, a }
 }
 
 function nextSpawnerId(spawners: ShankpitSpawner[]): number {
@@ -421,6 +431,7 @@ function Viewport3D({
   depth,
   groundPlaneEnabled,
   groundPlaneSquares,
+  floorTint,
   walls,
   selected,
   onSelect,
@@ -450,6 +461,7 @@ function Viewport3D({
   depth: number
   groundPlaneEnabled: boolean
   groundPlaneSquares: number
+  floorTint?: ShankpitFloorTint | null
   walls: ShankpitWall[]
   selected: number | null
   onSelect: (i: number | null) => void
@@ -1275,6 +1287,37 @@ function Viewport3D({
     }
   }, [groundPlaneEnabled, groundPlaneSquares])
 
+  // Floor tint (#533): a translucent coloured plane just under the grid, same colour/alpha the native
+  // client renders. Not level geometry -- purely a preview of the persisted floor_tint.
+  const floorMeshRef = useRef<THREE.Mesh | null>(null)
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    if (floorMeshRef.current) {
+      scene.remove(floorMeshRef.current)
+      floorMeshRef.current.geometry.dispose()
+      ;(floorMeshRef.current.material as THREE.Material).dispose()
+      floorMeshRef.current = null
+    }
+    if (floorTint && groundPlaneEnabled && groundPlaneSquares > 0) {
+      const size = groundPlaneSquares * SHANKPIT_GRID_CELL_SIZE
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(size, size),
+        new THREE.MeshBasicMaterial({
+          color: new THREE.Color(floorTint.r, floorTint.g, floorTint.b),
+          transparent: true,
+          opacity: floorTint.a,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      )
+      mesh.rotation.x = -Math.PI / 2
+      mesh.position.y = -0.02
+      scene.add(mesh)
+      floorMeshRef.current = mesh
+    }
+  }, [floorTint, groundPlaneEnabled, groundPlaneSquares])
+
   function applySelectionOutline() {
     walls.forEach((w, i) => {
       const mesh = meshesRef.current[i]
@@ -1728,6 +1771,8 @@ export default function ShankpitLevelEditor() {
   // is_story_start/is_default_queue's own "click applies immediately, no Save button" UX), not
   // part of the main Save payload.
   const [enclosed, setEnclosedState] = useState(false)
+  // floor tint (#533): outside `draft`, applied immediately via its own endpoint, like `enclosed`
+  const [floorTint, setFloorTintState] = useState<ShankpitFloorTint | null>(null)
   const [draft, setDraft] = useState(newDefaultLevel())
   const refLevelWalls = useReferencedLevelWalls(draft.objects)
   const refWidgetWalls = useReferencedWidgetWalls(draft.objects)
@@ -1810,6 +1855,17 @@ export default function ShankpitLevelEditor() {
   const [spawner, setSpawner] = useState(defaultSpawnerPos())
   const live = useLiveSession({ levelId: activeId, levelName: draft.name, spawner, onSpawnerChange: setSpawner })
 
+  const applyFloorTint = async (next: ShankpitFloorTint | null) => {
+    if (activeId === null) return
+    const prev = floorTint
+    setFloorTintState(next) // optimistic, like enclosed
+    try {
+      await shankpitLevels.setFloorTint(activeId, next)
+    } catch {
+      setFloorTintState(prev)
+    }
+  }
+
   // Undo/redo (founder real-time: "I ALSO NEED REDO... thats really important"). A plain, real
   // history-stack of past draft snapshots -- deliberately NOT Redux: this app has an explicit,
   // already-established "no framework beyond React itself for a v0 this small" precedent
@@ -1886,6 +1942,7 @@ export default function ShankpitLevelEditor() {
     setError(null)
     setSpawner(defaultSpawnerPos())
     setEnclosedState(lvl.enclosed)
+    setFloorTintState(lvl.floor_tint ?? null)
   }, [])
 
   const startNew = () => {
@@ -1897,6 +1954,7 @@ export default function ShankpitLevelEditor() {
     setError(null)
     setSpawner(defaultSpawnerPos())
     setEnclosedState(false)
+    setFloorTintState(null)
   }
 
   const setWalls = (walls: ShankpitWall[]) => {
@@ -2409,6 +2467,34 @@ export default function ShankpitLevelEditor() {
               />
             </label>
           </div>
+          <div className="dims" data-testid="floor-tint">
+            <label title="Tint the level's ground plane so it is not transparent. Pick a colour and an alpha (1 = solid, lower = see-through). Applies immediately.">
+              Floor tint{' '}
+              <input
+                type="color"
+                disabled={activeId === null}
+                value={floorTint ? rgbToHex(floorTint) : '#808080'}
+                onChange={(e) => void applyFloorTint(hexToRgb(e.target.value, floorTint?.a ?? 1))}
+              />
+            </label>{' '}
+            <label>
+              alpha{' '}
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                disabled={activeId === null || !floorTint}
+                value={floorTint?.a ?? 1}
+                onChange={(e) => floorTint && void applyFloorTint({ ...floorTint, a: Number(e.target.value) })}
+              />{' '}
+              {floorTint ? floorTint.a.toFixed(2) : '-'}
+            </label>{' '}
+            <button type="button" disabled={activeId === null || !floorTint} onClick={() => void applyFloorTint(null)}>
+              Clear tint
+            </button>
+            {activeId === null && <span className="hint">Save the level first to set this.</span>}
+          </div>
           <div className="dims">
             <label title="Suppresses outdoor sun/moon sky-fill lighting for this level, so real darkness and your own placed HPS/IPS light fixtures actually matter -- turn this on for a fully enclosed interior with no windows.">
               <input
@@ -2563,6 +2649,7 @@ export default function ShankpitLevelEditor() {
               depth={draft.depth}
               groundPlaneEnabled={draft.groundPlaneEnabled}
               groundPlaneSquares={draft.groundPlaneSquares}
+              floorTint={floorTint}
               walls={draft.walls}
               selected={selected}
               onSelect={setSelected}
