@@ -62,6 +62,8 @@ func (h *ShankpitLevelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.setStoryStart(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "zombie-default" && r.Method == http.MethodPatch:
 		h.setZombieDefault(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "floor-tint" && r.Method == http.MethodPatch:
+		h.setFloorTint(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "enclosed" && r.Method == http.MethodPatch:
 		h.setEnclosed(w, r, parts[0])
 	default:
@@ -261,6 +263,28 @@ func (h *ShankpitLevelsHandler) setEnclosed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	lvl, err := h.Store.SetEnclosed(r.Context(), id, req.Enclosed)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, lvl)
+}
+
+// setFloorTint (kanban #533): body {"floor_tint": {"r","g","b","a"}} sets, {"floor_tint": null} clears.
+func (h *ShankpitLevelsHandler) setFloorTint(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseShankpitLevelID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		FloorTint *shankpit.FloorTint `json:"floor_tint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	lvl, err := h.Store.SetFloorTint(r.Context(), id, req.FloorTint)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return

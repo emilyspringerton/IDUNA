@@ -424,6 +424,8 @@ type Level struct {
 	// shape), NOT threaded through CreateLevel/UpdateLevel's own already-large positional
 	// signature -- see that migration's own doc comment for the full rationale.
 	Enclosed bool `json:"enclosed"`
+	// FloorTint (kanban #533) -- per-level ground-plane colour + alpha; nil = the engine's default floor.
+	FloorTint *FloorTint `json:"floor_tint"`
 	// BrickDamage -- persisted destructible-brick damage, see BrickCell.
 	BrickDamage []BrickCell   `json:"brick_damage"`
 	Walls       []Wall        `json:"walls"`
@@ -481,6 +483,8 @@ type ExportDoc struct {
 	// Enclosed (S493) -- real, native-loader-facing (SHANKPIT/packages/world/level_boxes.h's own
 	// CustomLevelData.enclosed) -- see Level.Enclosed's own doc comment for the full rationale.
 	Enclosed bool `json:"enclosed,omitempty"`
+	// FloorTint (kanban #533) -- native-loader-facing, see Level.FloorTint.
+	FloorTint *FloorTint `json:"floor_tint,omitempty"`
 	// BrickDamage -- see BrickCell. Wall indices refer to this doc's own flattened Walls order.
 	BrickDamage []BrickCell `json:"brick_damage,omitempty"`
 	Walls       []Wall      `json:"walls"`
@@ -788,21 +792,22 @@ func (s *LevelStore) validateNextLevelID(ctx context.Context, selfID int64, next
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, brick_damage_json, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, collection, is_zombie_default, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, floor_tint_json, brick_damage_json, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, collection, is_zombie_default, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
 
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
-	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON, brickDamageJSON string
+	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON, brickDamageJSON, floorTintJSON string
 	var nextLevelID sql.NullInt64
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &l.Enclosed, &brickDamageJSON, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.Collection, &l.IsZombieDefault, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &l.Enclosed, &floorTintJSON, &brickDamageJSON, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.Collection, &l.IsZombieDefault, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
 		return nil, fmt.Errorf("shankpit: get level: %w", err)
 	}
+	l.FloorTint = unmarshalFloorTint(floorTintJSON)
 	if nextLevelID.Valid {
 		l.NextLevelID = &nextLevelID.Int64
 	}
@@ -1089,8 +1094,8 @@ func (s *LevelStore) SetZombieDefaultLevel(ctx context.Context, id int64) (*Leve
 			return nil, err
 		}
 		target = cp.ID
-		if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET collection = ?, brick_damage_json = ?, enclosed = ? WHERE id = ?`,
-			CollectionZombies, mustMarshalDamage(src.BrickDamage), src.Enclosed, target); err != nil {
+		if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET collection = ?, brick_damage_json = ?, enclosed = ?, floor_tint_json = ? WHERE id = ?`,
+			CollectionZombies, mustMarshalDamage(src.BrickDamage), src.Enclosed, marshalFloorTint(src.FloorTint), target); err != nil {
 			return nil, fmt.Errorf("shankpit: set zombie default: %w", err)
 		}
 	}
@@ -1411,7 +1416,7 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	}
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
-		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed,
+		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed, FloorTint: lvl.FloorTint,
 		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, LabStations: labStationsForExport(walls), Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
@@ -1683,4 +1688,50 @@ func labStationsForExport(walls []Wall) []LabStationExport {
 		out = append(out, LabStationExport{Kind: k, X: w.X, Y: w.Y + w.SY/2, Z: w.Z})
 	}
 	return out
+}
+
+// FloorTint is a level's ground-plane colour and alpha, each 0..1.
+type FloorTint struct {
+	R float64 `json:"r"`
+	G float64 `json:"g"`
+	B float64 `json:"b"`
+	A float64 `json:"a"`
+}
+
+func marshalFloorTint(t *FloorTint) string {
+	if t == nil {
+		return ""
+	}
+	b, _ := json.Marshal(t)
+	return string(b)
+}
+
+func unmarshalFloorTint(s string) *FloorTint {
+	if s == "" {
+		return nil
+	}
+	var t FloorTint
+	if json.Unmarshal([]byte(s), &t) != nil {
+		return nil
+	}
+	return &t
+}
+
+// SetFloorTint (kanban #533) sets or clears (nil) a level's floor tint. Components must be in [0,1].
+func (s *LevelStore) SetFloorTint(ctx context.Context, id int64, t *FloorTint) (*Level, error) {
+	if t != nil {
+		for _, v := range []float64{t.R, t.G, t.B, t.A} {
+			if v < 0 || v > 1 || v != v {
+				return nil, fmt.Errorf("shankpit: floor tint components must be in [0,1]")
+			}
+		}
+	}
+	res, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET floor_tint_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, marshalFloorTint(t), id)
+	if err != nil {
+		return nil, fmt.Errorf("shankpit: set floor tint: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("shankpit: level %d not found", id)
+	}
+	return s.GetLevel(ctx, id)
 }

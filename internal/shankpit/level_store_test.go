@@ -26,6 +26,7 @@ func newTestStore(t *testing.T) *shankpit.LevelStore {
 			ground_plane_enabled BOOLEAN NOT NULL DEFAULT 1,
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			enclosed BOOLEAN NOT NULL DEFAULT 0,
+			floor_tint_json TEXT NOT NULL DEFAULT '',
 			brick_damage_json TEXT NOT NULL DEFAULT '[]',
 			collection TEXT NOT NULL DEFAULT 'levels',
 			is_zombie_default INTEGER NOT NULL DEFAULT 0,
@@ -366,6 +367,42 @@ func TestSetEnclosed_TogglesIndependentlyPerLevel(t *testing.T) {
 	}
 	if exported.Enclosed {
 		t.Fatal("expected Export to carry the real enclosed=false value through")
+	}
+}
+
+func TestSetFloorTint_RoundTripExportAndValidation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	a, err := s.CreateLevel(ctx, "TintA", 100, 50, 100, true, 2, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if a.FloorTint != nil {
+		t.Fatal("new level must default to untinted")
+	}
+	if _, err := s.SetFloorTint(ctx, a.ID, &shankpit.FloorTint{R: 0.2, G: 0.4, B: 0.6, A: 0.5}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	got, _ := s.GetLevel(ctx, a.ID)
+	if got.FloorTint == nil || got.FloorTint.A != 0.5 || got.FloorTint.G != 0.4 {
+		t.Fatalf("tint not persisted: %+v", got.FloorTint)
+	}
+	ex, err := s.Export(ctx, a.ID)
+	if err != nil || ex.FloorTint == nil || ex.FloorTint.B != 0.6 {
+		t.Fatalf("export must carry the tint: %v %+v", err, ex)
+	}
+	if _, err := s.SetFloorTint(ctx, a.ID, &shankpit.FloorTint{R: 1.5}); err == nil {
+		t.Fatal("out-of-range component must be rejected")
+	}
+	if _, err := s.SetFloorTint(ctx, a.ID, nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	cleared, _ := s.GetLevel(ctx, a.ID)
+	if cleared.FloorTint != nil {
+		t.Fatal("nil must clear the tint")
+	}
+	if _, err := s.SetFloorTint(ctx, 99999, nil); err == nil {
+		t.Fatal("unknown level must error")
 	}
 }
 

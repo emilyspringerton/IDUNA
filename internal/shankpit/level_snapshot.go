@@ -115,7 +115,7 @@ func (s *LevelStore) SnapshotLevelTo(ctx context.Context, sourceID int64, damage
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET brick_damage_json = ?, enclosed = ?, collection = ? WHERE id = ?`, dmgJSON, src.Enclosed, collection, lvl.ID); err != nil {
+	if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET brick_damage_json = ?, enclosed = ?, floor_tint_json = ?, collection = ? WHERE id = ?`, dmgJSON, src.Enclosed, marshalFloorTint(src.FloorTint), collection, lvl.ID); err != nil {
 		return nil, fmt.Errorf("shankpit: snapshot: store damage: %w", err)
 	}
 	if setDefault {
