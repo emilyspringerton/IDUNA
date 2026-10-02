@@ -480,6 +480,44 @@ paths:
         404:
           description: "Card not found"
 
+  /api/v1/kanban/cards/{id}/comments:
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+    get:
+      tags: [Kanban]
+      summary: "List a card's comments, oldest first (each carries the author's login)"
+      security:
+        - BearerAuth: []
+      responses:
+        200:
+          description: "[{id, card_id, author, author_sub, body, created_at}]"
+        404:
+          description: "Card not found"
+    post:
+      tags: [Kanban]
+      summary: "Comment on a card -- author is taken from the caller's token (agent_name, else email, else sub)"
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              body:
+                type: string
+      responses:
+        201:
+          description: "Stored comment"
+        400:
+          description: "Empty or over-long body"
+        404:
+          description: "Card not found"
+
   /portal/login:
     get:
       tags: [DevPortal]

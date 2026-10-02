@@ -118,6 +118,15 @@ const kanbanPageHTML = `<!doctype html>
   .card .title { font-size: 0.92rem; margin-top: 0.15rem; }
   .card .del { float: right; color: var(--text-faint); text-decoration: none; font-size: 0.85rem; }
   .card .del:hover { color: #a24; }
+  .card .cmt-toggle { float: right; margin-right: 0.5rem; color: var(--text-faint); text-decoration: none; font-size: 0.85rem; }
+  .card .cmt-toggle:hover { color: var(--gold-highlight); }
+  .card .cmt-panel { clear: both; margin-top: 0.5rem; border-top: 1px solid var(--text-faint); padding-top: 0.4rem; font-size: 0.8rem; }
+  .card .cmt { margin-bottom: 0.35rem; }
+  .card .cmt .who { color: var(--gold-soft); font-weight: 600; }
+  .card .cmt .when { color: var(--text-faint); font-size: 0.7rem; margin-left: 0.3rem; }
+  .card .cmt .txt { white-space: pre-wrap; word-break: break-word; }
+  .card .cmt-form { display: flex; gap: 0.3rem; }
+  .card .cmt-form input { flex: 1; min-width: 0; }
   /* S207-68 "i should have the ability to sort the cards in a column" --
      a real, click-based reorder alternative to drag (see moveCardBy in the
      script below), floated left opposite the existing delete "x". */
@@ -369,6 +378,7 @@ function render(cards) {
         ? '<span class="sort-btn sort-btn-disabled" title="Already last">▼</span>'
         : '<a href="#" class="sort-btn" title="Move down" onclick="moveCardBy(' + c.id + ',\'' + q + '\',1); return false;">▼</a>';
       el.innerHTML = '<a href="#" class="del" title="Remove card" onclick="removeCard(' + c.id + '); return false;">✕</a>' +
+        '<a href="#" class="cmt-toggle" title="Comments" onclick="toggleComments(' + c.id + ', this); return false;">💬</a>' +
         '<div class="sort-btns">' + upBtn + downBtn + '</div>' +
         '<div class="id">' + esc(c.backlog_item_id) + '</div>' +
         '<div class="title">' + esc(c.title) + '</div>' +
@@ -377,6 +387,45 @@ function render(cards) {
     });
   }
   applyFilter();
+}
+
+// Card comments (founder: "add comments to kanban cards so you can leave your questions as comments
+// and a kanban user can leave replies it should be tracked by login"). The server stamps each comment
+// with the caller's own login, so the browser only sends the text.
+function fmtWhen(t) { return (t || '').replace('T', ' ').replace('Z', '').slice(0, 16); }
+async function loadComments(id, panel) {
+  const list = panel.querySelector('.cmt-list');
+  try {
+    const res = await fetch(API + '/' + id + '/comments', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const items = await res.json();
+    list.innerHTML = items.length ? items.map(c =>
+      '<div class="cmt"><span class="who">' + esc(c.author) + '</span><span class="when">' + esc(fmtWhen(c.created_at)) + '</span>' +
+      '<div class="txt">' + esc(c.body) + '</div></div>').join('') : '<div class="cmt"><span class="when">No comments yet.</span></div>';
+  } catch (err) { list.textContent = 'Could not load comments: ' + err.message; }
+}
+function toggleComments(id, link) {
+  const card = link.closest('.card');
+  let panel = card.querySelector('.cmt-panel');
+  if (panel) { panel.remove(); card.draggable = true; return; }
+  panel = document.createElement('div');
+  panel.className = 'cmt-panel';
+  panel.innerHTML = '<div class="cmt-list">Loading…</div><form class="cmt-form"><input type="text" maxlength="4000" placeholder="Reply…" required><button type="submit">Post</button></form>';
+  card.draggable = false;
+  panel.onclick = e => e.stopPropagation();
+  panel.querySelector('form').onsubmit = async e => {
+    e.preventDefault();
+    const input = panel.querySelector('input');
+    const body = input.value.trim();
+    if (!body) return;
+    const res = await fetch(API + '/' + id + '/comments', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: body })
+    });
+    if (res.ok) { input.value = ''; loadComments(id, panel); }
+    else { panel.querySelector('.cmt-list').textContent = 'Post failed: HTTP ' + res.status; }
+  };
+  card.appendChild(panel);
+  loadComments(id, panel);
 }
 
 // applyFilter -- real, client-side, instant filter (IDUXN-003: "kanban needs a quick filter at

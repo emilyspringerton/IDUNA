@@ -17,6 +17,8 @@ import (
 	"iduna/internal/http/middleware"
 	"iduna/internal/userlog"
 
+	"time"
+
 	"github.com/google/uuid"
 )
 
@@ -38,6 +40,11 @@ func newTestKanbanDB(t *testing.T) *sql.DB {
 	)`)
 	if err != nil {
 		t.Fatalf("create kanban_cards table: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE kanban_comments (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, card_id INTEGER NOT NULL, author_sub VARCHAR(128) NOT NULL,
+		author_name VARCHAR(200) NOT NULL, body TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("create kanban_comments table: %v", err)
 	}
 	// MULTIKANBAN-000 Phase 1: real kanban_boards table, board 1 = EINHORN_INDUSTRIAL, matching
 	// the real migration (202609040004_kanban_boards.sql) exactly.
@@ -559,5 +566,63 @@ func TestKanban_PendingLane(t *testing.T) {
 	}
 	if got := listKanbanCards(t, h, token, "priority"); len(got) != 0 {
 		t.Fatalf("expected priority empty, got %+v", got)
+	}
+}
+
+// TestKanban_CommentsTrackedByLogin -- an agent asks, a human replies; each comment records the caller's
+// own token identity (agent_name for the agent, email for the human), in order.
+func TestKanban_CommentsTrackedByLogin(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestKanbanDB(t)
+	h := kanbanHandlerWithAuth(keys, db)
+	agent := makeAgentTokenWithName(t, keys, uuid.New().String(), "EMILY_PRIME")
+	humanTok, err := jwt.Sign(keys, map[string]any{
+		"sub": "google:123", "email": "founder@example.com", "iss": "https://test.internal",
+		"aud": "farthq-ecosystem", "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := postKanbanCard(t, h, agent, "S1-01", "Needs a decision", "priority")
+	post := func(tok, body string) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(map[string]string{"body": body})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/kanban/cards/"+jsonInt(id)+"/comments", bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post(agent, "Which level is the construct?"); rec.Code != http.StatusCreated {
+		t.Fatalf("agent post = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(humanTok, "NOCK level 23"); rec.Code != http.StatusCreated {
+		t.Fatalf("human post = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(agent, "   "); rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank body = %d, want 400", rec.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/kanban/cards/"+jsonInt(id)+"/comments", nil)
+	req.Header.Set("Authorization", "Bearer "+agent)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var got []struct {
+		CardID    int64  `json:"card_id"`
+		Author    string `json:"author"`
+		AuthorSub string `json:"author_sub"`
+		Body      string `json:"body"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 2 {
+		t.Fatalf("list = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	if got[0].Author != "EMILY_PRIME" || got[1].Author != "founder@example.com" || got[1].AuthorSub != "google:123" ||
+		got[0].Body != "Which level is the construct?" || got[1].CardID != id {
+		t.Fatalf("unexpected comments: %+v", got)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/kanban/cards/99999/comments", nil)
+	req.Header.Set("Authorization", "Bearer "+agent)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown card = %d, want 404", rec.Code)
 	}
 }

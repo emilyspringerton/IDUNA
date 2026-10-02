@@ -176,6 +176,10 @@ func (h *KanbanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if cardID, ok := kanbanCommentsCardID(r.URL.Path); ok {
+		h.comments(w, r, cardID)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		h.list(w, r)
