@@ -849,7 +849,7 @@ func main() {
 	mux.Handle("/admin/nock/api/shankpit-levels", shankpitLevelsProtected)
 	mux.Handle("/admin/nock/api/shankpit-levels/", shankpitLevelsProtected)
 
-	shankpitLevelsPublicH := &handlers.ShankpitLevelsPublicHandler{Store: shankpitLevelStore}
+	shankpitLevelsPublicH := &handlers.ShankpitLevelsPublicHandler{Store: shankpitLevelStore, SnapshotLimiter: middleware.NewIPRateLimiter(12)}
 	mux.Handle("/api/v1/shankpit-levels", shankpitLevelsPublicH)
 	mux.Handle("/api/v1/shankpit-levels/", shankpitLevelsPublicH)
 

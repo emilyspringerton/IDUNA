@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -31,6 +32,7 @@ func newShankpitLevelsTestStore(t *testing.T) *shankpit.LevelStore {
 			ground_plane_enabled BOOLEAN NOT NULL DEFAULT 1,
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			enclosed BOOLEAN NOT NULL DEFAULT 0,
+			brick_damage_json TEXT NOT NULL DEFAULT '[]',
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			objects_json TEXT NOT NULL DEFAULT '[]',
 			spawners_json TEXT NOT NULL DEFAULT '[]',
@@ -157,5 +159,51 @@ func TestShankpitLevelsPublicHandler_ListAndExport(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &doc)
 	if doc.Version != 1 || len(doc.Walls) != 1 {
 		t.Fatalf("unexpected export doc: %+v", doc)
+	}
+}
+
+func TestShankpitLevelsPublic_SnapshotCreatesThenDebounces(t *testing.T) {
+	store := newShankpitLevelsTestStore(t)
+	src, err := store.CreateLevel(context.Background(), "CITY", 100, 50, 100, true, 2,
+		[]shankpit.Wall{{X: 0, Y: 5, Z: 0, SX: 20, SY: 10, SZ: 4, R: 1, G: 1, B: 1}}, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &handlers.ShankpitLevelsPublicHandler{Store: store}
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/shankpit-levels/snapshots", bytes.NewBufferString(body))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	body, _ := json.Marshal(map[string]any{"source_level_id": src.ID, "brick_damage": []map[string]any{{"wall": 0, "key": 7, "hp": 0}}})
+	first := post(string(body))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first snapshot: %d %s", first.Code, first.Body.String())
+	}
+	var created struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(first.Body.Bytes(), &created)
+	if created.ID == 0 || created.Name == "" {
+		t.Fatalf("bad create body: %s", first.Body.String())
+	}
+	// a rapid second post lands in the same wall-clock second almost always; either it is the
+	// debounced no-op or (if the second ticked over) a distinct row -- never an error, never a dupe name
+	second := post(string(body))
+	if second.Code != http.StatusOK && second.Code != http.StatusCreated {
+		t.Fatalf("second snapshot: %d %s", second.Code, second.Body.String())
+	}
+	if bad := post(`{"source_level_id":999999}`); bad.Code != http.StatusBadRequest {
+		t.Fatalf("unknown source must 400, got %d", bad.Code)
+	}
+	if bad := post(fmt.Sprintf(`{"source_level_id":%d,"brick_damage":[{"wall":50,"key":1,"hp":0}]}`, src.ID)); bad.Code != http.StatusBadRequest {
+		t.Fatalf("out-of-range wall must 400, got %d", bad.Code)
+	}
+	// export carries the damage
+	exp, err := store.Export(context.Background(), created.ID)
+	if err != nil || len(exp.BrickDamage) != 1 || exp.BrickDamage[0].Key != 7 {
+		t.Fatalf("export: %v %+v", err, exp)
 	}
 }

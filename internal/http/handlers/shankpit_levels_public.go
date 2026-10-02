@@ -16,10 +16,14 @@ package handlers
 // yet, just to let a level be browsed.
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"iduna/internal/http/middleware"
 	"iduna/internal/shankpit"
 )
 
@@ -27,9 +31,15 @@ import (
 // export only.
 type ShankpitLevelsPublicHandler struct {
 	Store *shankpit.LevelStore
+	// SnapshotLimiter rate-limits POST .../snapshots per client IP; nil disables the limit (tests).
+	SnapshotLimiter *middleware.IPRateLimiter
 }
 
 func (h *ShankpitLevelsPublicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/shankpit-levels/snapshots" {
+		h.snapshot(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		mmoWriteError(w, http.StatusMethodNotAllowed, "this endpoint is read-only")
 		return
@@ -77,4 +87,45 @@ func (h *ShankpitLevelsPublicHandler) export(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, doc)
+}
+
+type snapshotReq struct {
+	SourceLevelID int64                `json:"source_level_id"`
+	BrickDamage   []shankpit.BrickCell `json:"brick_damage"`
+}
+
+// snapshot is the one narrow, unauthenticated WRITE this handler exposes (founder real-time, 2026-10-02:
+// F1 in the game uploads a copy of the level; leaving a level auto-saves it). It can only ever INSERT a
+// new row cloned from an existing level under a server-clocked second-precision name -- never update or
+// delete -- and is per-IP rate limited and body-capped. A same-second repeat answers 200 with
+// {"duplicate":true} instead of creating a second row. Real player/guest auth is the known follow-up.
+func (h *ShankpitLevelsPublicHandler) snapshot(w http.ResponseWriter, r *http.Request) {
+	if h.SnapshotLimiter != nil && !h.SnapshotLimiter.Allow(clientIPFor(r)) {
+		w.Header().Set("Retry-After", "60")
+		mmoWriteError(w, http.StatusTooManyRequests, "too many snapshots; try again shortly")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
+	var req snapshotReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	lvl, err := h.Store.SnapshotLevel(r.Context(), req.SourceLevelID, req.BrickDamage, time.Now())
+	if errors.Is(err, shankpit.ErrSnapshotExists) {
+		writeJSON(w, http.StatusOK, map[string]any{"duplicate": true})
+		return
+	}
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": lvl.ID, "name": lvl.Name, "brick_cells": len(lvl.BrickDamage)})
+}
+
+func clientIPFor(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	}
+	return r.RemoteAddr
 }

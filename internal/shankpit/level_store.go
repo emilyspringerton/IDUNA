@@ -211,7 +211,7 @@ func validateNavNodes(nodes []NavNode) error {
 // cross-reference to validate at all -- the simplest of the four scriptable object kinds shipped
 // so far.
 type Character struct {
-	ID int `json:"id"`
+	ID   int `json:"id"`
 	Role int `json:"role"`
 	// Kit (S492, founder real-time: "i have no control over what that is as the designer") --
 	// which of the 5 real robot models (packages/goldenband glTF kits) this character renders
@@ -421,9 +421,11 @@ type Level struct {
 	// via a dedicated SetEnclosed method (mirroring SetDefaultQueueLevel/SetStoryStartLevel's own
 	// shape), NOT threaded through CreateLevel/UpdateLevel's own already-large positional
 	// signature -- see that migration's own doc comment for the full rationale.
-	Enclosed bool          `json:"enclosed"`
-	Walls    []Wall        `json:"walls"`
-	Objects  []LevelObject `json:"objects"`
+	Enclosed bool `json:"enclosed"`
+	// BrickDamage -- persisted destructible-brick damage, see BrickCell.
+	BrickDamage []BrickCell   `json:"brick_damage"`
+	Walls       []Wall        `json:"walls"`
+	Objects     []LevelObject `json:"objects"`
 	// Spawners (S459-58) -- real, author-placed spawn points, team-tagged with FFA fallback. See
 	// Spawner's own doc comment for the real team convention.
 	Spawners []Spawner `json:"spawners"`
@@ -472,8 +474,10 @@ type ExportDoc struct {
 	GroundPlaneSquares int     `json:"ground_plane_squares"`
 	// Enclosed (S493) -- real, native-loader-facing (SHANKPIT/packages/world/level_boxes.h's own
 	// CustomLevelData.enclosed) -- see Level.Enclosed's own doc comment for the full rationale.
-	Enclosed bool   `json:"enclosed,omitempty"`
-	Walls    []Wall `json:"walls"`
+	Enclosed bool `json:"enclosed,omitempty"`
+	// BrickDamage -- see BrickCell. Wall indices refer to this doc's own flattened Walls order.
+	BrickDamage []BrickCell `json:"brick_damage,omitempty"`
+	Walls       []Wall      `json:"walls"`
 	// Spawners (S459-58) -- real, author-placed spawn points, exported unchanged (no per-object
 	// flattening/transform is applied, matching the real, honest, not-yet-built limit already
 	// documented on flattenObjects: only the root level's own real fields reach the native
@@ -769,16 +773,16 @@ func (s *LevelStore) validateNextLevelID(ctx context.Context, selfID int64, next
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, brick_damage_json, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
 
 func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
-	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON string
+	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON, brickDamageJSON string
 	var nextLevelID sql.NullInt64
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &l.Enclosed, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &l.Enclosed, &brickDamageJSON, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
@@ -786,6 +790,9 @@ func scanLevel(row *sql.Row) (*Level, error) {
 	}
 	if nextLevelID.Valid {
 		l.NextLevelID = &nextLevelID.Int64
+	}
+	if err := json.Unmarshal([]byte(brickDamageJSON), &l.BrickDamage); err != nil {
+		return nil, fmt.Errorf("shankpit: decode stored brick damage: %w", err)
 	}
 	if err := json.Unmarshal([]byte(wallsJSON), &l.Walls); err != nil {
 		return nil, fmt.Errorf("shankpit: decode stored walls: %w", err)
@@ -1318,7 +1325,7 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed,
-		Walls: walls, Spawners: lvl.Spawners, Doors: doorExports,
+		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
 	}, nil
