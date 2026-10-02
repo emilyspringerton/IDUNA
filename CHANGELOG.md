@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-02
+- NOCK EduVM snippets (card #495): nock_edu_snippets table, admin CRUD /admin/nock/api/edu-snippets, public read-only GET /api/v1/nock-edu-snippets[?widget=]. Tested; not yet deployed to the live instance, and no NOCK UI tab yet. (sess-20260923-1030-4a526255)
 - kanban: new Pending lane (rule 9) -- backend queue, 6-column board with a Pending column and send-to option, openapi enum; emily kanban list/move/add accept pending (sess-20260923-1030-4a526255)
 - Widget importer now accepts .stl (binary + ASCII): one bounding-box wall, Z-up converted to Y-up; dropzone/accept/hints updated (sess-20260923-1030-4a526255)
 - NOCK widget glTF import: drag-and-drop zone matching the character importer; clear error for native .blend uploads (sess-20260923-1030-4a526255)
