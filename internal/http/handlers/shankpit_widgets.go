@@ -10,7 +10,9 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
@@ -159,6 +161,50 @@ func WidgetFromGLTFBoxes(boxes []nock.WidgetBox) ([]shankpit.Wall, []shankpit.Do
 	return walls, doors
 }
 
+// readGLTFUpload parses the multipart form every NOCK glTF -> boxes importer shares: `file` (a .glb,
+// or a .gltf), zero or more `resource` files (the .bin / textures of a Blender "glTF Separate"
+// export, matched to the .gltf by file name), and an optional positive `scale`. On any problem it
+// writes the 4xx response itself and returns ok=false.
+func readGLTFUpload(w http.ResponseWriter, r *http.Request) (file []byte, resources map[string][]byte, scale float64, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid multipart form: %v", err))
+		return nil, nil, 0, false
+	}
+	scale = 1.0
+	if v := r.FormValue("scale"); v != "" {
+		parsed, err := strconv.ParseFloat(v, 64)
+		if err != nil || parsed <= 0 {
+			mmoWriteError(w, http.StatusBadRequest, "scale must be a positive number")
+			return nil, nil, 0, false
+		}
+		scale = parsed
+	}
+	file, err := readFormFile(r, "file")
+	if err != nil || len(file) == 0 {
+		mmoWriteError(w, http.StatusBadRequest, "missing file field (drop a .glb or .gltf file)")
+		return nil, nil, 0, false
+	}
+	resources = map[string][]byte{}
+	if r.MultipartForm != nil {
+		for _, fh := range r.MultipartForm.File["resource"] {
+			f, err := fh.Open()
+			if err != nil {
+				mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("reading resource %q: %v", fh.Filename, err))
+				return nil, nil, 0, false
+			}
+			data, err := io.ReadAll(f)
+			f.Close()
+			if err != nil {
+				mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("reading resource %q: %v", fh.Filename, err))
+				return nil, nil, 0, false
+			}
+			resources[path.Base(fh.Filename)] = data
+		}
+	}
+	return file, resources, scale, true
+}
+
 // importGLTF is the NOCK glTF importer -> SHANKPIT Widget bridge (founder real-time, 2026-09-27:
 // "we need a way to go from nock tools gltf importer into the shankpit widgets"). Multipart form:
 // `file` (a .glb or embedded-buffer .gltf -- the same input the Animations tab's own import-gltf
@@ -167,26 +213,11 @@ func WidgetFromGLTFBoxes(boxes []nock.WidgetBox) ([]shankpit.Wall, []shankpit.Do
 // the UI can show the result before committing it. See internal/nock/gltf_widget.go for the
 // mesh-node -> AABB mapping and its honest limits.
 func (h *ShankpitWidgetsHandler) importGLTF(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		mmoWriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid multipart form: %v", err))
+	fileData, resources, scale, ok := readGLTFUpload(w, r)
+	if !ok {
 		return
 	}
-	scale := 1.0
-	if v := r.FormValue("scale"); v != "" {
-		parsed, err := strconv.ParseFloat(v, 64)
-		if err != nil || parsed <= 0 {
-			mmoWriteError(w, http.StatusBadRequest, "scale must be a positive number")
-			return
-		}
-		scale = parsed
-	}
-	fileData, err := readFormFile(r, "file")
-	if err != nil || len(fileData) == 0 {
-		mmoWriteError(w, http.StatusBadRequest, "missing file field (drop a .glb or .gltf file)")
-		return
-	}
-	boxes, err := nock.GLTFToWidgetBoxes(fileData, scale)
+	boxes, err := nock.GLTFToWidgetBoxesWithResources(fileData, scale, resources)
 	if err != nil {
 		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("glTF to widget conversion failed: %v", err))
 		return

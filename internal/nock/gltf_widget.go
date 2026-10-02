@@ -6,7 +6,7 @@ package nock
 // (internal/shankpit/widget_store.go) is walls+doors only, and every wall is an axis-aligned box
 // (center x/y/z + full extents sx/sy/sz -- SHANKPIT's native GameMap has no other primitive).
 // This file is the bridge: it reuses gltf_convert.go's own glTF reader (loadGLTFBytes /
-// accessorFloats, same .glb / embedded-buffer .gltf input rules) and reduces a scene to boxes.
+// accessorFloats: .glb, embedded-buffer .gltf, and .gltf + sibling .bin files) and reduces a scene to boxes.
 //
 // Mapping, v0:
 //   - One box per mesh-bearing NODE in the default scene (a mesh instanced by three nodes gives
@@ -126,10 +126,16 @@ func clamp01(v float64) float64 { return math.Max(0, math.Min(1, v)) }
 // GLTFToWidgetBoxes converts a .glb (or embedded-buffer .gltf) into axis-aligned boxes, in
 // scene-traversal order. scale <= 0 means 1. Returns an error if the scene has no meshes.
 func GLTFToWidgetBoxes(raw []byte, scale float64) ([]WidgetBox, error) {
+	return GLTFToWidgetBoxesWithResources(raw, scale, nil)
+}
+
+// GLTFToWidgetBoxesWithResources is GLTFToWidgetBoxes plus the sibling files of a .gltf with
+// external buffers (Blender's "glTF Separate" export: .gltf + .bin), keyed by file name.
+func GLTFToWidgetBoxesWithResources(raw []byte, scale float64, resources map[string][]byte) ([]WidgetBox, error) {
 	if scale <= 0 {
 		scale = 1
 	}
-	g, err := loadGLTFBytes(raw)
+	g, err := loadGLTFBytesWithResources(raw, resources)
 	if err != nil {
 		return nil, err
 	}

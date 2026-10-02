@@ -1708,6 +1708,8 @@ export default function ShankpitLevelEditor() {
   const [newName, setNewName] = useState('')
   const [objectPickLevelId, setObjectPickLevelId] = useState<number | ''>('')
   const [objectPickWidgetId, setObjectPickWidgetId] = useState<number | ''>('')
+  const [gltfScale, setGltfScale] = useState('1')
+  const [gltfBusy, setGltfBusy] = useState(false)
   const widgetList = useWidgetSummaryList()
   const [selectedSpawnPoint, setSelectedSpawnPoint] = useState<number | null>(null)
   // targetLevelSpawners (S491, founder real-time -- GTA-style building interiors: "how can i
@@ -1870,6 +1872,35 @@ export default function ShankpitLevelEditor() {
   const setWalls = (walls: ShankpitWall[]) => {
     setDraft((d) => ({ ...d, walls }))
     setDirty(true)
+  }
+
+  // importGltfFiles (#462/#463) -- Blender glTF blockout -> walls merged into THIS level. One cube per
+  // mesh object, sized to its bounds; door* objects become scriptless doors. Appends (never replaces)
+  // and goes through pushHistory, so Ctrl+Z removes the whole import in one step.
+  const importGltfFiles = async (files: File[]) => {
+    const scale = Number(gltfScale)
+    if (!(scale > 0)) { setError('glTF scale must be a positive number'); return }
+    setGltfBusy(true)
+    setError(null)
+    try {
+      const { walls: imported, doors: importedDoors } = await shankpitLevels.importGltf(files, scale)
+      pushHistory()
+      const base = nextWallId(draft.walls) - 1
+      const idMap = new Map<number, number>()
+      const newWalls = imported.map((w, i) => {
+        idMap.set(w.id, base + i + 1)
+        return { ...w, id: base + i + 1 }
+      })
+      let doorId = nextDoorId(draft.doors)
+      const newDoors = importedDoors.map((d) => ({ id: doorId++, wall_id: idMap.get(d.wall_id) ?? d.wall_id, script_id: d.script_id }))
+      setDraft((d) => ({ ...d, walls: [...d.walls, ...newWalls], doors: [...d.doors, ...newDoors] }))
+      setDirty(true)
+      if (newWalls.length > 0) setSelected(newWalls[0].id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setGltfBusy(false)
+    }
   }
 
   const addCube = () => {
@@ -2389,6 +2420,32 @@ export default function ShankpitLevelEditor() {
           <button type="button" onClick={addSpawner}>
             + Add spawner
           </button>
+          <label
+            className="hint"
+            title="Import a Blender glTF 2.0 export (.glb, or .gltf + its .bin): one cube per mesh object, sized to its bounds; objects named door... become doors. Added to this level; Undo removes it."
+          >
+            <input
+              type="file"
+              multiple
+              accept=".glb,.gltf,.bin,.png,.jpg,.jpeg"
+              disabled={gltfBusy}
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? [])
+                e.target.value = ''
+                if (files.length > 0) void importGltfFiles(files)
+              }}
+            />
+            glTF scale{' '}
+            <input
+              type="number"
+              step="any"
+              min="0"
+              value={gltfScale}
+              onChange={(e) => setGltfScale(e.target.value)}
+              style={{ width: '5em' }}
+            />
+            {gltfBusy ? ' Importing...' : ''}
+          </label>
           <div className="mode-toggle">
             <select value={objectPickLevelId} onChange={(e) => setObjectPickLevelId(e.target.value === '' ? '' : Number(e.target.value))}>
               <option value="">Add level as object...</option>

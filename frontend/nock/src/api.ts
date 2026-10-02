@@ -904,6 +904,24 @@ export const shankpitLevels = {
   // toggles, no body), enclosed is a plain per-level on/off flag, so this takes the desired state.
   setEnclosed: (id: number, enclosed: boolean) =>
     sreq<ShankpitLevel>(`/${id}/enclosed`, { method: 'PATCH', body: JSON.stringify({ enclosed }) }),
+  // importGltf (#462/#463) -- convert a Blender glTF export into walls (+ doors for door*-named
+  // nodes) WITHOUT saving: the editor merges the result into the level being edited. Pick the .glb,
+  // or the .gltf together with its .bin/textures (Blender's "glTF Separate"); the first .glb/.gltf
+  // is the document, everything else is sent as a resource and matched by file name server-side.
+  async importGltf(files: File[], scale: number): Promise<{ walls: ShankpitWall[]; doors: ShankpitDoor[] }> {
+    const main = files.find((f) => /\.(glb|gltf)$/i.test(f.name))
+    if (!main) throw new Error('Pick a .glb, or a .gltf with its .bin (Blender: File > Export > glTF 2.0)')
+    const form = new FormData()
+    form.append('file', main)
+    for (const f of files) if (f !== main) form.append('resource', f, f.name)
+    form.append('scale', String(scale))
+    const res = await fetch(`${SHANKPIT_LEVELS_BASE}/import-gltf`, { method: 'POST', credentials: 'include', body: form })
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText)
+      throw new Error(`${res.status}: ${text}`)
+    }
+    return (await res.json()) as { walls: ShankpitWall[]; doors: ShankpitDoor[] }
+  },
 }
 
 // ---- SHANKPIT Widgets (S482, founder real-time: "i dont want to make doors be levels please -

@@ -10,10 +10,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"iduna/internal/nock"
 	"iduna/internal/shankpit"
 )
 
@@ -40,6 +42,8 @@ func (h *ShankpitLevelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.list(w, r)
 	case len(parts) == 0 && r.Method == http.MethodPost:
 		h.create(w, r)
+	case len(parts) == 1 && parts[0] == "import-gltf" && r.Method == http.MethodPost:
+		h.importGLTF(w, r)
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		h.get(w, r, parts[0])
 	case len(parts) == 1 && r.Method == http.MethodPut:
@@ -315,4 +319,34 @@ func (h *ShankpitLevelsHandler) export(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	writeJSON(w, http.StatusOK, doc)
+}
+
+// importGLTF converts a Blender (or any) glTF export into level walls -- card #462 "add gltf
+// importer for shankpit levels". Stateless: it saves nothing and returns {walls, doors} for the
+// editor to MERGE into the level being edited (so an import adds to an existing level instead of
+// replacing it, and the normal Save / undo paths still apply). Wall ids are 1..n in scene order;
+// the editor renumbers them past its own ids. Same multipart contract as the Widgets importer
+// (`file`, repeated `resource` for a .gltf's .bin/textures, `scale`) and the same one-box-per-mesh-
+// node mapping and honest limits -- see internal/nock/gltf_widget.go. A node named door* becomes a
+// scriptless door on its wall, exactly like widgets.
+func (h *ShankpitLevelsHandler) importGLTF(w http.ResponseWriter, r *http.Request) {
+	fileData, resources, scale, ok := readGLTFUpload(w, r)
+	if !ok {
+		return
+	}
+	boxes, err := nock.GLTFToWidgetBoxesWithResources(fileData, scale, resources)
+	if err != nil {
+		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("glTF to level conversion failed: %v", err))
+		return
+	}
+	walls, doors := WidgetFromGLTFBoxes(boxes)
+	if len(walls) > shankpit.MaxWalls {
+		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("this file has %d mesh nodes; a level holds at most %d walls (one per mesh node) -- join meshes in Blender and re-export", len(walls), shankpit.MaxWalls))
+		return
+	}
+	if len(doors) > shankpit.MaxDoors {
+		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("this file has %d door* nodes; a level holds at most %d doors", len(doors), shankpit.MaxDoors))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"walls": walls, "doors": doors})
 }

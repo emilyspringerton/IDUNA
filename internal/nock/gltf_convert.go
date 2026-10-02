@@ -15,12 +15,12 @@ package nock
 //
 // v0 scope, same real limits gbtool's own import_gltf.go documents, carried over verbatim:
 // first skin/mesh/animation only, LINEAR sampler interpolation only, nlerp (not slerp) for
-// quaternion resampling. One REAL, additional, server-specific limit: only a single-file .glb
-// (binary container, embedded buffer) is accepted here -- a plain .gltf JSON file with an
-// EXTERNAL .bin sidecar can't be converted from one dragged-and-dropped file, since there is no
-// second file to resolve it against. Blender's default "glTF Binary (.glb)" export is exactly
-// this shape, so this covers the real common case; a .gltf+.bin pair still works via gbtool's
-// own CLI locally, uploaded as pre-converted output through NockAnimationsHandler.create.
+// quaternion resampling. Input: a single-file .glb (Blender's default "glTF Binary" export), a
+// .gltf with embedded base64 buffers, or -- for importers that accept several files at once -- a
+// .gltf plus its sibling .bin (Blender's "glTF Separate"; see loadGLTFBytesWithResources). The
+// Animations tab's own single-file drop still takes only the first two. Draco/meshopt-compressed
+// geometry is refused with a message saying how to re-export; sparse accessors (Blender only
+// writes them for shape keys) are not read.
 
 import (
 	"bytes"
@@ -31,7 +31,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
+	"path"
 	"sort"
+	"strings"
 )
 
 // ── glTF reader (ported from GOLDENBAND/tools/gbtool/gltf.go) ──────────────────────────────
@@ -44,6 +47,10 @@ type gltfDoc struct {
 	Meshes      []gltfMesh       `json:"meshes"`
 	Skins       []gltfSkin       `json:"skins"`
 	Animations  []gltfAnimation  `json:"animations"`
+	// ExtensionsRequired lets the loader refuse a file whose geometry it genuinely can't read
+	// (Draco/meshopt compression, which Blender's exporter offers as a checkbox) with a message
+	// that says how to re-export, instead of failing later with garbage or a bounds panic.
+	ExtensionsRequired []string `json:"extensionsRequired"`
 }
 
 type gltfBuffer struct {
@@ -62,6 +69,10 @@ type gltfAccessor struct {
 	ComponentType int    `json:"componentType"`
 	Count         int    `json:"count"`
 	Type          string `json:"type"`
+	// Normalized: integer components are fixed-point in [0,1] / [-1,1] (KHR_mesh_quantization,
+	// quantized UVs/normals). Raw integers otherwise.
+	Normalized bool            `json:"normalized"`
+	Sparse     json.RawMessage `json:"sparse"`
 }
 type gltfNode struct {
 	Name        string    `json:"name"`
@@ -99,7 +110,9 @@ type gltfAnimSampler struct {
 }
 
 const (
+	gltfByte          = 5120
 	gltfUnsignedByte  = 5121
+	gltfShort         = 5122
 	gltfUnsignedShort = 5123
 	gltfUnsignedInt   = 5125
 	gltfFloat         = 5126
@@ -125,6 +138,14 @@ type loadedGLTF struct {
 // JSON text with base64 data-URI buffers -- see this file's own header note on why an external
 // .bin sidecar isn't supported from a single uploaded file.
 func loadGLTFBytes(raw []byte) (*loadedGLTF, error) {
+	return loadGLTFBytesWithResources(raw, nil)
+}
+
+// loadGLTFBytesWithResources is loadGLTFBytes plus sibling files for a .gltf whose buffers are
+// external -- Blender's "glTF Separate" export (.gltf + .bin + textures), keyed by file name.
+// The match uses the URI's decoded base name, so "my%20level.bin" and "textures/my level.bin"
+// both resolve against an uploaded "my level.bin".
+func loadGLTFBytesWithResources(raw []byte, resources map[string][]byte) (*loadedGLTF, error) {
 	var jsonBytes, glbBin []byte
 	if len(raw) >= 12 && binary.LittleEndian.Uint32(raw[0:4]) == glbMagic {
 		var err error
@@ -139,6 +160,13 @@ func loadGLTFBytes(raw []byte) (*loadedGLTF, error) {
 	var doc gltfDoc
 	if err := json.Unmarshal(jsonBytes, &doc); err != nil {
 		return nil, fmt.Errorf("parsing glTF JSON: %w", err)
+	}
+
+	for _, ext := range doc.ExtensionsRequired {
+		switch ext {
+		case "KHR_draco_mesh_compression", "EXT_meshopt_compression":
+			return nil, fmt.Errorf("this file's geometry is compressed (%s), which the importer can't read -- in Blender's glTF export panel, turn OFF Data > Compression (Draco) and re-export", ext)
+		}
 	}
 
 	buffers := make([][]byte, len(doc.Buffers))
@@ -157,7 +185,16 @@ func loadGLTFBytes(raw []byte) (*loadedGLTF, error) {
 			}
 			buffers[i] = decoded
 		default:
-			return nil, fmt.Errorf("buffer %d references an external file (%q) -- only a single self-contained .glb or a .gltf with embedded base64 buffers can be converted from one dragged-and-dropped file", i, b.URI)
+			name := b.URI
+			if u, err := url.PathUnescape(b.URI); err == nil {
+				name = u
+			}
+			name = path.Base(strings.ReplaceAll(name, "\\", "/"))
+			data, ok := resources[name]
+			if !ok {
+				return nil, fmt.Errorf("buffer %d references an external file (%q) -- upload it together with the .gltf (Blender's \"glTF Separate\" export writes a .bin next to it), or export as a single .glb", i, name)
+			}
+			buffers[i] = data
 		}
 		if len(buffers[i]) < b.ByteLength {
 			return nil, fmt.Errorf("buffer %d is %d bytes, expected at least %d", i, len(buffers[i]), b.ByteLength)
@@ -217,10 +254,16 @@ func (g *loadedGLTF) accessorFloats(idx int) ([][]float64, error) {
 	if !ok {
 		return nil, fmt.Errorf("accessor %d: unsupported type %q", idx, acc.Type)
 	}
-	if acc.BufferView == nil {
+	if acc.BufferView == nil || len(acc.Sparse) > 0 {
 		return nil, fmt.Errorf("accessor %d: sparse accessors are not supported", idx)
 	}
+	if *acc.BufferView < 0 || *acc.BufferView >= len(g.doc.BufferViews) {
+		return nil, fmt.Errorf("accessor %d: bufferView %d out of range", idx, *acc.BufferView)
+	}
 	bv := g.doc.BufferViews[*acc.BufferView]
+	if bv.Buffer < 0 || bv.Buffer >= len(g.buffers) {
+		return nil, fmt.Errorf("accessor %d: buffer %d out of range", idx, bv.Buffer)
+	}
 	buf := g.buffers[bv.Buffer]
 
 	compSize, err := gltfComponentSize(acc.ComponentType)
@@ -242,6 +285,9 @@ func (g *loadedGLTF) accessorFloats(idx int) ([][]float64, error) {
 			if err != nil {
 				return nil, fmt.Errorf("accessor %d, element %d: %w", idx, i, err)
 			}
+			if acc.Normalized {
+				row[c] = gltfNormalize(row[c], acc.ComponentType)
+			}
 		}
 		rows[i] = row
 	}
@@ -250,15 +296,31 @@ func (g *loadedGLTF) accessorFloats(idx int) ([][]float64, error) {
 
 func gltfComponentSize(componentType int) (int, error) {
 	switch componentType {
-	case gltfUnsignedByte:
+	case gltfByte, gltfUnsignedByte:
 		return 1, nil
-	case gltfUnsignedShort:
+	case gltfShort, gltfUnsignedShort:
 		return 2, nil
 	case gltfUnsignedInt, gltfFloat:
 		return 4, nil
 	default:
 		return 0, fmt.Errorf("unsupported componentType %d", componentType)
 	}
+}
+
+// gltfNormalize maps a fixed-point integer component to its float value per the glTF spec
+// (unsigned: v/max; signed: max(v/max, -1)). Float and 32-bit components are left alone.
+func gltfNormalize(v float64, componentType int) float64 {
+	switch componentType {
+	case gltfUnsignedByte:
+		return v / 255
+	case gltfUnsignedShort:
+		return v / 65535
+	case gltfByte:
+		return math.Max(v/127, -1)
+	case gltfShort:
+		return math.Max(v/32767, -1)
+	}
+	return v
 }
 
 func gltfReadComponent(buf []byte, off, componentType int) (float64, error) {
@@ -283,6 +345,16 @@ func gltfReadComponent(buf []byte, off, componentType int) (float64, error) {
 			return 0, fmt.Errorf("read past end of buffer")
 		}
 		return float64(buf[off]), nil
+	case gltfShort:
+		if off+2 > len(buf) {
+			return 0, fmt.Errorf("read past end of buffer")
+		}
+		return float64(int16(binary.LittleEndian.Uint16(buf[off : off+2]))), nil
+	case gltfByte:
+		if off+1 > len(buf) {
+			return 0, fmt.Errorf("read past end of buffer")
+		}
+		return float64(int8(buf[off])), nil
 	default:
 		return 0, fmt.Errorf("unsupported componentType %d", componentType)
 	}
