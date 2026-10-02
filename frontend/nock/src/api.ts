@@ -974,9 +974,12 @@ export const shankpitWidgets = {
   // importGltf -- the NOCK glTF importer -> SHANKPIT widget bridge: the same .glb/.gltf the
   // Animations tab accepts, one box wall per mesh node (world-space bounds), "door*"-named nodes
   // become doors. Multipart, so it can't go through wreq's JSON path.
-  async importGltf(file: File, name: string, scale: number): Promise<ShankpitWidget> {
+  async importGltf(files: File[], name: string, scale: number): Promise<ShankpitWidget> {
+    const main = files.find((f) => /\.(glb|gltf)$/i.test(f.name))
+    if (!main) throw new Error('Pick a .glb, or a .gltf with its .bin (Blender: File > Export > glTF 2.0)')
     const form = new FormData()
-    form.append('file', file)
+    form.append('file', main)
+    for (const f of files) if (f !== main) form.append('resource', f, f.name)
     form.append('name', name)
     form.append('scale', String(scale))
     const res = await fetch(`${SHANKPIT_WIDGETS_BASE}/import-gltf`, { method: 'POST', credentials: 'include', body: form })

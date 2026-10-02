@@ -278,7 +278,7 @@ export default function ShankpitWidgets() {
   const [dirty, setDirty] = useState(false)
   const [newName, setNewName] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [gltfFile, setGltfFile] = useState<File | null>(null)
+  const [gltfFiles, setGltfFiles] = useState<File[]>([])
   const [gltfScale, setGltfScale] = useState('1')
   const [importing, setImporting] = useState(false)
 
@@ -318,7 +318,8 @@ export default function ShankpitWidgets() {
   // Import a Blender .glb/.gltf as a new widget: one cube per mesh node, "door*" nodes become
   // doors (assign their script in the inspector afterwards). Name defaults to the file's stem.
   const importGltf = async () => {
-    if (!gltfFile) return
+    const gltfMain = gltfFiles.find((f) => /\.(glb|gltf)$/i.test(f.name))
+    if (!gltfMain) return
     const scale = Number(gltfScale)
     if (!(scale > 0)) {
       setError('scale must be a positive number')
@@ -327,9 +328,9 @@ export default function ShankpitWidgets() {
     setError(null)
     setImporting(true)
     try {
-      const w = await shankpitWidgets.importGltf(gltfFile, newName || gltfFile.name.replace(/\.(glb|gltf)$/i, ''), scale)
+      const w = await shankpitWidgets.importGltf(gltfFiles, newName || gltfMain.name.replace(/\.(glb|gltf)$/i, ''), scale)
       setNewName('')
-      setGltfFile(null)
+      setGltfFiles([])
       refresh()
       await load(w.id)
     } catch (err) {
@@ -414,14 +415,14 @@ export default function ShankpitWidgets() {
         </button>
         <h3>Import from glTF</h3>
         <p className="hint">
-          A Blender .glb (or embedded .gltf) blockout: each mesh object becomes one cube sized to its bounds (rotated
+          A Blender .glb blockout (or a .gltf picked together with its .bin): each mesh object becomes one cube sized to its bounds (rotated
           objects become their bounding box). Objects named "door..." become doors. Uses the name above, or the file name.
         </p>
-        <input type="file" accept=".glb,.gltf" onChange={(e) => setGltfFile(e.target.files?.[0] ?? null)} />
+        <input type="file" multiple accept=".glb,.gltf,.bin,.png,.jpg,.jpeg" onChange={(e) => setGltfFiles(Array.from(e.target.files ?? []))} />
         <label className="hint">
           scale <input type="number" step="any" min="0" value={gltfScale} onChange={(e) => setGltfScale(e.target.value)} style={{ width: '5em' }} />
         </label>
-        <button type="button" onClick={importGltf} disabled={!gltfFile || importing}>
+        <button type="button" onClick={importGltf} disabled={!gltfFiles.some((f) => /\.(glb|gltf)$/i.test(f.name)) || importing}>
           {importing ? 'Importing...' : 'Import glTF as widget'}
         </button>
         {error && activeId === null && <span className="error">{error}</span>}
