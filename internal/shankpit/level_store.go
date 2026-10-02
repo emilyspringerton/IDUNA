@@ -494,6 +494,10 @@ type ExportDoc struct {
 	// tile wall stays in Walls as a real, visible pad; this list tells the native loader where a buggy
 	// spawns on it. y is the tile's top surface.
 	BuggySpawns []BuggySpawnExport `json:"buggy_spawns,omitempty"`
+	// LabStations (SECTION 592, founder real-time: LAB affordances in the INTERIOR-cloned LAB level) -- one
+	// per wall named lab_<kind> (see labStationKind), a tile in the level or in a placed widget. The wall stays
+	// as the visible machine body; this list tells the native loader where the interactive station is.
+	LabStations []LabStationExport `json:"lab_stations,omitempty"`
 	// Doors -- the real, native-loader-facing shape SHANKPIT/packages/world/level_boxes.h's own
 	// door parser expects exactly ({box_index, script_url}, script_path deliberately never set
 	// here -- every door authored through NOCK goes via the real, downloadable script repository,
@@ -1408,7 +1412,7 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed,
-		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, Doors: doorExports,
+		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, LabStations: labStationsForExport(walls), Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
 	}, nil
@@ -1633,6 +1637,50 @@ func buggySpawnsForExport(walls []Wall) []BuggySpawnExport {
 			continue
 		}
 		out = append(out, BuggySpawnExport{X: w.X, Y: w.Y + w.SY/2, Z: w.Z, Yaw: yaw})
+	}
+	return out
+}
+
+// MaxLabStations bounds the exported lab station list (the native loader's fixed array).
+const MaxLabStations = 32
+
+// LabStationKinds are the station kinds a wall name may carry: lab_<kind>[_anything].
+var LabStationKinds = []string{"splice", "centrifuge", "vat", "fridge", "console", "pcr"}
+
+// LabStationExport is one interactive lab station. y is the tile's top surface.
+type LabStationExport struct {
+	Kind string  `json:"kind"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Z    float64 `json:"z"`
+}
+
+// labStationKind parses lab_<kind> (case-insensitive); the char after the kind must be end, '_', '.', ' ' or '-'.
+func labStationKind(name string) (string, bool) {
+	const prefix = "lab_"
+	if len(name) < len(prefix) || !strings.EqualFold(name[:len(prefix)], prefix) {
+		return "", false
+	}
+	rest := strings.ToLower(name[len(prefix):])
+	for _, k := range LabStationKinds {
+		if strings.HasPrefix(rest, k) {
+			if len(rest) == len(k) || strings.ContainsRune("_. -", rune(rest[len(k)])) {
+				return k, true
+			}
+		}
+	}
+	return "", false
+}
+
+// labStationsForExport lists a station per lab_* wall (final flattened walls), capped at MaxLabStations.
+func labStationsForExport(walls []Wall) []LabStationExport {
+	var out []LabStationExport
+	for _, w := range walls {
+		k, ok := labStationKind(w.Name)
+		if !ok || len(out) >= MaxLabStations {
+			continue
+		}
+		out = append(out, LabStationExport{Kind: k, X: w.X, Y: w.Y + w.SY/2, Z: w.Z})
 	}
 	return out
 }

@@ -1240,3 +1240,28 @@ func TestExport_TooManyBuggySpawnsIsAnError(t *testing.T) {
 		t.Fatal("expected an error past MaxBuggySpawns")
 	}
 }
+
+// SECTION 592: lab_<kind> tiles in a placed widget export as lab_stations at the placed position.
+func TestExport_LabStationsFromWidget(t *testing.T) {
+	s := newTestStore(t)
+	widget, err := s.Widgets.CreateWidget(context.Background(), "Lab Bench",
+		[]shankpit.Wall{buggyTile("lab_splice", 5, 0, 0), buggyTile("lab_vat_2", 9, 0, 0), buggyTile("lab_splicer_nope", 1, 0, 0), buggyTile("crate", 2, 0, 0)}, nil)
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	parent, err := s.CreateLevel(context.Background(), "LabHost", 200, 50, 200, true, 2,
+		nil, []shankpit.LevelObject{{RefWidgetID: widget.ID, X: 20, Y: 0, Z: 40, RotY: 0}}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	doc, err := s.Export(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.LabStations) != 2 || doc.LabStations[0].Kind != "splice" || doc.LabStations[1].Kind != "vat" {
+		t.Fatalf("want splice+vat only, got %+v", doc.LabStations)
+	}
+	if doc.LabStations[0].X < 24.99 || doc.LabStations[0].X > 25.01 {
+		t.Errorf("splice should land at x=25, got %+v", doc.LabStations[0])
+	}
+}
