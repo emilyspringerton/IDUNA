@@ -918,8 +918,8 @@ export const shankpitLevels = {
   // or the .gltf together with its .bin/textures (Blender's "glTF Separate"); the first .glb/.gltf
   // is the document, everything else is sent as a resource and matched by file name server-side.
   async importGltf(files: File[], scale: number): Promise<{ walls: ShankpitWall[]; doors: ShankpitDoor[] }> {
-    const main = files.find((f) => /\.(glb|gltf)$/i.test(f.name))
-    if (!main) throw new Error('Pick a .glb, or a .gltf with its .bin (Blender: File > Export > glTF 2.0)')
+    const main = files.find((f) => /\.(glb|gltf|stl)$/i.test(f.name))
+    if (!main) throw new Error('Pick a .glb, .stl, or a .gltf with its .bin (Blender: File > Export > glTF 2.0)')
     const form = new FormData()
     form.append('file', main)
     for (const f of files) if (f !== main) form.append('resource', f, f.name)
@@ -984,8 +984,8 @@ export const shankpitWidgets = {
   // Animations tab accepts, one box wall per mesh node (world-space bounds), "door*"-named nodes
   // become doors. Multipart, so it can't go through wreq's JSON path.
   async importGltf(files: File[], name: string, scale: number): Promise<ShankpitWidget> {
-    const main = files.find((f) => /\.(glb|gltf)$/i.test(f.name))
-    if (!main) throw new Error('Pick a .glb, or a .gltf with its .bin (Blender: File > Export > glTF 2.0)')
+    const main = files.find((f) => /\.(glb|gltf|stl)$/i.test(f.name))
+    if (!main) throw new Error('Pick a .glb, .stl, or a .gltf with its .bin (Blender: File > Export > glTF 2.0)')
     const form = new FormData()
     form.append('file', main)
     for (const f of files) if (f !== main) form.append('resource', f, f.name)

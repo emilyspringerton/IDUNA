@@ -320,9 +320,9 @@ export default function ShankpitWidgets() {
   // Import a Blender .glb/.gltf as a new widget: one cube per mesh node, "door*" nodes become
   // doors (assign their script in the inspector afterwards). Name defaults to the file's stem.
   const importGltf = async (files: File[]) => {
-    const gltfMain = files.find((f) => /\.(glb|gltf)$/i.test(f.name))
+    const gltfMain = files.find((f) => /\.(glb|gltf|stl)$/i.test(f.name))
     if (!gltfMain) {
-      setImportError('Drop a .glb or .gltf file (a .gltf may come with its .bin). Native .blend: export via File > Export > glTF 2.0 first.')
+      setImportError('Drop a .glb, .gltf (with its .bin) or .stl file. Native .blend: export via File > Export > glTF 2.0 first.')
       return
     }
     const scale = Number(gltfScale)
@@ -333,7 +333,7 @@ export default function ShankpitWidgets() {
     setImportError(null)
     setImporting(true)
     try {
-      const w = await shankpitWidgets.importGltf(files, newName || gltfMain.name.replace(/\.(glb|gltf)$/i, ''), scale)
+      const w = await shankpitWidgets.importGltf(files, newName || gltfMain.name.replace(/\.(glb|gltf|stl)$/i, ''), scale)
       setNewName('')
       refresh()
       await load(w.id)
@@ -426,7 +426,7 @@ export default function ShankpitWidgets() {
         <h3>Import from glTF</h3>
         <p className="hint">
           A Blender .glb blockout (or a .gltf picked together with its .bin): each mesh object becomes one cube sized to its bounds (rotated
-          objects become their bounding box). Objects named "door..." become doors. Uses the name above, or the file name.
+          objects become their bounding box). Objects named "door..." become doors. An .stl is one anonymous mesh, so it becomes a single bounding-box wall (Z-up converted to Y-up). Uses the name above, or the file name.
         </p>
         <label className="hint">
           scale <input type="number" step="any" min="0" value={gltfScale} onChange={(e) => setGltfScale(e.target.value)} style={{ width: '5em' }} />
@@ -445,11 +445,11 @@ export default function ShankpitWidgets() {
             if (files.length) importGltf(files)
           }}
         >
-          {importing ? 'Importing…' : 'Drop a .glb/.gltf file here (plus its .bin if any), or click to browse'}
+          {importing ? 'Importing…' : 'Drop a .glb/.gltf/.stl file here (plus its .bin if any), or click to browse'}
           <input
             type="file"
             multiple
-            accept=".glb,.gltf,.bin,.png,.jpg,.jpeg"
+            accept=".glb,.gltf,.stl,.bin,.png,.jpg,.jpeg"
             style={{ display: 'none' }}
             onChange={(e) => {
               const files = Array.from(e.target.files ?? [])

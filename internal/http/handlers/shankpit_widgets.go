@@ -219,7 +219,7 @@ func (h *ShankpitWidgetsHandler) importGLTF(w http.ResponseWriter, r *http.Reque
 	}
 	boxes, err := nock.GLTFToWidgetBoxesWithResources(fileData, scale, resources)
 	if err != nil {
-		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("glTF to widget conversion failed: %v", err))
+		mmoWriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf("model to widget conversion failed: %v", err))
 		return
 	}
 	walls, doors := WidgetFromGLTFBoxes(boxes)

@@ -135,6 +135,13 @@ func GLTFToWidgetBoxesWithResources(raw []byte, scale float64, resources map[str
 	if scale <= 0 {
 		scale = 1
 	}
+	if isSTL(raw) {
+		box, err := stlBox(raw, scale)
+		if err != nil {
+			return nil, err
+		}
+		return []WidgetBox{box}, nil
+	}
 	g, err := loadGLTFBytesWithResources(raw, resources)
 	if err != nil {
 		return nil, err
