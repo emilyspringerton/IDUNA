@@ -1,0 +1,85 @@
+name: Extension Release
+
+# SECTION 593 (founder real-time, 2026-10-02): "build it into IDUNA CICD auto release the extension or chrome plugin".
+# Every green push to main that touches extensions/** tests the extension(s), packages each one deterministically
+# (extensions/build_extension.py: sorted files, fixed timestamps, manifest version stamped) and cuts a GitHub Release tagged
+# ext-<name>-v<major>.<minor>.0 -- MINOR auto-bumps, same convention as DEADWEIGHT_2's ci.yml. Its own tag namespace so it
+# never collides with the IDUNA Construct workflow's v* tags. Zip only: a signed .crx needs a private key secret that is not
+# provisioned (a human-only step); install = unzip + chrome://extensions -> Load unpacked, or Chrome Web Store later.
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "extensions/**"
+      - ".github/workflows/extension-release.yml"
+  pull_request:
+    paths:
+      - "extensions/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialize: two pushes must not compute the same next tag (queued, not cancelled).
+concurrency:
+  group: extension-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  extension:
+    name: Test, package, release
+    runs-on: ubuntu-latest
+    env:
+      EXT_NAME: mixforge-cookie-exporter
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Test
+        run: node extensions/${EXT_NAME}/cookies_test.mjs
+
+      - name: Compute version
+        id: v
+        run: |
+          set -euo pipefail
+          prefix="ext-${EXT_NAME}-v"
+          latest="$(git tag -l "${prefix}[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n1)"
+          if [ -z "$latest" ]; then version="1.0.0"; else
+            ver="${latest#${prefix}}"; major="$(echo "$ver" | cut -d. -f1)"; minor="$(echo "$ver" | cut -d. -f2)"
+            version="${major}.$((minor + 1)).0"; fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${prefix}${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Package (deterministic, verified twice)
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          z="out/${EXT_NAME}-${{ steps.v.outputs.version }}.zip"
+          python3 extensions/build_extension.py "extensions/${EXT_NAME}" "${{ steps.v.outputs.version }}" "$z"
+          python3 extensions/build_extension.py "extensions/${EXT_NAME}" "${{ steps.v.outputs.version }}" "$z.check"
+          cmp "$z" "$z.check" || { echo "ERROR: extension zip not deterministic"; exit 1; }
+          rm -f "$z.check" "$z.check.sha256"
+          unzip -p "$z" manifest.json | grep -q "\"version\": \"${{ steps.v.outputs.version }}\""
+          ls -la out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EXT_NAME }}-${{ steps.v.outputs.version }}
+          path: out/*
+
+      - name: Release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" out/* --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "IDUNA browser extension ${EXT_NAME} ${{ steps.v.outputs.version }}. Unzip, then chrome://extensions -> Developer mode -> Load unpacked. Not Web-Store signed."

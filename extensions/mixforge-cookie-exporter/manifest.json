@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "MIXFORGE Cookie Exporter",
+  "version": "1.0.0",
+  "description": "Exports your youtube.com session cookies (Netscape format) via Chrome's own sanctioned cookies API and uploads them to your own IDUNA instance, so MIXFORGE's DJ-room server can get past YouTube's server-side bot detection.",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": ["*://*.youtube.com/*", "https://okemily.com/*"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}
