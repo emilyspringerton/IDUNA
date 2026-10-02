@@ -33,6 +33,8 @@ func newShankpitLevelsTestStore(t *testing.T) *shankpit.LevelStore {
 			ground_plane_squares INTEGER NOT NULL DEFAULT 2,
 			enclosed BOOLEAN NOT NULL DEFAULT 0,
 			brick_damage_json TEXT NOT NULL DEFAULT '[]',
+			collection TEXT NOT NULL DEFAULT 'levels',
+			is_zombie_default INTEGER NOT NULL DEFAULT 0,
 			walls_json TEXT NOT NULL DEFAULT '[]',
 			objects_json TEXT NOT NULL DEFAULT '[]',
 			spawners_json TEXT NOT NULL DEFAULT '[]',

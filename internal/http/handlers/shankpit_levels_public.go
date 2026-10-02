@@ -67,7 +67,7 @@ func (h *ShankpitLevelsPublicHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 }
 
 func (h *ShankpitLevelsPublicHandler) list(w http.ResponseWriter, r *http.Request) {
-	list, err := h.Store.ListLevels(r.Context())
+	list, err := h.Store.ListLevelsIn(r.Context(), r.URL.Query().Get("collection"))
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -92,6 +92,10 @@ func (h *ShankpitLevelsPublicHandler) export(w http.ResponseWriter, r *http.Requ
 type snapshotReq struct {
 	SourceLevelID int64                `json:"source_level_id"`
 	BrickDamage   []shankpit.BrickCell `json:"brick_damage"`
+	// Collection "zombies" files the snapshot in the ZOMBIES level repository; SetDefault makes it the
+	// level the sandbox loads next. Anything else = the main registry.
+	Collection string `json:"collection"`
+	SetDefault bool   `json:"set_default"`
 }
 
 // snapshot is the one narrow, unauthenticated WRITE this handler exposes (founder real-time, 2026-10-02:
@@ -111,7 +115,7 @@ func (h *ShankpitLevelsPublicHandler) snapshot(w http.ResponseWriter, r *http.Re
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	lvl, err := h.Store.SnapshotLevel(r.Context(), req.SourceLevelID, req.BrickDamage, time.Now())
+	lvl, err := h.Store.SnapshotLevelTo(r.Context(), req.SourceLevelID, req.BrickDamage, time.Now(), req.Collection, req.SetDefault)
 	if errors.Is(err, shankpit.ErrSnapshotExists) {
 		writeJSON(w, http.StatusOK, map[string]any{"duplicate": true})
 		return

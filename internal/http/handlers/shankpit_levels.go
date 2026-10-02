@@ -56,6 +56,8 @@ func (h *ShankpitLevelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.setDefaultQueue(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "story-start" && r.Method == http.MethodPatch:
 		h.setStoryStart(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "zombie-default" && r.Method == http.MethodPatch:
+		h.setZombieDefault(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "enclosed" && r.Method == http.MethodPatch:
 		h.setEnclosed(w, r, parts[0])
 	default:
@@ -68,7 +70,7 @@ func parseShankpitLevelID(idStr string) (int64, error) {
 }
 
 func (h *ShankpitLevelsHandler) list(w http.ResponseWriter, r *http.Request) {
-	list, err := h.Store.ListLevels(r.Context())
+	list, err := h.Store.ListLevelsIn(r.Context(), r.URL.Query().Get("collection"))
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -210,6 +212,22 @@ func (h *ShankpitLevelsHandler) setStoryStart(w http.ResponseWriter, r *http.Req
 		return
 	}
 	lvl, err := h.Store.SetStoryStartLevel(r.Context(), id)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, lvl)
+}
+
+// setZombieDefault makes the level the ZOMBIES sandbox's level (copying it into the zombies
+// repository first when it comes from the main registry) -- "set for zombies".
+func (h *ShankpitLevelsHandler) setZombieDefault(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := parseShankpitLevelID(idStr)
+	if err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	lvl, err := h.Store.SetZombieDefaultLevel(r.Context(), id)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return

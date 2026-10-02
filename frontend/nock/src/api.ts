@@ -771,6 +771,9 @@ export interface ShankpitLevel {
   // is_story_start (S473) -- exactly one level is the real, global MODE_STORY entry level at a
   // time, same real "exactly one" shape is_default_queue below already uses.
   is_story_start: boolean
+  // ZOMBIES repository: collection is "levels" | "zombies"; exactly one zombies level is the sandbox default
+  collection?: string
+  is_zombie_default?: boolean
   // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
   // set a level as default for queue") -- exactly one level is the real, global QUEUE default at
   // a time, same real shape ShankpitSpray's own is_default already uses.
@@ -795,6 +798,9 @@ export interface ShankpitLevelSummary {
   character_count: number
   level_exit_count: number
   is_story_start: boolean
+  // ZOMBIES repository: collection is "levels" | "zombies"; exactly one zombies level is the sandbox default
+  collection?: string
+  is_zombie_default?: boolean
   is_default_queue: boolean
   created_at: string
   updated_at: string
@@ -814,7 +820,7 @@ async function sreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
 }
 
 export const shankpitLevels = {
-  list: () => sreq<ShankpitLevelSummary[]>(''),
+  list: (collection?: string) => sreq<ShankpitLevelSummary[]>(collection ? `?collection=${collection}` : ''),
   get: (id: number) => sreq<ShankpitLevel>(`/${id}`),
   create: (
     name: string,
@@ -892,6 +898,8 @@ export const shankpitLevels = {
   setDefaultQueue: (id: number) => sreq<ShankpitLevel>(`/${id}/default-queue`, { method: 'PATCH' }),
   // setStoryStart (S473) -- mirrors setDefaultQueue above exactly.
   setStoryStart: (id: number) => sreq<ShankpitLevel>(`/${id}/story-start`, { method: 'PATCH' }),
+  // setZombieDefault -- "set for zombies": copies a main-registry level into the zombies repository and flags it as the sandbox level.
+  setZombieDefault: (id: number) => sreq<ShankpitLevel>(`/${id}/zombie-default`, { method: 'PATCH' }),
   // setEnclosed (S493) -- unlike setDefaultQueue/setStoryStart above (exclusive "set THIS one"
   // toggles, no body), enclosed is a plain per-level on/off flag, so this takes the desired state.
   setEnclosed: (id: number, enclosed: boolean) =>

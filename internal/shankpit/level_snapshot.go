@@ -62,6 +62,26 @@ func validateBrickDamage(cells []BrickCell, wallCount int) error {
 // state). A same-second repeat hits idx_shankpit_levels_name and returns ErrSnapshotExists, which is the
 // debounce guarantee: spamming the key can never create a second row.
 func (s *LevelStore) SnapshotLevel(ctx context.Context, sourceID int64, damage []BrickCell, at time.Time) (*Level, error) {
+	return s.SnapshotLevelTo(ctx, sourceID, damage, at, CollectionLevels, false)
+}
+
+func mustMarshalDamage(d []BrickCell) string {
+	if d == nil {
+		d = []BrickCell{}
+	}
+	b, _ := json.Marshal(d)
+	return string(b)
+}
+
+// SnapshotLevelTo is SnapshotLevel with a destination repository: collection "zombies" files the
+// snapshot in the ZOMBIES level repository, and setDefault makes it the level the sandbox loads next
+// (founder real-time, 2026-10-02: "if we have a lot of destruction in a specific game we can save it
+// and make it the new zombies level"). Snapshots of the main registry stay out of zombies unless asked.
+func (s *LevelStore) SnapshotLevelTo(ctx context.Context, sourceID int64, damage []BrickCell, at time.Time, collection string, setDefault bool) (*Level, error) {
+	if collection != CollectionZombies {
+		collection = CollectionLevels
+		setDefault = false
+	}
 	src, err := s.GetLevel(ctx, sourceID)
 	if err != nil {
 		return nil, err
@@ -95,8 +115,13 @@ func (s *LevelStore) SnapshotLevel(ctx context.Context, sourceID int64, damage [
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET brick_damage_json = ?, enclosed = ? WHERE id = ?`, dmgJSON, src.Enclosed, lvl.ID); err != nil {
+	if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET brick_damage_json = ?, enclosed = ?, collection = ? WHERE id = ?`, dmgJSON, src.Enclosed, collection, lvl.ID); err != nil {
 		return nil, fmt.Errorf("shankpit: snapshot: store damage: %w", err)
+	}
+	if setDefault {
+		if err := s.markZombieDefault(ctx, lvl.ID); err != nil {
+			return nil, err
+		}
 	}
 	return s.GetLevel(ctx, lvl.ID)
 }

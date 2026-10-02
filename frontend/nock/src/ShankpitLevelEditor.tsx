@@ -293,13 +293,15 @@ function applyWallTexture(
 
 function useLevelList() {
   const [list, setList] = useState<ShankpitLevelSummary[]>([])
+  const [zombieList, setZombieList] = useState<ShankpitLevelSummary[]>([])
   const refresh = useCallback(() => {
     shankpitLevels.list().then(setList).catch(() => setList([]))
+    shankpitLevels.list('zombies').then(setZombieList).catch(() => setZombieList([]))
   }, [])
   useEffect(() => {
     refresh()
   }, [refresh])
-  return { list, refresh }
+  return { list, zombieList, refresh }
 }
 
 // useWidgetSummaryList -- S482, real object-placement picker source, kept OUT of useLevelList's
@@ -1687,7 +1689,7 @@ function LevelExitInspector({
 }
 
 export default function ShankpitLevelEditor() {
-  const { list, refresh } = useLevelList()
+  const { list, zombieList, refresh } = useLevelList()
   const { materials } = useMaterialList()
   const { scripts: doorScriptList } = useDoorScriptList()
   const [activeId, setActiveId] = useState<number | null>(null)
@@ -2217,8 +2219,43 @@ export default function ShankpitLevelEditor() {
                   Set as STORY start
                 </button>
               )}
+              {/* Founder real-time, 2026-10-02: "a new button for set for zombies" -- copies this level
+                  into the ZOMBIES repository and makes it the level the ZOMBIES sandbox loads. */}
+              <button
+                type="button"
+                onClick={async () => {
+                  await shankpitLevels.setZombieDefault(l.id)
+                  refresh()
+                }}
+              >
+                Set for ZOMBIES
+              </button>
             </li>
           ))}
+        </ul>
+        <h2>ZOMBIE Levels</h2>
+        <ul>
+          {zombieList.map((l) => (
+            <li key={l.id} className={l.id === activeId ? 'active' : ''}>
+              <button onClick={() => load(l.id)}>
+                {l.name} <span className="hint">({l.wall_count} cubes)</span>
+              </button>
+              {l.is_zombie_default ? (
+                <span className="hint">ZOMBIES default</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await shankpitLevels.setZombieDefault(l.id)
+                    refresh()
+                  }}
+                >
+                  Make ZOMBIES default
+                </button>
+              )}
+            </li>
+          ))}
+          {zombieList.length === 0 && <li className="hint">None yet -- "Set for ZOMBIES" on a level, or play ZOMBIES and press F1.</li>}
         </ul>
         <button type="button" onClick={startNew}>
           + New level

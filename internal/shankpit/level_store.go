@@ -449,6 +449,10 @@ type Level struct {
 	// already-public level LIST endpoint, same discovery mechanism IsDefaultQueue already uses --
 	// see SetStoryStartLevel's own doc comment for the real enforcement.
 	IsStoryStart bool `json:"is_story_start"`
+	// Collection -- "levels" (default) or "zombies": the ZOMBIES sandbox's own level repository.
+	// IsZombieDefault -- exactly one zombies-collection level the sandbox loads (SetZombieDefaultLevel).
+	Collection      string `json:"collection"`
+	IsZombieDefault bool   `json:"is_zombie_default"`
 	// IsDefaultQueue (S459-41, founder real-time: "need to add an option to shankpit levels to
 	// set a level as default for queue") -- exactly one level may be the real, global QUEUE
 	// default at a time, same real shape shankpit_sprays.IsDefault already established. The
@@ -773,7 +777,7 @@ func (s *LevelStore) validateNextLevelID(ctx context.Context, selfID int64, next
 // GetLevel returns the full row, including its real wall list.
 func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, brick_damage_json, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, created_at, updated_at
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, brick_damage_json, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, collection, is_zombie_default, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
 	return scanLevel(row)
 }
@@ -782,7 +786,7 @@ func scanLevel(row *sql.Row) (*Level, error) {
 	var l Level
 	var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON, brickDamageJSON string
 	var nextLevelID sql.NullInt64
-	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &l.Enclosed, &brickDamageJSON, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.Name, &l.Width, &l.Height, &l.Depth, &l.GroundPlaneEnabled, &l.GroundPlaneSquares, &l.Enclosed, &brickDamageJSON, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &nextLevelID, &l.IsStoryStart, &l.IsDefaultQueue, &l.Collection, &l.IsZombieDefault, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: level not found")
 		}
@@ -837,18 +841,34 @@ type LevelSummary struct {
 	LevelExitCount     int     `json:"level_exit_count"`
 	// IsStoryStart (S473) -- same real discovery-via-LIST shape IsDefaultQueue already
 	// established. See Level's own doc comment for the full enforcement story.
-	IsStoryStart   bool   `json:"is_story_start"`
-	IsDefaultQueue bool   `json:"is_default_queue"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	IsStoryStart    bool   `json:"is_story_start"`
+	IsDefaultQueue  bool   `json:"is_default_queue"`
+	Collection      string `json:"collection"`
+	IsZombieDefault bool   `json:"is_zombie_default"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 // ListLevels returns every level as a real, lightweight summary, newest first -- the real
 // level-select registry primitive this section exists to build.
 func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
+	return s.ListLevelsIn(ctx, CollectionLevels)
+}
+
+// Level repositories ("collections") sharing the shankpit_levels table.
+const (
+	CollectionLevels  = "levels"
+	CollectionZombies = "zombies"
+)
+
+// ListLevelsIn lists one collection ("levels" or "zombies"), newest first.
+func (s *LevelStore) ListLevelsIn(ctx context.Context, collection string) ([]LevelSummary, error) {
+	if collection != CollectionZombies {
+		collection = CollectionLevels
+	}
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, is_story_start, is_default_queue, created_at, updated_at
-		 FROM shankpit_levels ORDER BY created_at DESC`)
+		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, is_story_start, is_default_queue, collection, is_zombie_default, created_at, updated_at
+		 FROM shankpit_levels WHERE collection = ? ORDER BY created_at DESC, id DESC`, collection)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: list levels: %w", err)
 	}
@@ -858,7 +878,7 @@ func (s *LevelStore) ListLevels(ctx context.Context) ([]LevelSummary, error) {
 	for rows.Next() {
 		var sum LevelSummary
 		var wallsJSON, objectsJSON, spawnersJSON, doorsJSON, navNodesJSON, charactersJSON, levelExitsJSON string
-		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &sum.IsStoryStart, &sum.IsDefaultQueue, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
+		if err := rows.Scan(&sum.ID, &sum.Name, &sum.Width, &sum.Height, &sum.Depth, &sum.GroundPlaneEnabled, &sum.GroundPlaneSquares, &wallsJSON, &objectsJSON, &spawnersJSON, &doorsJSON, &navNodesJSON, &charactersJSON, &levelExitsJSON, &sum.IsStoryStart, &sum.IsDefaultQueue, &sum.Collection, &sum.IsZombieDefault, &sum.CreatedAt, &sum.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("shankpit: list levels: %w", err)
 		}
 		var walls []Wall
@@ -1036,6 +1056,56 @@ func (s *LevelStore) SetDefaultQueueLevel(ctx context.Context, id int64) (*Level
 		return nil, fmt.Errorf("shankpit: set default queue level: %w", err)
 	}
 	return s.GetLevel(ctx, id)
+}
+
+// SetZombieDefaultLevel makes id the one level the ZOMBIES sandbox loads (founder real-time,
+// 2026-10-02: "a new button for set for zombies"). A level from the main registry is COPIED into the
+// zombies repository first (the original stays untouched); a level already in the zombies
+// collection is just flagged. Exactly one zombies-collection row holds the flag, enforced in Go.
+func (s *LevelStore) SetZombieDefaultLevel(ctx context.Context, id int64) (*Level, error) {
+	src, err := s.GetLevel(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	target := id
+	if src.Collection != CollectionZombies {
+		name := src.Name
+		if len(name) > 40 {
+			name = name[:40]
+		}
+		cp, err := s.CloneLevel(ctx, id, name+"_ZOMBIES")
+		if err != nil {
+			return nil, err
+		}
+		target = cp.ID
+		if _, err := s.DB.ExecContext(ctx, `UPDATE shankpit_levels SET collection = ?, brick_damage_json = ?, enclosed = ? WHERE id = ?`,
+			CollectionZombies, mustMarshalDamage(src.BrickDamage), src.Enclosed, target); err != nil {
+			return nil, fmt.Errorf("shankpit: set zombie default: %w", err)
+		}
+	}
+	if err := s.markZombieDefault(ctx, target); err != nil {
+		return nil, err
+	}
+	return s.GetLevel(ctx, target)
+}
+
+func (s *LevelStore) markZombieDefault(ctx context.Context, id int64) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("shankpit: set zombie default: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE shankpit_levels SET is_zombie_default = 0 WHERE collection = ?`, CollectionZombies); err != nil {
+		return fmt.Errorf("shankpit: set zombie default: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE shankpit_levels SET is_zombie_default = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND collection = ?`, id, CollectionZombies)
+	if err != nil {
+		return fmt.Errorf("shankpit: set zombie default: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("shankpit: level %d not found in zombies collection", id)
+	}
+	return tx.Commit()
 }
 
 // SetStoryStartLevel marks id as the one real, global MODE_STORY entry level, clearing every
