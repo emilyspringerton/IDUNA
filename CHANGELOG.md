@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-02
+- cmd/shankpit-lab-builder: programmatically creates 6 lab station widgets + clones INTERRIOR_1 into LAB through the LevelStore/WidgetStore API (run on a DB copy), exports SHANKPIT var/lab/lab.json -- SECTION 592 / card #506 (sess-20260923-1030-4a526255)
 - SHANKPIT level export gains lab_stations (walls named lab_<splice|centrifuge|vat|fridge|console|pcr>, incl. inside placed widgets) -- SECTION 592 / card #505 (sess-20260923-1030-4a526255)
 - NOCK EduVM snippets (card #495): nock_edu_snippets table, admin CRUD /admin/nock/api/edu-snippets, public read-only GET /api/v1/nock-edu-snippets[?widget=]. Tested; not yet deployed to the live instance, and no NOCK UI tab yet. (sess-20260923-1030-4a526255)
 - kanban: new Pending lane (rule 9) -- backend queue, 6-column board with a Pending column and send-to option, openapi enum; emily kanban list/move/add accept pending (sess-20260923-1030-4a526255)
