@@ -92,6 +92,19 @@ func (s *WidgetStore) GetWidget(ctx context.Context, id int64) (*Widget, error) 
 	return scanWidget(row)
 }
 
+// ModelWidgetPrefix marks a widget as a PUBLIC held/world model (card #447): the hammer is modelled in
+// Blender, imported through the Widgets glTF importer and saved as MODEL_HAMMER; the native client
+// fetches it by name from the read-only /api/v1/shankpit-models route. Only widgets with this prefix are
+// ever served there -- every other widget stays admin-only, as before.
+const ModelWidgetPrefix = "MODEL_"
+
+// GetWidgetByName returns the newest widget with exactly this name.
+func (s *WidgetStore) GetWidgetByName(ctx context.Context, name string) (*Widget, error) {
+	row := s.DB.QueryRowContext(ctx,
+		`SELECT id, name, walls_json, doors_json, created_at, updated_at FROM shankpit_widgets WHERE name = ? ORDER BY id DESC LIMIT 1`, name)
+	return scanWidget(row)
+}
+
 func scanWidget(row *sql.Row) (*Widget, error) {
 	var w Widget
 	var wallsJSON, doorsJSON string

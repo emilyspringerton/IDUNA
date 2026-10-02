@@ -874,6 +874,11 @@ func main() {
 	mux.Handle("/admin/nock/api/shankpit-widgets", shankpitWidgetsProtected)
 	mux.Handle("/admin/nock/api/shankpit-widgets/", shankpitWidgetsProtected)
 
+	// Card #447: widgets named MODEL_* are public, read-only models for the native client (the hammer).
+	// Every other widget stays admin-only -- see shankpit_models_public.go.
+	shankpitModelsPublicH := &handlers.ShankpitModelsPublicHandler{Widgets: shankpitWidgetStore}
+	mux.Handle("/api/v1/shankpit-models/", shankpitModelsPublicH)
+
 	// S459-19, founder real-time: "can we implement sprays? ... export to spray goes to sprays
 	// registry same treatment ... we need a nock sprays interface right now just to set the
 	// default." Same real admin-CRUD-plus-public-registry split as levels/materials above.

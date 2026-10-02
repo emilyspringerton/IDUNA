@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-02
+- feat(shankpit): public read-only model route GET /api/v1/shankpit-models/MODEL_<NAME> (#447) — serves a NOCK widget named MODEL_* as its box list so the native client can draw it in hand (the hammer: Blender -> Widgets glTF import -> MODEL_HAMMER). Non-MODEL_ widgets are never served; GET only. WidgetStore.GetWidgetByName. Tests added. Needs IDUNA rebuild+restart. (sess-20260923-1030-4a526255)
 - feat(nock): '+ Add buggy spawn' in the level editor and the widget editor (#464c/#467) — adds an amber buggy_spawn tile (rename to buggy_spawn_90 to turn it); documented the name convention in CLAUDE.md. dist rebuilt; needs IDUNA rebuild+restart to serve. (sess-20260923-1030-4a526255)
 - feat(shankpit): buggy spawns in level export (#464b/#466) — a wall named buggy_spawn / buggy_spawn_<deg> (Blender '.001' suffix ok) exports a buggy_spawns entry (x, tile-top y, z, yaw); works for tiles in the level itself and inside placed widgets (flattening now carries wall names through and adds the placement rotation to the yaw). The tile stays a real wall. No schema change; max 16. Tests added. (sess-20260923-1030-4a526255)
 - feat(nock): Widgets tab glTF import (#461) now takes a .gltf together with its .bin (Blender 'glTF Separate'), same as the level importer; the widget importer itself already existed — verified present in the built bundle and covered by handler tests. dist rebuilt. (sess-20260923-1030-4a526255)

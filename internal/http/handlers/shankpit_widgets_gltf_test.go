@@ -120,3 +120,51 @@ func TestShankpitWidgetsHandler_ImportGLTFErrors(t *testing.T) {
 		t.Errorf("bad scale: expected 400, got %d", rec.Code)
 	}
 }
+
+// ---- public model route (#447) ----
+
+func TestShankpitModelsPublic_ServesOnlyModelWidgets(t *testing.T) {
+	wh := newWidgetsTestHandler(t)
+	// import the Blender-style blockout twice: once as an ordinary widget, once as MODEL_HAMMER
+	for _, name := range []string{"SECRET_PIECE", "MODEL_HAMMER"} {
+		if rec := postWidgetGLTF(t, wh, map[string]string{"name": name}, twoCubeGLTF); rec.Code != http.StatusCreated {
+			t.Fatalf("import %s: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	h := &handlers.ShankpitModelsPublicHandler{Widgets: wh.Store}
+	get := func(path, method string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+
+	rec := get("/api/v1/shankpit-models/MODEL_HAMMER", http.MethodGet)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Name  string          `json:"name"`
+		Walls []shankpit.Wall `json:"walls"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Name != "MODEL_HAMMER" || len(out.Walls) != 2 || out.Walls[0].SX != 4 {
+		t.Errorf("unexpected model: %+v", out)
+	}
+	if rec := get("/api/v1/shankpit-models/SECRET_PIECE", http.MethodGet); rec.Code != http.StatusNotFound {
+		t.Errorf("a non-MODEL_ widget must not be public, got %d", rec.Code)
+	}
+	if rec := get("/api/v1/shankpit-models/MODEL_NOPE", http.MethodGet); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown model: expected 404, got %d", rec.Code)
+	}
+	if rec := get("/api/v1/shankpit-models/MODEL_HAMMER/extra", http.MethodGet); rec.Code != http.StatusNotFound {
+		t.Errorf("subpath: expected 404, got %d", rec.Code)
+	}
+	if rec := get("/api/v1/shankpit-models/", http.MethodGet); rec.Code != http.StatusNotFound {
+		t.Errorf("empty name: expected 404, got %d", rec.Code)
+	}
+	if rec := get("/api/v1/shankpit-models/MODEL_HAMMER", http.MethodPost); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("write method: expected 405, got %d", rec.Code)
+	}
+}
