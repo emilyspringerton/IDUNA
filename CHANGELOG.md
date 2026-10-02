@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-02
+- POST /api/v1/shankpit-levels/snapshots + brick_damage column/export (not yet deployed) (sess-20260923-1030-4a526255)
 
 - emily.collections.read permission + EMILY-COLLECTIONS-READER agent (migration 202610020001, config/agents.json); not yet applied to live (sess-20260923-1030-4a526255)
 
