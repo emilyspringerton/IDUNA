@@ -1477,3 +1477,45 @@ export const robots = {
   syncFromGit: () => robreq<RobotSyncReport>('/sync', { method: 'POST' }),
   downloadUrl: (id: number, kind: 'spec' | 'grobot' | 'gskel') => `${ROBOTS_BASE}/${id}/${kind}`,
 }
+
+// ---- QR code registry (kanban #459: texture generator + QR generator unified in one NOCK
+// "Generators" tab). Same backend the standalone /admin/qr page uses
+// (IDUNA/internal/http/handlers/qr.go); NOCK is the full-capability surface. ----
+const QR_BASE = '/admin/qr/api/codes'
+
+export interface QrCode {
+  id: number
+  slug: string
+  target_url: string
+  label: string
+  hit_count: number
+  created_by: string
+  redirect_url: string
+  image_url: string
+  created_at: string
+  updated_at: string
+}
+
+async function qreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${QR_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const qrCodes = {
+  list: async () => {
+    const r = await qreq<QrCode[] | { codes: QrCode[] }>('')
+    return Array.isArray(r) ? r : r.codes ?? []
+  },
+  create: (slug: string, targetUrl: string, label: string) =>
+    qreq<QrCode>('', { method: 'POST', body: JSON.stringify({ slug, target_url: targetUrl, label }) }),
+  retarget: (slug: string, targetUrl: string, label: string) =>
+    qreq<QrCode>(`/${encodeURIComponent(slug)}`, { method: 'PATCH', body: JSON.stringify({ target_url: targetUrl, label }) }),
+  delete: (slug: string) => qreq<void>(`/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+  imageUrl: (slug: string) => `${QR_BASE}/${encodeURIComponent(slug)}/image.png?_=${Date.now()}`,
+}

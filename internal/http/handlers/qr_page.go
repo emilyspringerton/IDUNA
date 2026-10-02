@@ -83,6 +83,14 @@ const qrPageHTML = `<!doctype html>
     <thead><tr><th>QR</th><th>Slug</th><th>Target URL</th><th>Label</th><th>Hits</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
+  <h2 style="margin-top:2rem">Texture generator</h2>
+  <p class="hint">Simplified: describe a texture and generate it. Full capability (PARENA source editor, re-run, clone, QR panel side by side) lives in <a href="/admin/nock/#generators">NOCK &rarr; Generators</a>.</p>
+  <form class="add-row" id="tex-form">
+    <input type="text" name="name" placeholder="texture name" required maxlength="64">
+    <input type="text" name="prompt" placeholder="e.g. weathered brick wall" required>
+    <button type="submit">Generate</button>
+  </form>
+  <div id="tex-result"></div>
   <div id="status"></div>
 </main>
 <script>
@@ -159,6 +167,23 @@ document.getElementById('rows').addEventListener('click', async (e) => {
     } catch (err) {
       setStatus('Failed to delete: ' + err.message, true);
     }
+  }
+});
+document.getElementById('tex-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target, out = document.getElementById('tex-result');
+  out.textContent = 'Generating...';
+  try {
+    const res = await fetch('/admin/nock/api/textures/generate', {
+      method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name: f.name.value, prompt: f.prompt.value, width: 256, height: 256 })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status !== 201) throw new Error(body.error || ('HTTP ' + res.status));
+    out.innerHTML = '<img class="qr-thumb" style="width:160px;height:160px" src="/admin/nock/api/textures/' + body.id + '/image"> ' + esc(body.name) + ' (#' + body.id + ')';
+    f.reset();
+  } catch (err) {
+    out.textContent = 'Failed: ' + err.message;
   }
 });
 loadCodes();

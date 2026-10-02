@@ -16,6 +16,7 @@ import Sounds from './Sounds'
 import Booth from './Booth'
 import Robots from './Robots'
 import { TabErrorBoundary } from './TabErrorBoundary'
+import { QrCodesPanel } from './QrCodes'
 import './App.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
@@ -813,6 +814,22 @@ function TextureLibrary() {
   )
 }
 
+// Generators (kanban #459): the texture generator and the QR generator in one tab, one
+// sub-nav, same card/grid styling -- full capability for both (IDUNA's /admin/qr and
+// /admin/generators carry the simplified versions).
+function Generators() {
+  const [which, setWhich] = useState<'texture' | 'qr'>('texture')
+  return (
+    <div>
+      <nav className="animation-filter-tabs">
+        <button className={which === 'texture' ? 'active' : ''} onClick={() => setWhich('texture')}>Textures</button>
+        <button className={which === 'qr' ? 'active' : ''} onClick={() => setWhich('qr')}>QR codes</button>
+      </nav>
+      {which === 'texture' ? <TextureLibrary /> : <QrCodesPanel />}
+    </div>
+  )
+}
+
 // DOOR_SCRIPT_STARTER_SOURCE is the real, working starter template dropped into DoorScripts' own
 // blank-slate textarea -- the exact real door-tick contract (SHANKPIT/docs/
 // STORY_SYSTEM_NORTHSTAR.md Part 2) IDUNA's own compile pipeline (internal/nock/
@@ -1276,8 +1293,8 @@ function Animations() {
   )
 }
 
-type Tab = 'projects' | 'textures' | 'animations' | 'robots' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'video' | 'sounds' | 'booth' | 'code'
-const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'robots', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'video', 'sounds', 'booth', 'code']
+type Tab = 'projects' | 'textures' | 'animations' | 'robots' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'video' | 'sounds' | 'booth' | 'generators' | 'code'
+const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'robots', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'video', 'sounds', 'booth', 'generators', 'code']
 
 // Founder real-time: "deep links into that interface url wise? i have to click on it every time
 // i reload" -- a real, deep-linkable tab, not just in-memory `useState`. No router dependency
@@ -1410,6 +1427,9 @@ export default function App() {
           <button className={tab === 'booth' ? 'active' : ''} onClick={() => setTab('booth')}>
             Booth
           </button>
+          <button className={tab === 'generators' ? 'active' : ''} onClick={() => setTab('generators')}>
+            Generators
+          </button>
           <button className={tab === 'code' ? 'active' : ''} onClick={() => setTab('code')}>
             Code
           </button>
@@ -1417,7 +1437,11 @@ export default function App() {
       </header>
 
       <TabErrorBoundary key={tab}>
-      {tab === 'textures' ? (
+      {tab === 'generators' ? (
+        <div className="layout-single">
+          <Generators />
+        </div>
+      ) : tab === 'textures' ? (
         <div className="layout-single">
           <TextureLibrary />
         </div>
