@@ -859,6 +859,10 @@ func main() {
 	shankpitLevelsPublicH := &handlers.ShankpitLevelsPublicHandler{Store: shankpitLevelStore, SnapshotLimiter: middleware.NewIPRateLimiter(12)}
 	mux.Handle("/api/v1/shankpit-levels", shankpitLevelsPublicH)
 	mux.Handle("/api/v1/shankpit-levels/", shankpitLevelsPublicH)
+	// Live map-editing rooms shared by NOCK and the native SHANKPIT client (kanban #518-#520).
+	shankpitEditSessionsH := &handlers.ShankpitEditSessionsHandler{CreateLimiter: middleware.NewIPRateLimiter(30)}
+	mux.Handle("/api/v1/shankpit-edit-sessions", shankpitEditSessionsH)
+	mux.Handle("/api/v1/shankpit-edit-sessions/", shankpitEditSessionsH)
 
 	// S459-16, founder real-time: "we will need the ability to add new materials and set their
 	// textures" / "registries for everything" -- same real admin-CRUD-plus-public-registry split
