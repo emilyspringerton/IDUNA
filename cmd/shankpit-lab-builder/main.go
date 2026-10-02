@@ -141,6 +141,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("get lab: %v", err)
 	}
+	// the clone's spawn faces -z (yaw 0); the lab benches are on the +z side, so turn the player around
+	for i := range lab.Spawners {
+		lab.Spawners[i].Yaw = 180
+	}
 	if _, err := ls.UpdateLevel(ctx, labID, lab.Width, lab.Height, lab.Depth, lab.GroundPlaneEnabled, lab.GroundPlaneSquares,
 		lab.Walls, objects, lab.Spawners, lab.Doors, lab.NavNodes, lab.Characters, lab.LevelExits, lab.NextLevelID); err != nil {
 		log.Fatalf("update lab: %v", err)
