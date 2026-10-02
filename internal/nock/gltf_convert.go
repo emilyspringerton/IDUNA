@@ -147,6 +147,9 @@ func loadGLTFBytes(raw []byte) (*loadedGLTF, error) {
 // both resolve against an uploaded "my level.bin".
 func loadGLTFBytesWithResources(raw []byte, resources map[string][]byte) (*loadedGLTF, error) {
 	var jsonBytes, glbBin []byte
+	if bytes.HasPrefix(raw, []byte("BLENDER")) || bytes.HasPrefix(raw, []byte{0x1f, 0x8b}) || bytes.HasPrefix(raw, []byte{0x28, 0xb5, 0x2f, 0xfd}) {
+		return nil, fmt.Errorf("this looks like a native Blender .blend file, not glTF -- in Blender use File > Export > glTF 2.0 (.glb) and upload that instead")
+	}
 	if len(raw) >= 12 && binary.LittleEndian.Uint32(raw[0:4]) == glbMagic {
 		var err error
 		jsonBytes, glbBin, err = parseGLBContainer(raw)

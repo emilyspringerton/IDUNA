@@ -279,7 +279,8 @@ export default function ShankpitWidgets() {
   const [dirty, setDirty] = useState(false)
   const [newName, setNewName] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [gltfFiles, setGltfFiles] = useState<File[]>([])
+  const [dragOver, setDragOver] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
   const [gltfScale, setGltfScale] = useState('1')
   const [importing, setImporting] = useState(false)
 
@@ -318,24 +319,26 @@ export default function ShankpitWidgets() {
 
   // Import a Blender .glb/.gltf as a new widget: one cube per mesh node, "door*" nodes become
   // doors (assign their script in the inspector afterwards). Name defaults to the file's stem.
-  const importGltf = async () => {
-    const gltfMain = gltfFiles.find((f) => /\.(glb|gltf)$/i.test(f.name))
-    if (!gltfMain) return
-    const scale = Number(gltfScale)
-    if (!(scale > 0)) {
-      setError('scale must be a positive number')
+  const importGltf = async (files: File[]) => {
+    const gltfMain = files.find((f) => /\.(glb|gltf)$/i.test(f.name))
+    if (!gltfMain) {
+      setImportError('Drop a .glb or .gltf file (a .gltf may come with its .bin). Native .blend: export via File > Export > glTF 2.0 first.')
       return
     }
-    setError(null)
+    const scale = Number(gltfScale)
+    if (!(scale > 0)) {
+      setImportError('scale must be a positive number')
+      return
+    }
+    setImportError(null)
     setImporting(true)
     try {
-      const w = await shankpitWidgets.importGltf(gltfFiles, newName || gltfMain.name.replace(/\.(glb|gltf)$/i, ''), scale)
+      const w = await shankpitWidgets.importGltf(files, newName || gltfMain.name.replace(/\.(glb|gltf)$/i, ''), scale)
       setNewName('')
-      setGltfFiles([])
       refresh()
       await load(w.id)
     } catch (err) {
-      setError(String(err))
+      setImportError(String(err))
     } finally {
       setImporting(false)
     }
@@ -425,13 +428,37 @@ export default function ShankpitWidgets() {
           A Blender .glb blockout (or a .gltf picked together with its .bin): each mesh object becomes one cube sized to its bounds (rotated
           objects become their bounding box). Objects named "door..." become doors. Uses the name above, or the file name.
         </p>
-        <input type="file" multiple accept=".glb,.gltf,.bin,.png,.jpg,.jpeg" onChange={(e) => setGltfFiles(Array.from(e.target.files ?? []))} />
         <label className="hint">
           scale <input type="number" step="any" min="0" value={gltfScale} onChange={(e) => setGltfScale(e.target.value)} style={{ width: '5em' }} />
         </label>
-        <button type="button" onClick={importGltf} disabled={!gltfFiles.some((f) => /\.(glb|gltf)$/i.test(f.name)) || importing}>
-          {importing ? 'Importing...' : 'Import glTF as widget'}
-        </button>
+        <label
+          className={`dropzone${dragOver ? ' drag-over' : ''}${importing ? ' busy' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragOver(true)
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            const files = Array.from(e.dataTransfer.files)
+            if (files.length) importGltf(files)
+          }}
+        >
+          {importing ? 'Importing…' : 'Drop a .glb/.gltf file here (plus its .bin if any), or click to browse'}
+          <input
+            type="file"
+            multiple
+            accept=".glb,.gltf,.bin,.png,.jpg,.jpeg"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? [])
+              if (files.length) importGltf(files)
+              e.target.value = ''
+            }}
+          />
+        </label>
+        {importError && <p className="error">{importError}</p>}
         {error && activeId === null && <span className="error">{error}</span>}
       </aside>
 
