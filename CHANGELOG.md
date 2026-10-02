@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-02
+- NOCK Generators tab (texture + QR in one UI, full QR registry panel); /admin/qr gets simplified texture generator (#459) (sess-20260923-1030-4a526255)
 - ZOMBIES level repository: shankpit_levels gains collection (levels|zombies) + is_zombie_default (migration 202610020003); PATCH /api/v1/shankpit-levels/{id}/zombie-default (admin, copies a level into zombies + flags it); GET ?collection=zombies; snapshot endpoint accepts collection=zombies/set_default so a wrecked ZOMBIES game becomes the next ZOMBIES level; NOCK 'Set for ZOMBIES' button + ZOMBIE Levels list. Not deployed yet. (sess-20260923-1030-4a526255)
 - POST /api/v1/shankpit-levels/snapshots + brick_damage column/export (not yet deployed) (sess-20260923-1030-4a526255)
 
