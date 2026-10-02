@@ -133,3 +133,17 @@ func TestDeleteMaterial(t *testing.T) {
 		t.Fatal("expected material to be gone after delete")
 	}
 }
+
+func TestCreateMaterial_AcceptsGlassShader(t *testing.T) {
+	s := newTestMaterialStore(t)
+	m, err := s.CreateMaterial(context.Background(), "windowpane", shankpit.ShaderGlass, nil, 0.8, 64, 0.30)
+	if err != nil {
+		t.Fatalf("create glass-shader material: %v", err)
+	}
+	if m.ShaderName != "glass" {
+		t.Fatalf("shader_name = %q, want glass", m.ShaderName)
+	}
+	if _, err := s.CreateMaterial(context.Background(), "bogus", "nope", nil, 0.5, 32, 0.30); err == nil {
+		t.Fatal("unknown shader must be rejected")
+	}
+}

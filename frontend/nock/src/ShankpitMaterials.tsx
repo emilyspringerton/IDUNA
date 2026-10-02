@@ -21,6 +21,7 @@ const SHADER_OPTIONS: { value: string; label: string }[] = [
   { value: 'standard', label: 'standard (Blinn-Phong)' },
   { value: 'ips_light', label: 'ips_light (emissive panel)' },
   { value: 'hps_light', label: 'hps_light (flickering sodium lamp)' },
+  { value: 'glass', label: 'glass (transparent, PARENA-tinted, destructible)' },
 ]
 
 function useMaterialList() {

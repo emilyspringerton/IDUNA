@@ -70,7 +70,14 @@ const ShaderIPSLight = "ips_light"
 // lamps emit an almost-monochromatic yellow-orange, the sodium D line at ~589nm).
 const ShaderHPSLight = "hps_light"
 
-var validShaderNames = map[string]bool{ShaderStandard: true, ShaderIPSLight: true, ShaderHPSLight: true}
+// ShaderGlass -- founder real-time, 2026-10-02: "add a new one for glass (add a shader with glass
+// transparency slight cyan tint - but make the tint parena programmable)." Native side:
+// packages/render/material_shaders.h's own SHADER_GLASS -- an alpha-blended, deferred pass whose
+// RGBA tint comes from PARENA's on-glass-tint (stdlib/shankpit/brick_rules.prn), not a constant.
+// A box with this shader (conventionally a material named "glass") is also destructible in-game.
+const ShaderGlass = "glass"
+
+var validShaderNames = map[string]bool{ShaderStandard: true, ShaderIPSLight: true, ShaderHPSLight: true, ShaderGlass: true}
 
 // DefaultMaterialName is what a Wall with an empty/unset Material field resolves to -- founder,
 // direct: "the default material is brick because thats the texture of blocks by default." Also
