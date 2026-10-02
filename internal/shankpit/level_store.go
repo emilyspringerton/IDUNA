@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 // Wall mirrors SHANKPIT's own real Wall struct field-for-field (json tags match map.h's own real
@@ -487,6 +489,11 @@ type ExportDoc struct {
 	// documented on flattenObjects: only the root level's own real fields reach the native
 	// client). See Spawner's own doc comment for the real team convention.
 	Spawners []Spawner `json:"spawners,omitempty"`
+	// BuggySpawns (#464/#466) -- one per wall named buggy_spawn* (see buggySpawnYaw): a tile placed in
+	// the level itself or inside a placed widget (widgets are flattened above, so both reach here). The
+	// tile wall stays in Walls as a real, visible pad; this list tells the native loader where a buggy
+	// spawns on it. y is the tile's top surface.
+	BuggySpawns []BuggySpawnExport `json:"buggy_spawns,omitempty"`
 	// Doors -- the real, native-loader-facing shape SHANKPIT/packages/world/level_boxes.h's own
 	// door parser expects exactly ({box_index, script_url}, script_path deliberately never set
 	// here -- every door authored through NOCK goes via the real, downloadable script repository,
@@ -1270,6 +1277,7 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 					ID: 0, X: worldX + rx, Y: worldY + w.Y, Z: worldZ + rz,
 					SX: rsx, SY: w.SY, SZ: rsz,
 					R: w.R, G: w.G, B: w.B, Friction: w.Friction, Material: w.Material,
+					Name: rotatedBuggySpawnName(w.Name, worldRotY),
 				})
 			}
 			for _, d := range widget.Doors {
@@ -1320,6 +1328,7 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 				// as R/G/B/Friction right above -- just a field that got missed when this literal
 				// was first written (S459-15), not a design choice.
 				Material: w.Material,
+				Name:     rotatedBuggySpawnName(w.Name, worldRotY),
 			})
 		}
 		// Carry the child's own real, directly-authored doors through -- a wall referencing a
@@ -1381,6 +1390,10 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	if err != nil {
 		return nil, err
 	}
+	buggySpawns := buggySpawnsForExport(walls)
+	if len(buggySpawns) > MaxBuggySpawns {
+		return nil, fmt.Errorf("shankpit: composed level %d has %d buggy_spawn tiles (max %d)", id, len(buggySpawns), MaxBuggySpawns)
+	}
 	// S479 follow-up: a composed object's own doors (composedDoors, already-resolved final box
 	// indices into the combined `walls` above) alongside this level's own root doors -- see
 	// composedDoorRef's own doc comment for why doors previously could never survive being
@@ -1395,7 +1408,7 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed,
-		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, Doors: doorExports,
+		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
 	}, nil
@@ -1539,4 +1552,87 @@ func (s *LevelStore) materialsForExport(ctx context.Context) ([]MaterialExport, 
 		out = append(out, me)
 	}
 	return out, nil
+}
+
+// ---- Buggy spawns (#464/#466) -------------------------------------------------------------------
+// "the buggy should be placeable in levels via the buggy spawn widget tiles OR via an actual buggy
+// placed in a level". A buggy spawn is a NAME CONVENTION on an ordinary wall, the same way a glTF
+// node named door* becomes a door: a thin tile named buggy_spawn (facing yaw 0) or buggy_spawn_<deg>
+// (buggy_spawn_90). Blender's duplicate suffix (buggy_spawn_90.001) is ignored. A level can hold the
+// tile directly, or a widget can (a reusable "garage bay"); flattening carries the name through and
+// adds the widget's own rotation to the yaw, so both routes land in the same export list. No schema
+// change: the tile is a normal wall, so editing, undo, save, clone and glTF import all keep working.
+
+// MaxBuggySpawns matches SHANKPIT's LEVEL_BOXES_MAX_BUGGY_SPAWNS (packages/world/level_boxes.h).
+const MaxBuggySpawns = 16
+
+const buggySpawnPrefix = "buggy_spawn"
+
+// BuggySpawnExport is the native-loader-facing shape of one buggy spawn.
+type BuggySpawnExport struct {
+	X   float64 `json:"x"`
+	Y   float64 `json:"y"`
+	Z   float64 `json:"z"`
+	Yaw float64 `json:"yaw"`
+}
+
+// IsBuggySpawnName reports whether a wall name marks a buggy spawn tile.
+func IsBuggySpawnName(name string) bool {
+	_, ok := buggySpawnYaw(name)
+	return ok
+}
+
+// buggySpawnYaw parses buggy_spawn / buggy_spawn_<deg> (case-insensitive prefix). ok is false for any
+// other name, including "buggy_spawner_x" (the char after the prefix must be end, '_', '.', ' ' or '-').
+func buggySpawnYaw(name string) (float64, bool) {
+	if len(name) < len(buggySpawnPrefix) || !strings.EqualFold(name[:len(buggySpawnPrefix)], buggySpawnPrefix) {
+		return 0, false
+	}
+	rest := name[len(buggySpawnPrefix):]
+	if rest == "" {
+		return 0, true
+	}
+	switch rest[0] {
+	case '_', '.', ' ', '-':
+	default:
+		return 0, false
+	}
+	rest = strings.TrimLeft(rest[1:], "_. ") // drop the one separator char; a '-' after it is a sign
+	end := 0
+	for end < len(rest) && (rest[end] >= '0' && rest[end] <= '9' || (end == 0 && rest[end] == '-')) {
+		end++
+	}
+	if end == 0 {
+		return 0, true
+	}
+	deg, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0, true
+	}
+	return float64(((deg % 360) + 360) % 360), true
+}
+
+// rotatedBuggySpawnName leaves every ordinary name alone; a buggy spawn tile inside a placed widget or
+// composed level gets the placement's rotation added to its yaw (normalised 0..359).
+func rotatedBuggySpawnName(name string, worldRotY int) string {
+	yaw, ok := buggySpawnYaw(name)
+	if !ok || worldRotY%360 == 0 {
+		return name
+	}
+	deg := ((int(yaw)+worldRotY)%360 + 360) % 360
+	return fmt.Sprintf("%s_%d", buggySpawnPrefix, deg)
+}
+
+// buggySpawnsForExport lists a spawn per tile wall (final flattened, renumbered walls), in wall
+// order. y is the tile's top surface, where the buggy's wheels will rest.
+func buggySpawnsForExport(walls []Wall) []BuggySpawnExport {
+	var out []BuggySpawnExport
+	for _, w := range walls {
+		yaw, ok := buggySpawnYaw(w.Name)
+		if !ok {
+			continue
+		}
+		out = append(out, BuggySpawnExport{X: w.X, Y: w.Y + w.SY/2, Z: w.Z, Yaw: yaw})
+	}
+	return out
 }

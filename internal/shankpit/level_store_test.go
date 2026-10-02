@@ -1123,3 +1123,120 @@ func TestCreateLevel_RejectsObjectWithBothOrNeitherRef(t *testing.T) {
 		t.Fatal("expected an error for an object with BOTH ref_level_id and ref_widget_id set")
 	}
 }
+
+// ---- Buggy spawns (#464/#466): a wall named buggy_spawn* is a spawn point ----
+
+func buggyTile(name string, x, y, z float64) shankpit.Wall {
+	w := aCube()
+	w.Name, w.X, w.Y, w.Z = name, x, y, z
+	w.SX, w.SY, w.SZ = 4, 0.2, 6
+	return w
+}
+
+func TestBuggySpawnYawFromName(t *testing.T) {
+	cases := []struct {
+		name string
+		ok   bool
+		yaw  float64
+	}{
+		{"buggy_spawn", true, 0},
+		{"Buggy_Spawn", true, 0},
+		{"buggy_spawn_90", true, 90},
+		{"buggy_spawn_90.001", true, 90}, // Blender duplicate suffix
+		{"buggy_spawn_-90", true, 270},
+		{"buggy_spawn_450", true, 90},
+		{"buggy_spawn.001", true, 0},
+		{"buggy_spawner_tower", false, 0},
+		{"buggy", false, 0},
+		{"Cube", false, 0},
+		{"", false, 0},
+	}
+	for _, c := range cases {
+		if got := shankpit.IsBuggySpawnName(c.name); got != c.ok {
+			t.Errorf("IsBuggySpawnName(%q) = %v, want %v", c.name, got, c.ok)
+		}
+	}
+	// yaw is observable through an export; spot-check via a level
+	s := newTestStore(t)
+	lvl, err := s.CreateLevel(context.Background(), "Yaw", 100, 50, 100, true, 2,
+		[]shankpit.Wall{buggyTile("buggy_spawn_450", 0, 0, 0), buggyTile("buggy_spawn_-90", 10, 0, 0)}, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), lvl.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.BuggySpawns) != 2 || doc.BuggySpawns[0].Yaw != 90 || doc.BuggySpawns[1].Yaw != 270 {
+		t.Fatalf("yaw wrong: %+v", doc.BuggySpawns)
+	}
+}
+
+func TestExport_BuggySpawnTileInLevel(t *testing.T) {
+	s := newTestStore(t)
+	lvl, err := s.CreateLevel(context.Background(), "Garage", 100, 50, 100, true, 2,
+		[]shankpit.Wall{aCube(), buggyTile("buggy_spawn_180", 12, 0.1, -30)}, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), lvl.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.BuggySpawns) != 1 {
+		t.Fatalf("expected 1 buggy spawn, got %+v", doc.BuggySpawns)
+	}
+	b := doc.BuggySpawns[0]
+	if b.X != 12 || b.Z != -30 || b.Yaw != 180 || b.Y < 0.199 || b.Y > 0.201 { // y = tile top = 0.1 + 0.2/2
+		t.Errorf("buggy spawn wrong: %+v", b)
+	}
+	if len(doc.Walls) != 2 {
+		t.Errorf("the tile must stay a real wall (visible pad), got %d walls", len(doc.Walls))
+	}
+}
+
+// A tile inside a widget: placed with an offset and a 90 degree rotation, the spawn lands at the
+// rotated, translated position and the yaw turns with it.
+func TestExport_BuggySpawnTileInWidgetRotates(t *testing.T) {
+	s := newTestStore(t)
+	widget, err := s.Widgets.CreateWidget(context.Background(), "Garage Bay",
+		[]shankpit.Wall{buggyTile("buggy_spawn_0", 5, 0, 0)}, nil)
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	parent, err := s.CreateLevel(context.Background(), "City", 200, 50, 200, true, 2,
+		nil, []shankpit.LevelObject{{RefWidgetID: widget.ID, X: 20, Y: 0, Z: 40, RotY: 90}}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	doc, err := s.Export(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.BuggySpawns) != 1 {
+		t.Fatalf("expected the widget's spawn tile to export, got %+v", doc.BuggySpawns)
+	}
+	b := doc.BuggySpawns[0]
+	if b.Yaw != 90 {
+		t.Errorf("yaw should turn with the 90deg placement, got %v", b.Yaw)
+	}
+	// local (5,0) rotated 90deg about Y lands on the z axis (|x|==0, |z|==5) then offset by (20,40)
+	if b.X < 19.99 || b.X > 20.01 || (b.Z < 34.99 || b.Z > 35.01) && (b.Z < 44.99 || b.Z > 45.01) {
+		t.Errorf("rotated/translated position wrong: %+v", b)
+	}
+}
+
+func TestExport_TooManyBuggySpawnsIsAnError(t *testing.T) {
+	s := newTestStore(t)
+	var walls []shankpit.Wall
+	for i := 0; i < shankpit.MaxBuggySpawns+1; i++ {
+		walls = append(walls, buggyTile("buggy_spawn", float64(i*8), 0, 0))
+	}
+	lvl, err := s.CreateLevel(context.Background(), "Fleet", 400, 50, 100, true, 2, walls, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.Export(context.Background(), lvl.ID); err == nil {
+		t.Fatal("expected an error past MaxBuggySpawns")
+	}
+}
