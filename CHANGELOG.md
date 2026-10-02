@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-02
+- extensions/mixforge-cookie-exporter (copied from MIXFORGE) + extensions/build_extension.py + .github/workflows/extension-release.yml: tests, deterministic zip, auto-release on green main touching extensions/** (tag ext-mixforge-cookie-exporter-v<maj>.<min>.0) -- SECTION 593 / cards #509,#512 (sess-20260923-1030-4a526255)
 - shankpit-lab-builder: LAB spawn now faces the benches (yaw 180) -- SECTION 592 (sess-20260923-1030-4a526255)
 - cmd/shankpit-lab-builder: programmatically creates 6 lab station widgets + clones INTERRIOR_1 into LAB through the LevelStore/WidgetStore API (run on a DB copy), exports SHANKPIT var/lab/lab.json -- SECTION 592 / card #506 (sess-20260923-1030-4a526255)
 - SHANKPIT level export gains lab_stations (walls named lab_<splice|centrifuge|vat|fridge|console|pcr>, incl. inside placed widgets) -- SECTION 592 / card #505 (sess-20260923-1030-4a526255)
