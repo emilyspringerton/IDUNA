@@ -251,6 +251,15 @@
       "permissions": [
         "d2.match.write"
       ]
+    },
+    {
+      "id": "00000003-0000-4000-8000-00000000001f",
+      "name": "EMILY-COLLECTIONS-READER",
+      "type": "llm_agent",
+      "description": "Read-only client identity for emily-agent's collections API (golden docs, later var/ read models) -- K8s migration VS0. Holds only emily.collections.read; used by off-box consumers (newssite, pipeline pods) so none of them reuse a write-capable identity. EMILY/docs/KUBERNETES_SERVICE_MIGRATION_NORTHSTAR.md, 2026-10-02.",
+      "permissions": [
+        "emily.collections.read"
+      ]
     }
   ]
 }
