@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import {
   doorScripts,
   shankpitMaterials,
+  buggySpawnTile,
   shankpitWidgets,
   type DoorScriptSummary,
   type ShankpitDoor,
@@ -360,6 +361,12 @@ export default function ShankpitWidgets() {
     refresh()
   }
 
+  const addBuggySpawn = () => {
+    const id = nextWallId(walls)
+    setWalls([...walls, buggySpawnTile(id, { x: 0, y: 0, z: 0 }, 0.3)])
+    setSelected(id)
+  }
+
   const addCube = () => {
     const id = nextWallId(walls)
     setWalls([...walls, aDefaultWall(id)])
@@ -437,6 +444,9 @@ export default function ShankpitWidgets() {
               <h2>{name}</h2>
               <button type="button" onClick={addCube}>
                 + Add cube
+              </button>
+              <button type="button" onClick={addBuggySpawn} title="A thin tile named buggy_spawn: a buggy spawns on it wherever this widget is placed. Rename to buggy_spawn_90 etc. to turn it.">
+                + Add buggy spawn
               </button>
               <button type="button" onClick={save} disabled={!dirty}>
                 {dirty ? 'Save*' : 'Saved'}

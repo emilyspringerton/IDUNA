@@ -9,6 +9,7 @@ import {
   SPAWNER_TEAM_FFA,
   SPAWNER_TEAM_RED,
   doorScripts,
+  buggySpawnTile,
   shankpitLevels,
   shankpitMaterials,
   shankpitWidgets,
@@ -1903,6 +1904,13 @@ export default function ShankpitLevelEditor() {
     }
   }
 
+  const addBuggySpawn = () => {
+    pushHistory()
+    const id = nextWallId(draft.walls)
+    setWalls([...draft.walls, buggySpawnTile(id, spawner, 0.8)])
+    setSelected(id)
+  }
+
   const addCube = () => {
     pushHistory()
     const id = nextWallId(draft.walls)
@@ -2419,6 +2427,13 @@ export default function ShankpitLevelEditor() {
           </button>
           <button type="button" onClick={addSpawner}>
             + Add spawner
+          </button>
+          <button
+            type="button"
+            onClick={addBuggySpawn}
+            title="A thin amber tile named buggy_spawn: a buggy spawns on it. Rename the wall to buggy_spawn_90 etc. to turn it. Widgets can carry one too."
+          >
+            + Add buggy spawn
           </button>
           <label
             className="hint"

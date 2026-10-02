@@ -518,6 +518,15 @@ export interface ShankpitWall {
   name?: string
 }
 
+// buggySpawnTile (#464/#467) -- a buggy spawn is an ordinary thin wall NAMED buggy_spawn (facing yaw 0)
+// or buggy_spawn_<degrees>; level export turns every such wall into a buggy spawn point at its top
+// surface (IDUNA/internal/shankpit buggySpawnsForExport). The tile stays a visible amber pad. Put one
+// in a level, or in a widget to make a reusable "garage bay" that carries its rotation with it.
+// To change the facing, rename the wall (buggy_spawn_90 ...).
+export function buggySpawnTile(id: number, at: { x: number; y: number; z: number }, friction: number): ShankpitWall {
+  return { id, x: at.x, y: 0.1, z: at.z, sx: 4, sy: 0.2, sz: 6, r: 0.95, g: 0.7, b: 0.1, friction, name: 'buggy_spawn' }
+}
+
 // ShankpitMaterial mirrors IDUNA/internal/shankpit.Material exactly (S459-16, founder real-time:
 // "we will need the ability to add new materials and set their textures" / "registries for
 // everything"). shader_name is a real, named reference into SHANKPIT's own compiled-in shader
