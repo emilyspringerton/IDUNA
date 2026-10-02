@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { LiveSessionPanel, useLiveSession } from './ShankpitLiveSession'
 import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 import {
   AI_ROLE_OPTIONS,
@@ -428,6 +429,7 @@ function Viewport3D({
   editMode,
   spawner,
   onSpawnerChange,
+  avatar,
   constrainY,
   onDragStart,
   objects,
@@ -456,6 +458,8 @@ function Viewport3D({
   editMode: EditMode
   spawner: { x: number; y: number; z: number }
   onSpawnerChange: (s: { x: number; y: number; z: number }) => void
+  // live SHANKPIT session: where the native client's character is (green marker), null when no session
+  avatar?: { x: number; y: number; z: number; yaw: number } | null
   constrainY: boolean
   onDragStart: () => void
   objects: ShankpitLevelObject[]
@@ -956,6 +960,30 @@ function Viewport3D({
     applySelectionOutline()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walls, selected, materials])
+
+  // Live-session avatar marker: a green cone at the SHANKPIT character's position (EDIT-4, #532).
+  const avatarMeshRef = useRef<THREE.Mesh | null>(null)
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    if (!avatar) {
+      if (avatarMeshRef.current) {
+        scene.remove(avatarMeshRef.current)
+        avatarMeshRef.current = null
+      }
+      return
+    }
+    if (!avatarMeshRef.current) {
+      const m = new THREE.Mesh(
+        new THREE.ConeGeometry(0.6, 2, 12),
+        new THREE.MeshStandardMaterial({ color: 0x33dd66, emissive: 0x114422, emissiveIntensity: 0.6 }),
+      )
+      scene.add(m)
+      avatarMeshRef.current = m
+    }
+    avatarMeshRef.current.position.set(avatar.x, avatar.y, avatar.z)
+    avatarMeshRef.current.rotation.y = (avatar.yaw * Math.PI) / 180
+  }, [avatar])
 
   // Sync the spawner mesh's own visual position whenever it moves (drag, or a fresh level load).
   useEffect(() => {
@@ -1780,6 +1808,7 @@ export default function ShankpitLevelEditor() {
   // Viewport3D's own doc comment on the spawner mesh), so it isn't part of `draft`/persisted with
   // the level; it just resets to a sensible default on new/load.
   const [spawner, setSpawner] = useState(defaultSpawnerPos())
+  const live = useLiveSession({ levelId: activeId, levelName: draft.name, spawner, onSpawnerChange: setSpawner })
 
   // Undo/redo (founder real-time: "I ALSO NEED REDO... thats really important"). A plain, real
   // history-stack of past draft snapshots -- deliberately NOT Redux: this app has an explicit,
@@ -2461,6 +2490,7 @@ export default function ShankpitLevelEditor() {
             />
             {gltfBusy ? ' Importing...' : ''}
           </label>
+          <LiveSessionPanel live={live} />
           <div className="mode-toggle">
             <select value={objectPickLevelId} onChange={(e) => setObjectPickLevelId(e.target.value === '' ? '' : Number(e.target.value))}>
               <option value="">Add level as object...</option>
@@ -2541,6 +2571,7 @@ export default function ShankpitLevelEditor() {
               editMode={editMode}
               spawner={spawner}
               onSpawnerChange={setSpawner}
+              avatar={live.avatar}
               constrainY={constrainY}
               onDragStart={pushHistory}
               objects={draft.objects}
