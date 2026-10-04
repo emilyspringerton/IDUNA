@@ -177,7 +177,16 @@ function rotateY90Step(rotY: number): 0 | 90 | 180 | 270 {
 // EditMode -- founder real-time: "introduce object vs face mode / start in object mode dragging a
 // cube draggs it / face mode does what it does now allowing us to drag a face." Object mode drags
 // the whole selected cube (or the spawner) around; Face mode is the original per-face reshape.
-type EditMode = 'object' | 'face'
+type EditMode = 'object' | 'face' | 'rotate'
+
+// Rotation helpers (founder real-time, 2026-10-04: "nock level editor needs rotate ... snap to 15
+// degree increments ... checkbox for arbitrary rotation ... rotate tool like blender with the 3
+// lines for the axis"). Walls store Euler degrees (rot_x/y/z, three.js XYZ order).
+const ROTATE_SNAP_DEG = 15
+const wallEuler = (w: ShankpitWall) =>
+  new THREE.Euler(((w.rot_x ?? 0) * Math.PI) / 180, ((w.rot_y ?? 0) * Math.PI) / 180, ((w.rot_z ?? 0) * Math.PI) / 180, 'XYZ')
+const roundDeg = (r: number) => Math.round(((r * 180) / Math.PI) * 100) / 100 + 0 // +0 folds -0 into 0
+const isRotated = (w: ShankpitWall) => !!(w.rot_x || w.rot_y || w.rot_z)
 
 type Axis = 'x' | 'y' | 'z'
 interface FaceHit {
@@ -455,6 +464,7 @@ function Viewport3D({
   levelExits,
   showLevelExits,
   characters,
+  rotateSnap,
 }: {
   width: number
   height: number
@@ -486,6 +496,7 @@ function Viewport3D({
   levelExits: ShankpitLevelExit[]
   showLevelExits: boolean
   characters: ShankpitCharacter[]
+  rotateSnap: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [webglUnavailable, setWebglUnavailable] = useState(false)
@@ -499,6 +510,9 @@ function Viewport3D({
   const levelExitMeshesRef = useRef<THREE.Group[]>([])
   const characterMeshesRef = useRef<THREE.Mesh[]>([])
   const gridRef = useRef<THREE.GridHelper | null>(null)
+  const gizmoRef = useRef<THREE.Group | null>(null)
+  const rotateSnapRef = useRef(rotateSnap)
+  rotateSnapRef.current = rotateSnap
   const wallsRef = useRef(walls)
   const selectedRef = useRef(selected)
   const editModeRef = useRef(editMode)
@@ -519,6 +533,7 @@ function Viewport3D({
     | { mode: 'orbit'; lastX: number; lastY: number }
     | { mode: 'face'; hit: FaceHit; linePoint: THREE.Vector3; axisDir: THREE.Vector3; startT: number; startWall: ShankpitWall }
     | { mode: 'move-wall'; wallIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3; startWall: ShankpitWall }
+    | { mode: 'rotate'; wallIndex: number; axis: 0 | 1 | 2; plane: THREE.Plane; center: THREE.Vector3; basisA: THREE.Vector3; basisB: THREE.Vector3; startAngle: number; startQuat: THREE.Quaternion; startWall: ShankpitWall }
     | { mode: 'move-spawner'; plane: THREE.Plane; grabOffset: THREE.Vector3 }
     | { mode: 'move-spawn-point'; spawnIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3 }
     | null
@@ -763,6 +778,11 @@ function Viewport3D({
           const hit = faceHitFromNormal(wallIndex, hits[0].face.normal.clone())
           const wall = wallsRef.current[wallIndex]
           onSelect(wall.id)
+          if (isRotated(wall)) {
+            // face-drag math is axis-aligned only; a rotated cube is select-only here (use Rotate mode / inspector)
+            dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
+            return
+          }
           selectedFaceRef.current = hit // S488: persists past this click, for Alt+E
           const axisDir = new THREE.Vector3(hit.axis === 'x' ? 1 : 0, hit.axis === 'y' ? 1 : 0, hit.axis === 'z' ? 1 : 0)
           const startT = hits[0].point.clone().dot(axisDir) // coordinate along the axis at the hit point
@@ -772,6 +792,45 @@ function Viewport3D({
         }
         onSelect(null)
         selectedFaceRef.current = null
+        dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
+        return
+      }
+
+      if (editModeRef.current === 'rotate') {
+        const gizmo = gizmoRef.current
+        const ringHits = gizmo && gizmo.visible ? raycaster.intersectObjects(gizmo.children, false) : []
+        if (ringHits.length > 0) {
+          const axis = ringHits[0].object.userData.axis as 0 | 1 | 2
+          const wallIndex = wallsRef.current.findIndex((w) => w.id === selectedRef.current)
+          if (wallIndex !== -1) {
+            const wall = wallsRef.current[wallIndex]
+            const center = new THREE.Vector3(wall.x, wall.y, wall.z)
+            const n = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0)
+            const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, center)
+            const basisA = axis === 1 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)
+            basisA.sub(n.clone().multiplyScalar(basisA.dot(n))).normalize()
+            const basisB = new THREE.Vector3().crossVectors(n, basisA)
+            const p = new THREE.Vector3()
+            if (raycaster.ray.intersectPlane(plane, p)) {
+              const v = p.sub(center)
+              onDragStartRef.current()
+              dragRef.current = {
+                mode: 'rotate', wallIndex, axis, plane, center, basisA, basisB,
+                startAngle: Math.atan2(v.dot(basisB), v.dot(basisA)),
+                startQuat: new THREE.Quaternion().setFromEuler(wallEuler(wall)),
+                startWall: { ...wall },
+              }
+              return
+            }
+          }
+        }
+        const wallHits = raycaster.intersectObjects(meshesRef.current, false)
+        if (wallHits.length > 0) {
+          onSelect(wallsRef.current[meshesRef.current.indexOf(wallHits[0].object as THREE.Mesh)].id)
+          onSelectSpawnPointRef.current(null)
+          return
+        }
+        onSelect(null)
         dragRef.current = { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
         return
       }
@@ -855,6 +914,25 @@ function Viewport3D({
         onChange(next)
         return
       }
+      if (drag.mode === 'rotate') {
+        setNdcFromEvent(e)
+        raycaster.setFromCamera(ndc, camera)
+        const p = new THREE.Vector3()
+        if (!raycaster.ray.intersectPlane(drag.plane, p)) return
+        const v = p.sub(drag.center)
+        let delta = Math.atan2(v.dot(drag.basisB), v.dot(drag.basisA)) - drag.startAngle
+        if (rotateSnapRef.current) {
+          const step = (ROTATE_SNAP_DEG * Math.PI) / 180
+          delta = Math.round(delta / step) * step
+        }
+        const axisVec = new THREE.Vector3(drag.axis === 0 ? 1 : 0, drag.axis === 1 ? 1 : 0, drag.axis === 2 ? 1 : 0)
+        const q = new THREE.Quaternion().setFromAxisAngle(axisVec, delta).multiply(drag.startQuat)
+        const eul = new THREE.Euler().setFromQuaternion(q, 'XYZ')
+        const next = wallsRef.current.slice()
+        next[drag.wallIndex] = { ...drag.startWall, rot_x: roundDeg(eul.x), rot_y: roundDeg(eul.y), rot_z: roundDeg(eul.z) }
+        onChange(next)
+        return
+      }
       // move-wall / move-spawner: intersect the current ray against the drag's own camera-facing
       // plane, re-applying the original grab offset so the object doesn't jump to snap its own
       // center onto the cursor the instant a drag starts.
@@ -895,7 +973,7 @@ function Viewport3D({
 
     const onPointerUp = (e: PointerEvent) => {
       container.releasePointerCapture(e.pointerId)
-      const wasWallDrag = dragRef.current?.mode === 'face' || dragRef.current?.mode === 'move-wall' || dragRef.current?.mode === 'move-spawn-point'
+      const wasWallDrag = dragRef.current?.mode === 'face' || dragRef.current?.mode === 'rotate' || dragRef.current?.mode === 'move-wall' || dragRef.current?.mode === 'move-spawn-point'
       dragRef.current = null
       if (wasWallDrag) onCommit()
     }
@@ -943,6 +1021,7 @@ function Viewport3D({
       applyWallTexture(mat, w.material, w.r, w.g, w.b, materials)
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.set(w.x, w.y, w.z)
+      mesh.rotation.copy(wallEuler(w))
       scene.add(mesh)
       return mesh
     })
@@ -960,6 +1039,7 @@ function Viewport3D({
       const mesh = meshesRef.current[i]
       if (!mesh) return
       mesh.position.set(w.x, w.y, w.z)
+      mesh.rotation.copy(wallEuler(w))
       const params = (mesh.geometry as THREE.BoxGeometry).parameters
       if (params.width !== w.sx || params.height !== w.sy || params.depth !== w.sz) {
         mesh.geometry.dispose()
@@ -1318,6 +1398,39 @@ function Viewport3D({
     }
   }, [floorTint, groundPlaneEnabled, groundPlaneSquares])
 
+  // Rotate gizmo (Blender-style): three coloured rings (X red, Y green, Z blue) around the selected cube.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    if (!gizmoRef.current) {
+      const g = new THREE.Group()
+      g.visible = false
+      const colors = [0xff4040, 0x40ff40, 0x4080ff]
+      colors.forEach((c, axis) => {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(1, 0.035, 8, 96),
+          new THREE.MeshBasicMaterial({ color: c, depthTest: false, transparent: true, opacity: 0.9 }),
+        )
+        if (axis === 0) ring.rotation.y = Math.PI / 2
+        if (axis === 1) ring.rotation.x = Math.PI / 2
+        ring.userData.axis = axis
+        ring.renderOrder = 999
+        g.add(ring)
+      })
+      scene.add(g)
+      gizmoRef.current = g
+    }
+    const g = gizmoRef.current
+    const w = walls.find((x) => x.id === selected)
+    if (editMode !== 'rotate' || !w) {
+      g.visible = false
+      return
+    }
+    g.visible = true
+    g.position.set(w.x, w.y, w.z)
+    g.scale.setScalar(Math.max(w.sx, w.sy, w.sz) * 0.75 + 1)
+  }, [walls, selected, editMode])
+
   function applySelectionOutline() {
     walls.forEach((w, i) => {
       const mesh = meshesRef.current[i]
@@ -1372,7 +1485,7 @@ export function WallInspector({
         type="number"
         step={opts.step ?? 0.5}
         min={opts.min}
-        value={wall[key] as number}
+        value={(wall[key] as number | undefined) ?? 0}
         onChange={(e) => onChange({ ...wall, [key]: opts.min !== undefined ? Math.max(opts.min, num(e.target.value)) : num(e.target.value) })}
       />
     </label>
@@ -1403,6 +1516,9 @@ export function WallInspector({
       {field('X', 'x')}
       {field('Y', 'y')}
       {field('Z', 'z')}
+      {field('Rot X°', 'rot_x', { step: ROTATE_SNAP_DEG })}
+      {field('Rot Y°', 'rot_y', { step: ROTATE_SNAP_DEG })}
+      {field('Rot Z°', 'rot_z', { step: ROTATE_SNAP_DEG })}
       {field('Size X', 'sx', { min: MIN_WALL_SIZE })}
       {field('Size Y', 'sy', { min: MIN_WALL_SIZE })}
       {field('Size Z', 'sz', { min: MIN_WALL_SIZE })}
@@ -1842,6 +1958,7 @@ export default function ShankpitLevelEditor() {
   // its own current height instead of free 3D movement, so leveling walls to the ground doesn't
   // require fighting the drag plane.
   const [constrainY, setConstrainY] = useState(true)
+  const [arbitraryRotation, setArbitraryRotation] = useState(false)
   // S476 follow-up (founder real-time: "we need the ability to turn it on and off visually in
   // the map editor") -- editor-only visibility toggle for the level exit markers below. Real,
   // deliberate scope: this is a NOCK-editor-authoring convenience, not a real in-game feature --
@@ -2524,7 +2641,14 @@ export default function ShankpitLevelEditor() {
             <button type="button" className={editMode === 'face' ? 'active' : ''} onClick={() => setEditMode('face')}>
               Face mode
             </button>
+            <button type="button" className={editMode === 'rotate' ? 'active' : ''} onClick={() => setEditMode('rotate')} title="Drag the red/green/blue rings to rotate the selected cube about X/Y/Z">
+              Rotate mode
+            </button>
           </div>
+          <label className="constrain-y">
+            <input type="checkbox" checked={arbitraryRotation} onChange={(e) => setArbitraryRotation(e.target.checked)} />{' '}
+            Arbitrary rotation (off = snap to {ROTATE_SNAP_DEG}°)
+          </label>
           <label className="constrain-y">
             <input type="checkbox" checked={constrainY} onChange={(e) => setConstrainY(e.target.checked)} />{' '}
             Constrain Y while dragging
@@ -2673,6 +2797,7 @@ export default function ShankpitLevelEditor() {
               levelExits={draft.levelExits}
               showLevelExits={showLevelExits}
               characters={draft.characters}
+              rotateSnap={!arbitraryRotation}
             />
             <p className="hint">
               WASD+QE move the yellow spawner marker (Shift = fast) -- the camera always orbits

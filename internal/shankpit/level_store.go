@@ -57,6 +57,14 @@ type Wall struct {
 	// keys it explicitly looks up (level_boxes_find_key), silently ignoring any other key --
 	// same purely-additive precedent Material/Friction above already established.
 	Name string `json:"name,omitempty"`
+	// RotX/RotY/RotZ (founder real-time, 2026-10-04: "nock level editor needs rotate"): Euler
+	// degrees (three.js XYZ order) about the cube's own center. Zero/absent = axis-aligned, so every
+	// pre-existing level is unchanged. The native client's physics is AABB-only and ignores these
+	// keys today (level_boxes.h skips unknown keys), so rotation is authored + stored + round-tripped
+	// here first; native render/collision support is a separate follow-up.
+	RotX float64 `json:"rot_x,omitempty"`
+	RotY float64 `json:"rot_y,omitempty"`
+	RotZ float64 `json:"rot_z,omitempty"`
 }
 
 // LevelObject is a level placed as a child object inside another level -- the "map" primitive,

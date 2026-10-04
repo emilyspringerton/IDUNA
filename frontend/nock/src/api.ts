@@ -516,6 +516,11 @@ export interface ShankpitWall {
   // cube etc... i just need a list of the cubes and the ability to name them") -- pure authoring
   // convenience, optional, no default beyond falling back to "Cube #<id>" for display.
   name?: string
+  // rot_x/rot_y/rot_z (founder real-time, 2026-10-04: "nock level editor needs rotate") --
+  // Euler degrees, applied in three.js XYZ order. Absent/0 = axis-aligned (every pre-existing cube).
+  rot_x?: number
+  rot_y?: number
+  rot_z?: number
 }
 
 // buggySpawnTile (#464/#467) -- a buggy spawn is an ordinary thin wall NAMED buggy_spawn (facing yaw 0)
