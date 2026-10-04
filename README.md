@@ -2,6 +2,8 @@
 
 ## Where it runs (2026-10-04)
 
+The pod also carries an nginx sidecar (`web`) serving `/app/var/www` — the okemily.com static site — off the same PVC IDUNA's blog/tyler/prompt-o-verse renderers write to (`BLOG_OUTPUT_DIR` etc.).
+
 **IDUNA runs on GKE, not the box** (K8S-MV-01). One pod (`iduna` + a PARENA secure-channel tunnel sidecar) on a 20Gi PVC
 (`/app/var`: iduna.db, statuspage.db, signing key `iduna-key.json`, nock projects, checkpoints), image built by
 `scripts/build-image.sh` from `ops/docker/iduna.Dockerfile`, manifests in `EMILY/gitops` (`specs/iduna.pod`, `render.sh`).
