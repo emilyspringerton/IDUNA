@@ -186,6 +186,44 @@ const ROTATE_SNAP_DEG = 15
 const wallEuler = (w: ShankpitWall) =>
   new THREE.Euler(((w.rot_x ?? 0) * Math.PI) / 180, ((w.rot_y ?? 0) * Math.PI) / 180, ((w.rot_z ?? 0) * Math.PI) / 180, 'XYZ')
 const roundDeg = (r: number) => Math.round(((r * 180) / Math.PI) * 100) / 100 + 0 // +0 folds -0 into 0
+// Unit wedge (ramp): x/y/z in [-0.5,0.5], slope rises toward local +z, solid below. Scaled by the cube's
+// size, parented to the (invisible-ish) pick box so it inherits position + rotation. Mirrors
+// SHANKPIT packages/common/obb.h's ramp plane exactly.
+const RAMP_GEO = (() => {
+  const A = [-0.5, -0.5, -0.5], B = [0.5, -0.5, -0.5], C = [0.5, -0.5, 0.5], D = [-0.5, -0.5, 0.5]
+  const E = [-0.5, 0.5, 0.5], F = [0.5, 0.5, 0.5]
+  const tris = [A, B, C, A, C, D, D, C, F, D, F, E, A, E, F, A, F, B, A, D, E, B, F, C]
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3))
+  g.computeVertexNormals()
+  return g
+})()
+function syncRamp(mesh: THREE.Mesh, w: ShankpitWall) {
+  let child = mesh.userData.ramp as THREE.Mesh | undefined
+  const boxMat = mesh.material as THREE.MeshStandardMaterial
+  if (!w.ramp) {
+    if (child) {
+      mesh.remove(child)
+      ;(child.material as THREE.Material).dispose()
+      delete mesh.userData.ramp
+      boxMat.transparent = false
+      boxMat.opacity = 1
+      boxMat.depthWrite = true
+    }
+    return
+  }
+  if (!child) {
+    child = new THREE.Mesh(RAMP_GEO, new THREE.MeshStandardMaterial())
+    mesh.add(child)
+    mesh.userData.ramp = child
+  }
+  child.scale.set(w.sx, w.sy, w.sz)
+  ;(child.material as THREE.MeshStandardMaterial).color.setRGB(w.r, w.g, w.b)
+  // the cube stays as a faint ghost: face/object drags still pick and reshape it exactly as before
+  boxMat.transparent = true
+  boxMat.opacity = 0.15
+  boxMat.depthWrite = false
+}
 const isRotated = (w: ShankpitWall) => !!(w.rot_x || w.rot_y || w.rot_z)
 
 type Axis = 'x' | 'y' | 'z'
@@ -1022,6 +1060,7 @@ function Viewport3D({
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.set(w.x, w.y, w.z)
       mesh.rotation.copy(wallEuler(w))
+      syncRamp(mesh, w)
       scene.add(mesh)
       return mesh
     })
@@ -1048,6 +1087,7 @@ function Viewport3D({
       const mat = mesh.material as THREE.MeshStandardMaterial
       mat.color.setRGB(w.r, w.g, w.b)
       applyWallTexture(mat, w.material, w.r, w.g, w.b, materials)
+      syncRamp(mesh, w)
     })
     applySelectionOutline()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1438,6 +1478,12 @@ function Viewport3D({
       const mat = mesh.material as THREE.MeshStandardMaterial
       mat.emissive = new THREE.Color(w.id === selected ? 0x3355ff : 0x000000)
       mat.emissiveIntensity = w.id === selected ? 0.5 : 0
+      const rampChild = mesh.userData.ramp as THREE.Mesh | undefined
+      if (rampChild) {
+        const rm = rampChild.material as THREE.MeshStandardMaterial
+        rm.emissive = new THREE.Color(w.id === selected ? 0x3355ff : 0x000000)
+        rm.emissiveIntensity = w.id === selected ? 0.5 : 0
+      }
     })
   }
 
@@ -1516,6 +1562,9 @@ export function WallInspector({
       {field('X', 'x')}
       {field('Y', 'y')}
       {field('Z', 'z')}
+      <label title="Renders and collides as a real ramp in SHANKPIT. The cube stays a cube here (drag faces/objects as usual); the slope rises toward the cube's local +Z, so use Rotate mode / Rot Y° to aim it.">
+        <input type="checkbox" checked={!!wall.ramp} onChange={(e) => onChange({ ...wall, ramp: e.target.checked })} /> Ramp (slope rises toward +Z)
+      </label>
       {field('Rot X°', 'rot_x', { step: ROTATE_SNAP_DEG })}
       {field('Rot Y°', 'rot_y', { step: ROTATE_SNAP_DEG })}
       {field('Rot Z°', 'rot_z', { step: ROTATE_SNAP_DEG })}

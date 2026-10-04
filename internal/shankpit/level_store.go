@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -65,6 +66,62 @@ type Wall struct {
 	RotX float64 `json:"rot_x,omitempty"`
 	RotY float64 `json:"rot_y,omitempty"`
 	RotZ float64 `json:"rot_z,omitempty"`
+	// Ramp (founder real-time, 2026-10-04: "check a box on a cube to turn it into a ramp ... still a
+	// cube behind the scenes"): the data stays a plain box; the native client renders and collides it
+	// as a wedge whose slope rises toward the cube's local +Z (aim it with rot_y). Walls with Ramp or a
+	// non-zero rotation take the native client's oriented-box path (packages/common/obb.h).
+	Ramp bool `json:"ramp,omitempty"`
+}
+
+// eulerMat builds the 3x3 rotation matrix for three.js 'XYZ' Euler degrees (R = Rx*Ry*Rz) and
+// matEuler inverts it (three.js setFromRotationMatrix, XYZ), so a nested object's Y rotation can
+// be composed onto a child wall's own free rotation without losing it.
+func eulerMat(rxd, ryd, rzd float64) [3][3]float64 {
+	k := math.Pi / 180
+	cx, sx := math.Cos(rxd*k), math.Sin(rxd*k)
+	cy, sy := math.Cos(ryd*k), math.Sin(ryd*k)
+	cz, sz := math.Cos(rzd*k), math.Sin(rzd*k)
+	return [3][3]float64{
+		{cy * cz, -cy * sz, sy},
+		{cx*sz + sx*sy*cz, cx*cz - sx*sy*sz, -sx * cy},
+		{sx*sz - cx*sy*cz, sx*cz + cx*sy*sz, cx * cy},
+	}
+}
+
+func matEuler(m [3][3]float64) (rx, ry, rz float64) {
+	y := math.Asin(math.Max(-1, math.Min(1, m[0][2])))
+	var x, z float64
+	if math.Abs(m[0][2]) < 0.9999999 {
+		x = math.Atan2(-m[1][2], m[2][2])
+		z = math.Atan2(-m[0][1], m[0][0])
+	} else {
+		x = math.Atan2(m[2][1], m[1][1])
+	}
+	r := func(v float64) float64 { return math.Round(v*180/math.Pi*100) / 100 }
+	return r(x) + 0, r(y) + 0, r(z) + 0
+}
+
+// carryOrientation copies a child wall's rotation/ramp onto its flattened world copy. Axis-aligned
+// non-ramp walls are untouched (the caller's 90-degree size swap already handled them); an oriented
+// wall keeps its own sx/sz (the swap is only valid for AABBs) and gets the parent's Y rotation
+// composed onto its Euler angles.
+func carryOrientation(src Wall, dst *Wall, worldRotY int) {
+	if src.RotX == 0 && src.RotY == 0 && src.RotZ == 0 && !src.Ramp {
+		return
+	}
+	dst.SX, dst.SZ = src.SX, src.SZ
+	dst.Ramp = src.Ramp
+	rw := eulerMat(0, float64(worldRotY), 0)
+	rl := eulerMat(src.RotX, src.RotY, src.RotZ)
+	var m [3][3]float64
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			for k := 0; k < 3; k++ {
+				m[i][j] += rw[i][k] * rl[k][j]
+			}
+		}
+	}
+	dst.RotX, dst.RotY, dst.RotZ = matEuler(m)
 }
 
 // LevelObject is a level placed as a child object inside another level -- the "map" primitive,
@@ -1296,6 +1353,7 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 					R: w.R, G: w.G, B: w.B, Friction: w.Friction, Material: w.Material,
 					Name: rotatedBuggySpawnName(w.Name, worldRotY),
 				})
+				carryOrientation(w, &outWalls[len(outWalls)-1], worldRotY)
 			}
 			for _, d := range widget.Doors {
 				idx, ok := childWallIndexByID[d.WallID]
@@ -1347,6 +1405,7 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 				Material: w.Material,
 				Name:     rotatedBuggySpawnName(w.Name, worldRotY),
 			})
+			carryOrientation(w, &outWalls[len(outWalls)-1], worldRotY)
 		}
 		// Carry the child's own real, directly-authored doors through -- a wall referencing a
 		// since-deleted door target is a real, honest skip (same discipline doorsForExport

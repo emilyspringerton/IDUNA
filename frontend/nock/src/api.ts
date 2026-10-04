@@ -521,6 +521,10 @@ export interface ShankpitWall {
   rot_x?: number
   rot_y?: number
   rot_z?: number
+  // ramp (founder real-time, 2026-10-04: "check a box on a cube to turn it into a ramp ... still a
+  // cube behind the scenes") -- data stays a cube; the game renders/collides it as a wedge that
+  // rises toward the cube's local +Z (aim with rotation).
+  ramp?: boolean
 }
 
 // buggySpawnTile (#464/#467) -- a buggy spawn is an ordinary thin wall NAMED buggy_spawn (facing yaw 0)
