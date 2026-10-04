@@ -1,5 +1,16 @@
 # IDUNA — Platform IAM & Governance Service
 
+## Where it runs (2026-10-04)
+
+**IDUNA runs on GKE, not the box** (K8S-MV-01). One pod (`iduna` + a PARENA secure-channel tunnel sidecar) on a 20Gi PVC
+(`/app/var`: iduna.db, statuspage.db, signing key `iduna-key.json`, nock projects, checkpoints), image built by
+`scripts/build-image.sh` from `ops/docker/iduna.Dockerfile`, manifests in `EMILY/gitops` (`specs/iduna.pod`, `render.sh`).
+`iam.okemily.com` / `console.okemily.com` terminate on the edge Gateway (Certificate Manager `*.okemily.com`). Box-side tools still
+use `http://localhost:8080`: that port is now `iduna-tunnel-client.service`, an `sc_tunnel` client to `34.63.32.219:8443`
+(ML-KEM-768 pin + LZ4 + XChaCha20-Poly1305). Honest limits in the cluster copy: statuspage probes of box-local services read as down,
+the GOLDENBAND nock-robot git sync and vault stay off (no checkouts in the pod). `okemily.com` (apex) is still fronted by box nginx
+through that tunnel until OKEMILY moves (K8S-MV-02).
+
 ## Current Status (2026-08-26)
 
 Live user account creation exists at **okemily.com/** (Google OAuth → honor code → permanent
