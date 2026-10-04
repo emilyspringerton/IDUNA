@@ -617,10 +617,10 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// MaxWalls mirrors SHANKPIT/packages/map/map.h's own real `Wall walls[100]` fixed-array capacity
+// MaxWalls mirrors SHANKPIT/packages/map/map.h's own real `Wall walls[...]` fixed-array capacity (raised 100 -> 2048, founder 2026-10-04, in sync with LEVEL_BOXES_MAX)
 // -- kept in exact sync so a level saved here can never exceed what the native GameMap can
 // actually hold, same real reason internal/brawlpit.MaxPlatforms exists.
-const MaxWalls = 100
+const MaxWalls = 2048
 
 // MinGroundPlaneSquares/MaxGroundPlaneSquares bound the real, editable square-count field --
 // a real, sane range (1 = a single 1x1 square, 2000 = a 2000x2000-unit plane, comfortably larger
