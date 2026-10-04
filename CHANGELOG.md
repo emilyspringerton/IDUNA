@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-04
+- K8S-MV-01: IDUNA cut over to GKE (PVC iduna-var, signing key preserved, JWKS identical). iam./console.okemily.com via edge Gateway + Certificate Manager *.okemily.com, DNS flipped; box localhost:8080 is now a PARENA sc_tunnel client; gfd-core talks to in-cluster iduna directly. Box iduna.service disabled (box copy + var kept). (sess-20260923-1030-4a526255)
 
 - Level box cap 100 -> 2048 (MaxWalls); nextown (169 boxes flattened) exports again. Deployed, iduna.service restarted (sess-20260923-1030-4a526255)
 
