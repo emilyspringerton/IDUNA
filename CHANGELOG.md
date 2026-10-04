@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-10-04
+
+- Level box cap 100 -> 2048 (MaxWalls); nextown (169 boxes flattened) exports again. Deployed, iduna.service restarted (sess-20260923-1030-4a526255)
+
+
 ## 2026-10-02
 - NOCK live SHANKPIT session panel (#532): start/join, spawner<->avatar sync, spawn-at toggle, avatar marker; built dist, not yet redeployed (sess-20260923-1030-4a526255)
 - kanban: comments on cards tracked by login -- API (bearer + board), per-card comments panel, openapi (card #514) (sess-20260923-1030-4a526255)
