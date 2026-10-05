@@ -1,0 +1,47 @@
+name: Build and push image
+
+# K8S-CD-01: builds the PARENA compiler from committed source (needed by scripts/build-image.sh,
+# which bakes it into the image for ops/docker/iduna.Dockerfile) and pushes via Cloud Build, auth
+# via Workload Identity (no stored key) -- see EMILY/gitops/CI_SETUP.md for the one-time GCP
+# setup this depends on (already done, 2026-10-05) and the two repo/org Variables this workflow
+# needs. The in-cluster gitops-autodeploy CronJob (EMILY/gitops/) notices the new tag on its own
+# next poll and redeploys -- this workflow does not need to talk to EMILY at all.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/PARENA
+          path: PARENA
+
+      - name: PARENA's own build deps (parena compiler links SDL2 unconditionally)
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev
+
+      - name: Build the PARENA compiler
+        run: make -C PARENA parena
+
+      - name: Auth to GCP (Workload Identity, no stored key)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build + push
+        env:
+          PARENA_DIR: ${{ github.workspace }}/PARENA
+        run: scripts/build-image.sh "$(git rev-parse --short HEAD)"
