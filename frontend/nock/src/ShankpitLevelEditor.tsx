@@ -18,6 +18,7 @@ import {
   type DoorScriptSummary,
   type ShankpitCharacter,
   type ShankpitDoor,
+  type ShankpitLevel,
   type ShankpitLevelExit,
   type ShankpitLevelObject,
   type ShankpitLevelSummary,
@@ -27,6 +28,7 @@ import {
   type ShankpitFloorTint,
   type ShankpitSpawnerTeam,
   type ShankpitWall,
+  type ShankpitWidget,
   type ShankpitWidgetSummary,
 } from './api'
 
@@ -373,72 +375,169 @@ function useWidgetSummaryList() {
   return list
 }
 
-// useReferencedLevelWalls -- S479, founder real-time: "when you embed a level currently it
-// doesnt render the level it would be nice if we could actually render the level." Object
-// placement previously only ever rendered an empty wireframe bounding box (the child level's own
-// width/height/depth footprint) -- fetches each distinct referenced level's own real wall list
-// (full ShankpitLevel.get, not the width/height/depth-only summary useLevelList already has) so
-// Viewport3D can render the real geometry inside that box. Cached by ref_level_id and never
-// re-fetched once present -- a level someone else is actively editing elsewhere won't live-update
-// here, a real, accepted v0 limit (same class of staleness levelSummaries itself already has).
-// Real, deliberate v0 scope limit, named not silently dropped: only the DIRECT child's own walls
-// render -- a child level's own further-nested objects (S459-15's own real "fractal" recursion,
-// which Export's server-side flattenObjects already handles for the actual game) are not
-// recursively resolved here, matching this feature's own preexisting real, honest "ground plane
-// not composed" precedent rather than reimplementing flattenObjects' own cycle/depth guards
-// client-side for a preview-only view.
-function useReferencedLevelWalls(objects: ShankpitLevelObject[]) {
-  const [cache, setCache] = useState<Record<number, ShankpitWall[]>>({})
+// MAX_LEVEL_OBJECT_DEPTH -- mirrors IDUNA/internal/shankpit/level_store.go's own
+// MaxLevelObjectDepth exactly, so the client-side preview's recursion bottoms out at the same
+// real depth the server-side export (flattenObjects) would, rather than drifting out of sync.
+const MAX_LEVEL_OBJECT_DEPTH = 6
+
+// useReferencedLevelsDeep -- S459-15's own real "fractal" composition (founder real-time: "a map
+// is a composition of levels ... its a bit fractal we can let it go further down or up" / "its
+// like a smart document in photoshop where you have like a photoshop doc in a photoshop doc"),
+// now actually resolved to ARBITRARY nesting depth client-side, not just one level down. The
+// previous version of this file (useReferencedLevelWalls/useReferencedWidgetWalls) fetched only
+// each DIRECTLY-placed object's own walls -- real and named as a deliberate v0 scope limit at the
+// time, but the real, found-live gap the founder hit directly: nest level 1 inside level 2, then
+// place level 2 inside level 3, and level 1's own geometry never showed up in level 3's preview
+// (nor would a level freshly nested into yet another level above that). This walks OUTWARD from
+// `rootObjects` breadth-first, one nesting level per round, fetching the FULL level (walls +
+// its own further objects, via shankpitLevels.get -- not the width/height/depth-only summary
+// useLevelList already has) for every newly-discovered ref_level_id, and the leaf widget data for
+// every newly-discovered ref_widget_id (a widget is always a leaf -- it has no Objects of its own,
+// matching flattenObjects' own widget branch, which never recurses either). Each round's frontier
+// is the PREVIOUS round's newly-fetched levels' own `.objects` -- so a level nested 5 deep
+// resolves exactly the same way a level nested 1 deep does, just over more rounds. Bounded by
+// MAX_LEVEL_OBJECT_DEPTH (mirrors the server's own flattenObjects depth guard) and naturally
+// cycle-safe: a level that (directly or indirectly) references itself is already in the cache by
+// the time its own id would be re-fetched, so that branch's frontier contributes nothing further
+// -- a real, honest client-side fail-soft counterpart to the server's own hard error for the same
+// case (a stale/half-edited draft mid-authoring is a real, expected state here, not an export-time
+// error). Cached by id and never re-fetched once present, same "someone else editing it elsewhere
+// won't live-update here" real, accepted v0 limit this feature always had.
+function useReferencedLevelsDeep(rootObjects: ShankpitLevelObject[]) {
+  const [levelCache, setLevelCache] = useState<Record<number, ShankpitLevel>>({})
+  const [widgetCache, setWidgetCache] = useState<Record<number, ShankpitWidget>>({})
+  const levelCacheRef = useRef(levelCache)
+  const widgetCacheRef = useRef(widgetCache)
+  levelCacheRef.current = levelCache
+  widgetCacheRef.current = widgetCache
+
   useEffect(() => {
-    // S482: ref_level_id is 0 (unset) for a widget-referencing object -- skip those here
-    // entirely, useReferencedWidgetWalls below handles them.
-    const missing = [...new Set(objects.map((o) => o.ref_level_id).filter((id) => id !== 0))].filter((id) => !(id in cache))
-    if (missing.length === 0) return
-    Promise.all(
-      missing.map((id) =>
-        shankpitLevels
-          .get(id)
-          .then((lvl) => [id, lvl.walls] as [number, ShankpitWall[]])
-          .catch(() => [id, []] as [number, ShankpitWall[]]),
-      ),
-    ).then((pairs) => {
-      setCache((prev) => {
-        const next = { ...prev }
-        for (const [id, walls] of pairs) next[id] = walls
-        return next
-      })
-    })
-  }, [objects, cache])
-  return cache
+    let cancelled = false
+    async function walk() {
+      let frontier = rootObjects
+      for (let depth = 0; depth < MAX_LEVEL_OBJECT_DEPTH && frontier.length > 0 && !cancelled; depth++) {
+        const levelIds = [...new Set(frontier.map((o) => o.ref_level_id).filter((id) => id !== 0 && !(id in levelCacheRef.current)))]
+        const widgetIds = [...new Set(frontier.map((o) => o.ref_widget_id).filter((id) => id !== 0 && !(id in widgetCacheRef.current)))]
+        if (levelIds.length === 0 && widgetIds.length === 0) break
+        const [levelPairs, widgetPairs] = await Promise.all([
+          Promise.all(
+            levelIds.map((id) =>
+              shankpitLevels
+                .get(id)
+                .then((lvl) => [id, lvl] as [number, ShankpitLevel])
+                .catch(() => null),
+            ),
+          ),
+          Promise.all(
+            widgetIds.map((id) =>
+              shankpitWidgets
+                .get(id)
+                .then((w) => [id, w] as [number, ShankpitWidget])
+                .catch(() => null),
+            ),
+          ),
+        ])
+        if (cancelled) return
+        const newLevels = levelPairs.filter((p): p is [number, ShankpitLevel] => p !== null)
+        const newWidgets = widgetPairs.filter((p): p is [number, ShankpitWidget] => p !== null)
+        if (newLevels.length > 0) {
+          levelCacheRef.current = { ...levelCacheRef.current, ...Object.fromEntries(newLevels) }
+          setLevelCache(levelCacheRef.current)
+        }
+        if (newWidgets.length > 0) {
+          widgetCacheRef.current = { ...widgetCacheRef.current, ...Object.fromEntries(newWidgets) }
+          setWidgetCache(widgetCacheRef.current)
+        }
+        frontier = newLevels.flatMap(([, lvl]) => lvl.objects)
+      }
+    }
+    void walk()
+    return () => {
+      cancelled = true
+    }
+  }, [rootObjects])
+
+  return { levelCache, widgetCache }
 }
 
-// useReferencedWidgetWalls -- S482 counterpart to useReferencedLevelWalls above, same real
-// caching shape, for widget-referencing objects (ref_widget_id != 0). Returns both walls AND
-// doors -- a widget's own door(s) render is out of scope for the viewport preview (doors have no
-// distinct visual today even for root/level walls, see the Characters panel's own doc text), but
-// the walls themselves are what makes this the founder's own real "actual object viewer": "the
-// geometry of the widget shows up not the geometry of the underlying level under the widget."
-function useReferencedWidgetWalls(objects: ShankpitLevelObject[]) {
-  const [cache, setCache] = useState<Record<number, ShankpitWall[]>>({})
-  useEffect(() => {
-    const missing = [...new Set(objects.map((o) => o.ref_widget_id).filter((id) => id !== 0))].filter((id) => !(id in cache))
-    if (missing.length === 0) return
-    Promise.all(
-      missing.map((id) =>
-        shankpitWidgets
-          .get(id)
-          .then((w) => [id, w.walls] as [number, ShankpitWall[]])
-          .catch(() => [id, []] as [number, ShankpitWall[]]),
-      ),
-    ).then((pairs) => {
-      setCache((prev) => {
-        const next = { ...prev }
-        for (const [id, walls] of pairs) next[id] = walls
-        return next
-      })
-    })
-  }, [objects, cache])
-  return cache
+// buildComposedObjectGroup -- recursively builds the THREE.Group for one placed level/widget
+// object, INCLUDING that object's own further-nested objects (arbitrary depth, matching
+// level_store.go's own server-side flattenObjects). A nested object's group is added as a CHILD
+// of its parent's own contentGroup, so three.js's ordinary parent/child transform inheritance
+// composes every ancestor's position + Y-rotation automatically -- unlike flattenObjects' own
+// explicit worldX/worldY/worldZ/worldRotY accumulation (necessary server-side since it emits one
+// flat wall list with no scene graph to lean on), the scene graph here does that composition for
+// free, so this function only ever needs to apply ONE object's own local transform, same as the
+// original single-level-deep version did.
+// visited/depth are the same real cycle guard + finite backstop flattenObjects itself uses --
+// client-side this fails soft (stops contributing further geometry past that point) rather than
+// throwing, since a stale/half-edited draft mid-authoring is a real, expected state in an editor
+// preview, not an export-time error.
+function buildComposedObjectGroup(
+  obj: ShankpitLevelObject,
+  levelCache: Record<number, ShankpitLevel>,
+  widgetCache: Record<number, ShankpitWidget>,
+  materials: ShankpitMaterial[],
+  visited: ReadonlySet<number>,
+  depth: number,
+): THREE.Group {
+  const group = new THREE.Group()
+
+  // S482, founder real-time: "the geometry of the widget shows up not the geometry of the
+  // underlying level under the widget - there should be no ground plane and no dimension in the
+  // widget - a level is a dimension - a widget is just a widget." A widget is always a leaf (no
+  // Objects of its own), matching flattenObjects' own widget branch, which never recurses either.
+  if (obj.ref_widget_id) {
+    const widget = widgetCache[obj.ref_widget_id]
+    for (const cw of widget?.walls ?? []) {
+      const cgeo = new THREE.BoxGeometry(cw.sx, cw.sy, cw.sz)
+      const cmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cw.r, cw.g, cw.b) })
+      applyWallTexture(cmat, cw.material, cw.r, cw.g, cw.b, materials)
+      const cmesh = new THREE.Mesh(cgeo, cmat)
+      cmesh.position.set(cw.x, cw.y, cw.z)
+      group.add(cmesh)
+    }
+    group.position.set(obj.x, obj.y, obj.z)
+    group.rotation.y = -(obj.rot_y * Math.PI) / 180
+    return group
+  }
+
+  const level = levelCache[obj.ref_level_id]
+  const w = level?.width ?? SHANKPIT_GRID_CELL_SIZE
+  const h = level?.height ?? SHANKPIT_GRID_CELL_SIZE
+  const d = level?.depth ?? SHANKPIT_GRID_CELL_SIZE
+  const geo = new THREE.BoxGeometry(w, h, d)
+  const wire = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xffaa33 }))
+  geo.dispose()
+  group.add(wire)
+
+  const contentGroup = new THREE.Group()
+  contentGroup.position.set(0, -h / 2, 0)
+  for (const cw of level?.walls ?? []) {
+    const cgeo = new THREE.BoxGeometry(cw.sx, cw.sy, cw.sz)
+    const cmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cw.r, cw.g, cw.b) })
+    applyWallTexture(cmat, cw.material, cw.r, cw.g, cw.b, materials)
+    const cmesh = new THREE.Mesh(cgeo, cmat)
+    cmesh.position.set(cw.x, cw.y, cw.z)
+    contentGroup.add(cmesh)
+  }
+
+  // Recurse into the referenced level's OWN objects -- arbitrary nesting depth, not just one
+  // level down. Same cycle guard as flattenObjects: a level that (directly or indirectly)
+  // references itself just stops contributing further geometry past this point rather than
+  // recursing forever.
+  if (level && depth < MAX_LEVEL_OBJECT_DEPTH && !visited.has(obj.ref_level_id)) {
+    const childVisited = new Set(visited)
+    childVisited.add(obj.ref_level_id)
+    for (const childObj of level.objects) {
+      contentGroup.add(buildComposedObjectGroup(childObj, levelCache, widgetCache, materials, childVisited, depth + 1))
+    }
+  }
+
+  group.add(contentGroup)
+  group.position.set(obj.x, obj.y + h / 2, obj.z)
+  group.rotation.y = -(obj.rot_y * Math.PI) / 180
+  return group
 }
 
 // useMaterialList -- S459-16, founder real-time: "we will need the ability to add new materials
@@ -491,9 +590,9 @@ function Viewport3D({
   constrainY,
   onDragStart,
   objects,
-  levelSummaries,
-  refLevelWalls,
-  refWidgetWalls,
+  levelCache,
+  widgetCache,
+  rootLevelId,
   materials,
   spawnPoints,
   selectedSpawnPoint,
@@ -523,9 +622,13 @@ function Viewport3D({
   constrainY: boolean
   onDragStart: () => void
   objects: ShankpitLevelObject[]
-  levelSummaries: ShankpitLevelSummary[]
-  refLevelWalls: Record<number, ShankpitWall[]>
-  refWidgetWalls: Record<number, ShankpitWall[]>
+  levelCache: Record<number, ShankpitLevel>
+  widgetCache: Record<number, ShankpitWidget>
+  // rootLevelId -- the level currently open in this editor, seeding the recursion's own cycle
+  // guard exactly like flattenObjects' own top-level Export call seeds `visited` with the
+  // exported level's own id (so a placed object that loops back around to THIS level stops
+  // there, same as it would server-side). null for a brand-new, not-yet-saved level.
+  rootLevelId: number | null
   materials: ShankpitMaterial[]
   spawnPoints: ShankpitSpawner[]
   selectedSpawnPoint: number | null
@@ -1197,57 +1300,17 @@ function Viewport3D({
         }
       })
     }
+    // rootVisited seeds the recursion's cycle guard with THIS level's own id, exactly matching
+    // Export's own top-level flattenObjects call (map[int64]bool{id: true}) -- a placed object
+    // that loops back around to the level currently open here stops there, same as server-side.
+    const rootVisited = rootLevelId !== null ? new Set([rootLevelId]) : new Set<number>()
     objectMeshesRef.current = objects.map((o) => {
-      const group = new THREE.Group()
-
-      // S482, founder real-time: "make widget or something... the geometry of the widget shows
-      // up not the geometry of the underlying level under the widget - there should be no ground
-      // plane and no dimension in the widget - a level is a dimension - a widget is just a
-      // widget." A widget-referencing object gets NO wireframe bounding box at all (it has no
-      // width/height/depth to size one from) -- just its own real wall geometry, positioned
-      // directly at the object's own placed x/y/z (no vertical half-height compensation needed,
-      // unlike the level branch below, since there's no bounding box to straddle).
-      if (o.ref_widget_id) {
-        for (const cw of refWidgetWalls[o.ref_widget_id] ?? []) {
-          const cgeo = new THREE.BoxGeometry(cw.sx, cw.sy, cw.sz)
-          const cmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cw.r, cw.g, cw.b) })
-          applyWallTexture(cmat, cw.material, cw.r, cw.g, cw.b, materials)
-          const cmesh = new THREE.Mesh(cgeo, cmat)
-          cmesh.position.set(cw.x, cw.y, cw.z)
-          group.add(cmesh)
-        }
-        group.position.set(o.x, o.y, o.z)
-        group.rotation.y = -(o.rot_y * Math.PI) / 180
-        scene.add(group)
-        return group
-      }
-
-      const ref = levelSummaries.find((l) => l.id === o.ref_level_id)
-      const w = ref?.width ?? SHANKPIT_GRID_CELL_SIZE, h = ref?.height ?? SHANKPIT_GRID_CELL_SIZE, d = ref?.depth ?? SHANKPIT_GRID_CELL_SIZE
-      const geo = new THREE.BoxGeometry(w, h, d)
-      const wire = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xffaa33 }))
-      geo.dispose()
-      group.add(wire)
-
-      const contentGroup = new THREE.Group()
-      contentGroup.position.set(0, -h / 2, 0)
-      for (const cw of refLevelWalls[o.ref_level_id] ?? []) {
-        const cgeo = new THREE.BoxGeometry(cw.sx, cw.sy, cw.sz)
-        const cmat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cw.r, cw.g, cw.b) })
-        applyWallTexture(cmat, cw.material, cw.r, cw.g, cw.b, materials)
-        const cmesh = new THREE.Mesh(cgeo, cmat)
-        cmesh.position.set(cw.x, cw.y, cw.z)
-        contentGroup.add(cmesh)
-      }
-      group.add(contentGroup)
-
-      group.position.set(o.x, o.y + h / 2, o.z) // Y offset so the wireframe sits ON o.y (its own floor), not straddling it
-      group.rotation.y = -(o.rot_y * Math.PI) / 180
+      const group = buildComposedObjectGroup(o, levelCache, widgetCache, materials, rootVisited, 1)
       scene.add(group)
       return group
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects.length, levelSummaries.length, refLevelWalls, refWidgetWalls, materials])
+  }, [objects.length, levelCache, widgetCache, rootLevelId, materials])
 
   useEffect(() => {
     objects.forEach((o, i) => {
@@ -1258,13 +1321,12 @@ function Viewport3D({
         group.rotation.y = -(o.rot_y * Math.PI) / 180
         return
       }
-      const ref = levelSummaries.find((l) => l.id === o.ref_level_id)
-      const h = ref?.height ?? SHANKPIT_GRID_CELL_SIZE
+      const h = levelCache[o.ref_level_id]?.height ?? SHANKPIT_GRID_CELL_SIZE
       group.position.set(o.x, o.y + h / 2, o.z)
       group.rotation.y = -(o.rot_y * Math.PI) / 180
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects, levelSummaries])
+  }, [objects, levelCache])
 
   // Real, persisted spawn points (S459-58) -- rendered as team-colored cone markers (pointing
   // along yaw), distinct from spawnerMeshRef's own yellow octahedron (that one is the unsaved,
@@ -1939,8 +2001,7 @@ export default function ShankpitLevelEditor() {
   // floor tint (#533): outside `draft`, applied immediately via its own endpoint, like `enclosed`
   const [floorTint, setFloorTintState] = useState<ShankpitFloorTint | null>(null)
   const [draft, setDraft] = useState(newDefaultLevel())
-  const refLevelWalls = useReferencedLevelWalls(draft.objects)
-  const refWidgetWalls = useReferencedWidgetWalls(draft.objects)
+  const { levelCache, widgetCache } = useReferencedLevelsDeep(draft.objects)
   const [selected, setSelected] = useState<number | null>(null)
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2835,9 +2896,9 @@ export default function ShankpitLevelEditor() {
               constrainY={constrainY}
               onDragStart={pushHistory}
               objects={draft.objects}
-              levelSummaries={list}
-              refLevelWalls={refLevelWalls}
-              refWidgetWalls={refWidgetWalls}
+              levelCache={levelCache}
+              widgetCache={widgetCache}
+              rootLevelId={activeId}
               materials={materials}
               spawnPoints={draft.spawners}
               selectedSpawnPoint={selectedSpawnPoint}
