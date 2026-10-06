@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-10-06
+
+- fix(draft-run): cashOutDraftRun refunds the full entry ticket on a never-played (0-win/0-loss) draft-run abort, instead of the 0-win cash-out table (sess-20260923-1030-4a526255)
+
+
 ## 2026-10-05
 - fix(nock): level editor's own 3D preview now renders arbitrarily-deep nested level/widget objects, not just one level down -- founder real-time: "nest level 1 into level 2 and then 2 into 3 you dont see level 1 in the level 3 editor". New `useReferencedLevelsDeep` (frontend/nock/src/ShankpitLevelEditor.tsx) walks outward from the draft's own objects breadth-first, recursively fetching every transitively-referenced level/widget (bounded by `MAX_LEVEL_OBJECT_DEPTH = 6`, mirroring level_store.go's own `MaxLevelObjectDepth`), replacing the old direct-child-only `useReferencedLevelWalls`/`useReferencedWidgetWalls`. New `buildComposedObjectGroup` recurses to build nested `THREE.Group`s, leaning on three.js's own parent/child transform inheritance instead of hand-accumulating world transforms. No server-side change -- `flattenObjects`/Export already composed arbitrary depth correctly; this closed a client-preview-only gap. `tsc -b` + `vite build` clean. SECTION 596. (session: sess-20261005-0856-dc2e56d0)
 
