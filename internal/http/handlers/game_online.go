@@ -1451,7 +1451,7 @@ func (h *GameOnlineHandler) draftRunLoss(ctx context.Context, tx *sql.Tx, cfg ga
 	// Run over (3rd Burned Proxy): cash out at the current win count, same real reward table and
 	// leaderboard/reset logic "Abort & Extract" uses -- the only difference between the two paths
 	// is what triggered them.
-	_, err = h.cashOutDraftRun(ctx, tx, cfg, playerID, wins)
+	_, err = h.cashOutDraftRun(ctx, tx, cfg, playerID, wins, losses)
 	return err
 }
 
@@ -1481,8 +1481,15 @@ func draftRunReward(wins int) int {
 // whether triggered by the 3rd loss (draftRunLoss above) or a voluntary "Abort & Extract"
 // (draftRunAbort below) -- same real reason redeem/ticketsConsume centralize their own atomic
 // balance updates instead of letting two call sites drift.
-func (h *GameOnlineHandler) cashOutDraftRun(ctx context.Context, tx *sql.Tx, cfg games.Config, playerID string, wins int) (int, error) {
+func (h *GameOnlineHandler) cashOutDraftRun(ctx context.Context, tx *sql.Tx, cfg games.Config, playerID string, wins, losses int) (int, error) {
 	reward := draftRunReward(wins)
+	if wins == 0 && losses == 0 {
+		// Never actually played a match (e.g. the client spent the entry ticket via
+		// draft-run/start but then failed to reach dw_server) -- this is a full refund of the
+		// entry ticket, not a 0-win cash-out: draftRunReward(0) is deliberately 0 for a player
+		// who drafted and lost without a single win, which is a different, real outcome.
+		reward = 1
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO game_draft_run_results (player_id, game, wins) VALUES (?, ?, ?)`,
 		playerID, cfg.Slug, wins); err != nil {
@@ -1730,7 +1737,7 @@ func (h *GameOnlineHandler) draftRunAbort(w http.ResponseWriter, r *http.Request
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	reward, err := h.cashOutDraftRun(ctx, tx, cfg, pid, wins)
+	reward, err := h.cashOutDraftRun(ctx, tx, cfg, pid, wins, losses)
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
