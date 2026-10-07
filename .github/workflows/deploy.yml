@@ -12,6 +12,15 @@ on:
     paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch: {}
 
+# Scoped per-workflow-file, same convention as SHANKPIT's own deploy.yml and this repo's
+# extension-release.yml/iduna-construct.yml -- see SHANKPIT's deploy.yml comment for the real,
+# found-live bug (2026-08-25) a shared group key across sibling workflows causes. This file had
+# no concurrency block at all until now, so two pushes in quick succession could run two Cloud
+# Build submits for the same image concurrently with nothing to cancel the stale one.
+concurrency:
+  group: iduna-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   id-token: write
