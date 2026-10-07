@@ -588,6 +588,12 @@ func main() {
 	mux.Handle("/api/v1/kanban/cards/", kanbanAPIProtected)
 	kanbanInboxH := &handlers.KanbanInboxHandler{DB: db, BacklogPath: backlogPath}
 	mux.Handle("/admin/kanban/api/inbox", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanInboxH)))
+	// Bearer-gated twin of the admin inbox above, same kanban.access permission as
+	// /api/v1/kanban/cards -- "work from kanban" means an agent needs to SEE what's still
+	// un-carded in BACKLOG.md, not just read/write cards that already exist. Same handler
+	// instance, zero duplicated logic (kanban cruise-queue: this was the one gap that made
+	// the CLI's kanban commands useless for actually deciding what to pick up next).
+	mux.Handle("/api/v1/kanban/inbox", middleware.RequireAuth(keys)(middleware.RequirePermission("kanban.access")(kanbanInboxH)))
 
 	// IDUNA_PRO tenant provisioning control plane (docs/EMILY_FOR_BUSINESS_NORTHSTAR.md's own
 	// "control-plane model", founder real-time 2026-09-03/2026-09-07): internal IDUNA stays the
