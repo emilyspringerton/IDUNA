@@ -7,7 +7,13 @@ ES256 JWTs, RBAC, Apples ledger, HEIMDAL sprint planning, and FCM device tokens.
 
 ## Listening on
 
-`:8080` — all HTTP endpoints below.
+`:8080` inside the pod — all HTTP endpoints below. **Runs in Kubernetes** (GKE, namespace
+`emily`, `svc/iduna` ClusterIP on 8080/8443/80 — see root `CLAUDE.md`'s "Kubernetes Operations"
+section); there is no ingress, so reach it from outside the cluster with
+`kubectl port-forward -n emily svc/iduna 18080:8080` and point `IDUNA_BASE_URL` at
+`http://localhost:18080`. The local `var/agent-secrets.env` in this repo is a bootstrap artifact
+and drifts from the live cluster — get the current value for any agent secret from the running
+pod itself: `kubectl exec -n emily deploy/iduna -- cat /app/var/agent-secrets.env`.
 
 ## Key Endpoints
 
