@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-09 (cont. 2)
+- DRIVE SLURP page: drag-and-drop direct upload (POST /admin/drive-slurp/upload), sha256-deduped, no Drive needed (sess-20261009-1745-ee80b668)
 
 - Real Back Office interface for granting roles to email/WOTAN accounts (founder real-time
   follow-up to the permissions-claim fix below: "we are going to need an interface in iduna for
