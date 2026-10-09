@@ -308,16 +308,18 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 // "permissions" (2026-10-09, found live: this handler never set ANY permissions claim, so
 // middleware.RequirePermission(...) could never pass for a player/WOTAN account no matter what
 // role existed elsewhere -- the real bug under the founder's own "I don't think IDUNA SSO is set
-// up currently so that I can give the user ... IAM roles" intuition. Fixed the same way
-// local_auth.go's own localUserPermissions already does for local_users: a small, hardcoded,
-// email-keyed allowlist, not a second parallel DB-backed grant UI for a handful of real accounts
-// that actually exist -- see playerPermissions below.
+// up currently so that I can give the user ... IAM roles" intuition. First fixed with a hardcoded
+// allowlist (same shape local_auth.go's own localUserPermissions uses for local_users); replaced
+// same-day with a real, admin-manageable grant (migration 202610090002_player_permissions.sql +
+// the Back Office Game Master tool's new grant/revoke action, admin_gm.go) per the founder's own
+// immediate follow-up: "we are going to need an interface in iduna for adding roles to the email
+// users." See playerPermissions below.
 func (h *PlayerEmailAuthHandler) issueJWT(playerID, displayName, email, game string) (string, error) {
 	claims := map[string]any{
 		"sub":          playerID,
 		"display_name": displayName,
 		"email":        email,
-		"permissions":  playerPermissions(email),
+		"permissions":  h.playerPermissions(playerID),
 		"iss":          h.Issuer,
 		"aud":          "shankpit",
 		"iat":          time.Now().Unix(),
@@ -329,18 +331,27 @@ func (h *PlayerEmailAuthHandler) issueJWT(playerID, displayName, email, game str
 	return authjwt.Sign(h.Keys, claims)
 }
 
-// playerPermissions grants real IAM permissions to a player/WOTAN account by email -- the same
-// hardcoded-allowlist shape local_auth.go's localUserPermissions already established, not a new
-// pattern. "edge.game.operator" (2026-10-09, founder real-time) gates EDGE.GAME's relay `exec`
-// command (see EDGE.GAME/client/edge_client.c handle_exec and NORTHSTAR.md) -- the relay-side
-// enforcement and the client's own browser-login UX are separate, not-yet-built follow-ups
-// (EMILY/BACKLOG.md); this function only makes the permission real and mintable for the one
-// account that exists to use it today.
-func playerPermissions(email string) []string {
-	switch strings.ToLower(strings.TrimSpace(email)) {
-	case "emilyspringerton@gmail.com":
-		return []string{"edge.game.operator"}
-	default:
-		return []string{}
+// playerPermissions reads this player's granted permissions from player_permissions -- a plain
+// per-account grant list, not role-grouped (no "roles" concept exists for player accounts, unlike
+// the Google-auth users/user_roles/roles tables) -- real, deliberately minimal for the handful of
+// permissions that exist to grant today (see admin_gm.go's own grant/revoke action). Always
+// returns a non-nil, possibly-empty slice: a present-but-empty "permissions":[] claim, not an
+// absent one, is what jwt_verify.c (EDGE.GAME) and any other consumer should be able to rely on.
+func (h *PlayerEmailAuthHandler) playerPermissions(playerID string) []string {
+	out := []string{}
+	if h.DB == nil {
+		return out
 	}
+	rows, err := h.DB.Query(`SELECT permission FROM player_permissions WHERE player_id=?`, playerID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }

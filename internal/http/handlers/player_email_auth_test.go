@@ -41,6 +41,15 @@ func newTestEmailAuthDB(t *testing.T) *sql.DB {
 	)`); err != nil {
 		t.Fatalf("create player_credentials: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE player_permissions (
+		player_id  TEXT NOT NULL,
+		permission TEXT NOT NULL,
+		granted_by TEXT NOT NULL DEFAULT '',
+		granted_at TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (player_id, permission)
+	)`); err != nil {
+		t.Fatalf("create player_permissions: %v", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE characters (
 		character_id TEXT PRIMARY KEY,
 		player_id    TEXT NOT NULL,
@@ -312,23 +321,26 @@ func TestEmailRegister_DefaultDisplayNameNeverLeaksEmail(t *testing.T) {
 	}
 }
 
-// TestEmailAuth_PermissionsClaimGrantedByEmail -- real bug fix, found live (2026-10-09): this
+// TestEmailAuth_PermissionsClaimIsRealAndGrantable -- real bug fix, found live (2026-10-09): this
 // handler never set ANY "permissions" claim, so middleware.RequirePermission(...) could never
-// pass for a WOTAN/player account. A known account (emilyspringerton@gmail.com) should now mint
-// "edge.game.operator"; an ordinary account should mint an empty (but present) permissions list,
-// not an absent claim -- a caller checking PermissionsFromContext must get [] not nil/missing.
-func TestEmailAuth_PermissionsClaimGrantedByEmail(t *testing.T) {
+// pass for a WOTAN/player account. A brand-new account must mint an empty (but PRESENT, not
+// absent) permissions claim; after a grant lands in player_permissions (the real mechanism
+// admin_gm.go's new grant/revoke action uses), the NEXT login must carry it.
+func TestEmailAuth_PermissionsClaimIsRealAndGrantable(t *testing.T) {
 	db := newTestEmailAuthDB(t)
 	defer db.Close()
 	keys := newTestKeys(t)
 	h := &handlers.PlayerEmailAuthHandler{DB: db, Keys: keys, Issuer: "test"}
 
-	regBody := `{"email":"emilyspringerton@gmail.com","password":"correcthorsebattery"}`
+	regBody := `{"email":"someone@example.com","password":"correcthorsebattery"}`
 	w := doEmailAuth(h, "/api/v1/auth/email/register", regBody)
 	if w.Code != http.StatusOK {
 		t.Fatalf("register: status=%d body=%s", w.Code, w.Body.String())
 	}
-	var reg struct{ Token string }
+	var reg struct {
+		PlayerID string `json:"player_id"`
+		Token    string `json:"token"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &reg); err != nil {
 		t.Fatalf("decode register response: %v", err)
 	}
@@ -338,36 +350,42 @@ func TestEmailAuth_PermissionsClaimGrantedByEmail(t *testing.T) {
 	}
 	perms, ok := claims["permissions"].([]any)
 	if !ok {
-		t.Fatalf("expected a permissions claim ([]any), got %T: %v", claims["permissions"], claims["permissions"])
+		t.Fatalf("expected a present (even if empty) permissions claim, got %T: %v", claims["permissions"], claims["permissions"])
 	}
-	found := false
-	for _, p := range perms {
-		if p == "edge.game.operator" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected edge.game.operator in permissions, got %v", perms)
+	if len(perms) != 0 {
+		t.Fatalf("expected a brand-new account to get zero permissions, got %v", perms)
 	}
 
-	regBody2 := `{"email":"nobody@example.com","password":"correcthorsebattery"}`
-	w2 := doEmailAuth(h, "/api/v1/auth/email/register", regBody2)
+	// Simulate the Back Office grant action (admin_gm.go) landing a row directly.
+	if _, err := db.Exec(`INSERT INTO player_permissions (player_id, permission, granted_by) VALUES (?, ?, ?)`,
+		reg.PlayerID, "edge.game.operator", "test-admin"); err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	loginBody := `{"email":"someone@example.com","password":"correcthorsebattery"}`
+	w2 := doEmailAuth(h, "/api/v1/auth/email/login", loginBody)
 	if w2.Code != http.StatusOK {
-		t.Fatalf("register: status=%d body=%s", w2.Code, w2.Body.String())
+		t.Fatalf("login: status=%d body=%s", w2.Code, w2.Body.String())
 	}
-	var reg2 struct{ Token string }
-	if err := json.Unmarshal(w2.Body.Bytes(), &reg2); err != nil {
-		t.Fatalf("decode register response: %v", err)
+	var login struct{ Token string }
+	if err := json.Unmarshal(w2.Body.Bytes(), &login); err != nil {
+		t.Fatalf("decode login response: %v", err)
 	}
-	claims2, err := jwt.Verify(keys, reg2.Token)
+	claims2, err := jwt.Verify(keys, login.Token)
 	if err != nil {
 		t.Fatalf("verify token: %v", err)
 	}
 	perms2, ok := claims2["permissions"].([]any)
 	if !ok {
-		t.Fatalf("expected a present (even if empty) permissions claim, got %T: %v", claims2["permissions"], claims2["permissions"])
+		t.Fatalf("expected a permissions claim, got %T: %v", claims2["permissions"], claims2["permissions"])
 	}
-	if len(perms2) != 0 {
-		t.Fatalf("expected an unlisted email to get zero permissions, got %v", perms2)
+	found := false
+	for _, p := range perms2 {
+		if p == "edge.game.operator" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected edge.game.operator after the grant, got %v", perms2)
 	}
 }

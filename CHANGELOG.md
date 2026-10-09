@@ -1,5 +1,25 @@
 # IDUNA Changelog
 
+## 2026-10-09 (cont. 2)
+
+- Real Back Office interface for granting roles to email/WOTAN accounts (founder real-time
+  follow-up to the permissions-claim fix below: "we are going to need an interface in iduna for
+  adding roles to the email users"). New migration `202610090002_player_permissions.sql`
+  (`player_permissions(player_id, permission, granted_by, granted_at)`, seeded with the one real
+  grant that previously lived in a hardcoded allowlist). `admin_gm.go` (the existing Game Master
+  account-search tool) gets a second real action: `grant_permission`/`revoke_permission` per
+  account, free-text permission name validated against `permissionNameRe` (lowercase
+  dot-segments, the same shape every real permission string in this codebase already uses),
+  audit-logged as `iduna:admin.player_permission.grant`/`.revoke`. `player_email_auth.go`'s
+  `issueJWT` now reads this table directly (`playerPermissions(playerID)`), replacing the
+  hardcoded allowlist from the same-day earlier fix — a grant takes effect on that account's next
+  login, no separate deploy needed. New tests: `TestAdminGM_GrantRevokePermission_
+  EmitsEventsAndPersists`, `TestAdminGM_GrantPermission_RejectsBadNames`, `TestAdminGM_Search_
+  ShowsGrantedPermissions`, and `TestEmailAuth_PermissionsClaimIsRealAndGrantable` (replaces the
+  allowlist-specific test). Full `internal/http/handlers` suite green except one pre-existing,
+  unrelated failure confirmed on a clean tree (`TestNockDoorScriptsHandler_CreateListGet` — no
+  `parena` binary in this sandbox's `$PATH`).
+
 ## 2026-10-09
 
 - Fixed real bug: `PlayerEmailAuthHandler` (the handler every WOTAN/SHANKPIT email+password
