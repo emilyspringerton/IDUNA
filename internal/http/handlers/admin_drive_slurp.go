@@ -848,6 +848,7 @@ var adminDriveSlurpTmpl = mustParseTmpl("drive-slurp", `
 {{end}}
 </table>
 {{else}}<p class="empty">No files found (or nothing yet since connecting).</p>{{end}}
+{{end}}
 
 <h2>Job Log</h2>
 <div id="live-log" class="section-card" style="font-family:monospace;font-size:12px;max-height:200px;overflow-y:auto;background:#1a1a1a;color:#d4d0c8;padding:10px"></div>
@@ -905,6 +906,11 @@ document.querySelectorAll('.slurp-btn').forEach(function (btn) {
   var bar = document.getElementById('upload-progress');
   var status = document.getElementById('upload-status');
   if (!zone || !input) return;
+  // A file dropped anywhere outside the zone would otherwise make the browser
+  // open it in a new tab. Swallow page-level drag/drop; only the zone uploads.
+  ['dragover', 'drop'].forEach(function (ev) {
+    window.addEventListener(ev, function (e) { e.preventDefault(); });
+  });
 
   function setStatus(msg) { status.textContent = msg; }
 
@@ -962,6 +968,5 @@ document.querySelectorAll('.slurp-btn').forEach(function (btn) {
   };
 })();
 </script>
-{{end}}
 {{end}}
 `)

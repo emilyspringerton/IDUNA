@@ -86,3 +86,18 @@ func TestDriveSlurpUpload_RejectsNonMultipart(t *testing.T) {
 		t.Fatalf("status %d, want 400", rec.Code)
 	}
 }
+
+// The upload drop zone and its script must render while Drive is NOT
+// connected: the script was once nested inside the connected-only branch,
+// so the zone rendered as inert HTML and clicks/drops did nothing.
+func TestDriveSlurpPage_UploadScriptRendersWhenDisconnected(t *testing.T) {
+	h := &DriveSlurpHandler{IdunaRoot: t.TempDir()}
+	rec := httptest.NewRecorder()
+	h.page(rec, httptest.NewRequest(http.MethodGet, "/admin/drive-slurp", nil))
+	body := rec.Body.String()
+	for _, want := range []string{`id="dropzone"`, `id="upload-input"`, "<script>", "/admin/drive-slurp/upload"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("disconnected page missing %q", want)
+		}
+	}
+}
