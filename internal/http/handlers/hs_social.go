@@ -166,6 +166,14 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listComments(w, r, v, "hs_post_comments", "post_id", id(1))
 	case len(p) == 3 && p[0] == "wall" && p[2] == "comments" && m == http.MethodPost:
 		h.addComment(w, r, v, "hs_wall_posts", "hs_post_comments", "post_id", id(1))
+	case rest == "games" && m == http.MethodPost:
+		h.createGame(w, r, v)
+	case rest == "games" && m == http.MethodGet:
+		h.listGames(w, r, v)
+	case len(p) == 2 && p[0] == "games" && m == http.MethodGet:
+		h.getGame(w, v, id(1))
+	case rest == "stats/matchups" && m == http.MethodGet:
+		h.matchups(w, r, v)
 	case rest == "reports" && m == http.MethodPost:
 		h.report(w, r, v)
 	default:

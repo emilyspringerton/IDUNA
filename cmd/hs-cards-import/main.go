@@ -77,10 +77,10 @@ func main() {
 	}
 	defer tx.Rollback()
 
-	upsert, err := tx.Prepare(`INSERT INTO hs_cards (dbf_id,name,cost,class,rarity,card_set,text,image_url)
-		VALUES (?,?,?,?,?,?,?,?)
+	upsert, err := tx.Prepare(`INSERT INTO hs_cards (dbf_id,name,cost,class,rarity,card_set,text,image_url,card_id)
+		VALUES (?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(dbf_id) DO UPDATE SET name=excluded.name,cost=excluded.cost,class=excluded.class,
-		  rarity=excluded.rarity,card_set=excluded.card_set,text=excluded.text,image_url=excluded.image_url`)
+		  rarity=excluded.rarity,card_set=excluded.card_set,text=excluded.text,image_url=excluded.image_url,card_id=excluded.card_id`)
 	if err != nil {
 		log.Fatalf("prepare upsert: %v", err)
 	}
@@ -91,7 +91,7 @@ func main() {
 		if c.DBFID == 0 || c.Name == "" {
 			continue
 		}
-		if _, err := upsert.Exec(c.DBFID, c.Name, c.Cost, c.Class, c.Rarity, c.CardSet, c.Text, c.ImageURL); err != nil {
+		if _, err := upsert.Exec(c.DBFID, c.Name, c.Cost, c.Class, c.Rarity, c.CardSet, c.Text, c.ImageURL, c.CardID); err != nil {
 			log.Fatalf("upsert dbf %d: %v", c.DBFID, err)
 		}
 		names[c.DBFID] = namedCard{Name: c.Name, Cost: c.Cost}

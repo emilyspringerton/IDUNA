@@ -293,3 +293,56 @@ func TestHS_CodeOnlyDeckResolvesFromCardTable(t *testing.T) {
 		t.Fatalf("created deck not resolved: %v", got)
 	}
 }
+
+// Tracker game records: ingest resolves classes from hero cards, dedupes, scopes replays to the
+// owner, and aggregates class-vs-class results.
+func TestHS_GameRecordsAndMatchups(t *testing.T) {
+	e := newHSEnv(t)
+	for _, c := range [][3]string{{"1", "HERO_08", "MAGE"}, {"2", "HERO_06", "DRUID"}} {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,class,card_id) VALUES (?,?,?,?)`, c[0], c[1], c[2], c[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := func(me, r1, r2 int, turns int) string {
+		return jstr(map[string]any{
+			"game_type": "GT_RANKED", "format": "FT_STANDARD", "player1": "Hero#1", "player2": "Foe#2",
+			"result1": r1, "result2": r2, "turns": turns, "complete": 1, "me": me,
+			"entities": []map[string]any{
+				{"id": 64, "player": 1, "card": "HERO_08", "zone0": "PLAY"},
+				{"id": 66, "player": 2, "card": "HERO_06", "zone0": "PLAY"},
+				{"id": 40, "player": 2, "card": "CORE_X", "zone0": "DECK"},
+			},
+			"timeline": [][]any{{"t", 1}, {"p", 1, 40, 2, "CORE_X"}},
+		})
+	}
+	g1 := e.must(201, "alice", "POST", "games", rec(1, 1, 2, 9)) // alice (slot 1, mage) beats druid
+	if g1["my_class"] != "MAGE" || g1["opp_class"] != "DRUID" || g1["result"] != float64(1) {
+		t.Fatalf("classes/result: %v", g1)
+	}
+	if d := e.must(200, "alice", "POST", "games", rec(1, 1, 2, 9)); d["duplicate"] != true {
+		t.Fatalf("re-upload must be a no-op: %v", d)
+	}
+	e.must(422, "alice", "POST", "games", rec(0, 1, 2, 7)) // me undecidable
+	e.must(201, "alice", "POST", "games", rec(2, 2, 1, 11)) // slot 2 = druid, won (result2=1)... druid vs mage
+	e.must(401, "", "POST", "games", rec(1, 1, 2, 9))
+
+	list := e.must(200, "alice", "GET", "games", "")
+	if len(list["games"].([]any)) != 2 {
+		t.Fatalf("list: %v", list)
+	}
+	id := hsItoa(int(g1["id"].(float64)))
+	got := e.must(200, "alice", "GET", "games/"+id, "")
+	if got["record"].(map[string]any)["timeline"] == nil {
+		t.Fatalf("replay missing: %v", got)
+	}
+	e.must(404, "mallory", "GET", "games/"+id, "") // replay is owner-only
+
+	m := e.must(200, "", "GET", "stats/matchups", "")["matchups"].([]any)
+	if len(m) != 2 {
+		t.Fatalf("matchups: %v", m)
+	}
+	mine := e.must(200, "bob", "GET", "stats/matchups?scope=mine", "")["matchups"].([]any)
+	if len(mine) != 0 {
+		t.Fatalf("bob has no games: %v", mine)
+	}
+}
