@@ -304,11 +304,20 @@ func (h *PlayerEmailAuthHandler) handleLogin(w http.ResponseWriter, r *http.Requ
 // issueJWT stamps a "game" claim (S241-01) only when game is non-empty --
 // an absent claim, not an empty-string one, is what every ticket handler's
 // own backward-compatible "unscoped" check relies on.
+//
+// "permissions" (2026-10-09, found live: this handler never set ANY permissions claim, so
+// middleware.RequirePermission(...) could never pass for a player/WOTAN account no matter what
+// role existed elsewhere -- the real bug under the founder's own "I don't think IDUNA SSO is set
+// up currently so that I can give the user ... IAM roles" intuition. Fixed the same way
+// local_auth.go's own localUserPermissions already does for local_users: a small, hardcoded,
+// email-keyed allowlist, not a second parallel DB-backed grant UI for a handful of real accounts
+// that actually exist -- see playerPermissions below.
 func (h *PlayerEmailAuthHandler) issueJWT(playerID, displayName, email, game string) (string, error) {
 	claims := map[string]any{
 		"sub":          playerID,
 		"display_name": displayName,
 		"email":        email,
+		"permissions":  playerPermissions(email),
 		"iss":          h.Issuer,
 		"aud":          "shankpit",
 		"iat":          time.Now().Unix(),
@@ -318,4 +327,20 @@ func (h *PlayerEmailAuthHandler) issueJWT(playerID, displayName, email, game str
 		claims["game"] = game
 	}
 	return authjwt.Sign(h.Keys, claims)
+}
+
+// playerPermissions grants real IAM permissions to a player/WOTAN account by email -- the same
+// hardcoded-allowlist shape local_auth.go's localUserPermissions already established, not a new
+// pattern. "edge.game.operator" (2026-10-09, founder real-time) gates EDGE.GAME's relay `exec`
+// command (see EDGE.GAME/client/edge_client.c handle_exec and NORTHSTAR.md) -- the relay-side
+// enforcement and the client's own browser-login UX are separate, not-yet-built follow-ups
+// (EMILY/BACKLOG.md); this function only makes the permission real and mintable for the one
+// account that exists to use it today.
+func playerPermissions(email string) []string {
+	switch strings.ToLower(strings.TrimSpace(email)) {
+	case "emilyspringerton@gmail.com":
+		return []string{"edge.game.operator"}
+	default:
+		return []string{}
+	}
 }

@@ -2,6 +2,19 @@
 
 ## 2026-10-09
 
+- Fixed real bug: `PlayerEmailAuthHandler` (the handler every WOTAN/SHANKPIT email+password
+  login goes through, including IDUNA's own unified SSO page) never set a `permissions` claim on
+  the JWTs it issues, so `middleware.RequirePermission(...)` could never pass for ANY WOTAN/player
+  account — the real cause behind the founder's own correct intuition that "IDUNA SSO isn't set up
+  so I can give the user IAM roles." Added `playerPermissions(email)` (same hardcoded-allowlist
+  shape `local_auth.go`'s `localUserPermissions` already established), granting
+  `emilyspringerton@gmail.com` (confirmed live in `players`/`player_credentials`) the new
+  `edge.game.operator` permission — gates EDGE.GAME's relay `exec` command going forward (not yet
+  enforced relay-side; that and the client's browser-login UX are separate follow-ups,
+  `EMILY/BACKLOG.md`). New test `TestEmailAuth_PermissionsClaimGrantedByEmail`; full
+  `go test ./internal/http/handlers/...` green. Takes effect on this account's next login/JWT mint
+  after this deploys.
+
 - Hearthstone deck sharing + basic socials API for WOTAN (/api/v1/hs/*, internal/hsdeck deckstring codec, hs_* tables); SSO page remembers the session ('Continue as', ?auto=1, ?logout=1); GET /admin/login skips the form when already signed in as admin (sess-20261008-0123-53e30776)
 
 
