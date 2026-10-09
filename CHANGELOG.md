@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-10-09
+
+- Hearthstone deck sharing + basic socials API for WOTAN (/api/v1/hs/*, internal/hsdeck deckstring codec, hs_* tables); SSO page remembers the session ('Continue as', ?auto=1, ?logout=1); GET /admin/login skips the form when already signed in as admin (sess-20261008-0123-53e30776)
+
+
 ## 2026-10-06
 
 - fix(draft-run): cashOutDraftRun refunds the full entry ticket on a never-played (0-win/0-loss) draft-run abort, instead of the 0-win cash-out table (sess-20260923-1030-4a526255)
