@@ -110,3 +110,18 @@ func TestSSOLogin_RedirectURIIsJSEscaped(t *testing.T) {
 		t.Fatalf("redirect_uri was not safely escaped, raw payload leaked into response:\n%s", rec.Body.String())
 	}
 }
+
+// "IDUNA should work like a normal app": a browser that already signed in on this origin gets a one-click
+// "Continue as" panel (and ?auto=1 / ?logout=1), never only a blank login form.
+func TestSSOLogin_RemembersSessionAndOffersContinue(t *testing.T) {
+	h := &handlers.SSOLoginHandler{AllowedHosts: []string{"wotan.okemily.com"}}
+	req := httptest.NewRequest(http.MethodGet, "/?redirect_uri=https://wotan.okemily.com/hearthstone/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	body := w.Body.String()
+	for _, want := range []string{`id="continue-panel"`, `iduna_sso_session`, `qs.get('auto')`, `qs.get('logout')`, `Use a different account`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+}

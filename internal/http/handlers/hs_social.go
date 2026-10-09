@@ -210,7 +210,6 @@ func (h *HSHandler) subOfHandle(handle string) (string, bool) {
 	return sub, err == nil
 }
 
-
 func (h *HSHandler) needHandle(w http.ResponseWriter, v hsViewer) (string, bool) {
 	hd, ok := h.profileOf(v.sub)
 	if !ok {

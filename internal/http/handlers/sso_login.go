@@ -146,6 +146,10 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
     background: color-mix(in srgb, var(--panel) 97%, white 3%); color: var(--text-main);
   }
   input:focus { outline: none; border-color: var(--gold-highlight); }
+  #continue-panel { display: none; margin-top: 1.9rem; }
+  #continue-panel.show { display: block; }
+  #continue-panel .who { margin: 0 0 0.9rem; color: var(--text-muted); font-size: 0.92rem; }
+  #continue-panel .who strong { color: var(--text-main); font-weight: 500; }
   #confirm-row { display: none; }
   #confirm-row.show { display: block; }
   button {
@@ -194,10 +198,16 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
       <p class="label">EINHORN_INDUSTRIAL &middot; IDUNA</p>
       <h1>Sign in</h1>
       <p class="sub">One IDUNA account, every app.</p>
+      <div id="continue-panel">
+        <p class="who">You're already signed in to IDUNA as <strong id="continue-name"></strong>.</p>
+        <button type="button" id="continue-btn">Continue as <span id="continue-name-btn"></span></button>
+        <button type="button" class="link" id="switch-btn">Use a different account</button>
+      </div>
+      <div id="login-block">
       <form id="sso-form">
         <div>
           <label class="field" for="email">Email</label>
-          <input type="email" id="email" autocomplete="username" autofocus>
+          <input type="email" id="email" autocomplete="username">
         </div>
         <div>
           <label class="field" for="password">Password</label>
@@ -210,6 +220,7 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
         <button type="submit" id="submit-btn">Sign in</button>
       </form>
       <button type="button" class="link" id="toggle-btn">Need an account? Register instead</button>
+      </div>
       <div class="msg" id="msg"></div>
       <p class="footnote">You're signing in to IDUNA, not the app that sent you here &mdash; your password is only ever typed on this page.</p>
     </div>
@@ -225,6 +236,47 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
 <script>
   var redirectURI = {{.RedirectURI}};
   var registering = {{.Signup}};
+
+  // Remembered IDUNA session on THIS origin (iam.okemily.com). A browser that already signed in here must
+  // never be shown a blank login form again: offer "Continue as <name>" (one click), or continue silently
+  // with ?auto=1. ?logout=1 forgets the remembered session. Only a still-valid (>60s left) token is used.
+  var SESSION_KEY = 'iduna_sso_session';
+  function loadSession() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+      if (!s || !s.token || !s.player_id) return null;
+      var payload = JSON.parse(atob(s.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (!payload.exp || payload.exp * 1000 < Date.now() + 60000) { localStorage.removeItem(SESSION_KEY); return null; }
+      return s;
+    } catch (e) { return null; }
+  }
+  function saveSession(s) { try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch (e) {} }
+  function forgetSession() { try { localStorage.removeItem(SESSION_KEY); } catch (e) {} }
+  function finish(s) {
+    var frag = 'sso_token=' + encodeURIComponent(s.token) +
+      '&player_id=' + encodeURIComponent(s.player_id) +
+      '&display_name=' + encodeURIComponent(s.display_name || '');
+    window.location.href = redirectURI + '#' + frag;
+  }
+  var qs = new URLSearchParams(location.search);
+  if (qs.get('logout') === '1') forgetSession();
+  var existing = loadSession();
+  if (existing && !registering) {
+    if (qs.get('auto') === '1') { finish(existing); }
+    var label = existing.display_name || 'your account';
+    document.getElementById('continue-name').textContent = label;
+    document.getElementById('continue-name-btn').textContent = label;
+    document.getElementById('continue-panel').className = 'show';
+    document.getElementById('login-block').style.display = 'none';
+    document.getElementById('continue-btn').addEventListener('click', function () { finish(existing); });
+    document.getElementById('continue-btn').focus();
+    document.getElementById('switch-btn').addEventListener('click', function () {
+      forgetSession();
+      document.getElementById('continue-panel').className = '';
+      document.getElementById('login-block').style.display = '';
+      document.getElementById('email').focus();
+    });
+  }
 
   function applyMode() {
     document.getElementById('confirm-row').className = registering ? 'show' : '';
@@ -265,10 +317,9 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
         setMsg((r.body && (r.body.error || r.body.message)) || 'Sign-in failed.', 'error');
         return;
       }
-      var frag = 'sso_token=' + encodeURIComponent(r.body.token) +
-        '&player_id=' + encodeURIComponent(r.body.player_id) +
-        '&display_name=' + encodeURIComponent(r.body.display_name || '');
-      window.location.href = redirectURI + '#' + frag;
+      var sess = { token: r.body.token, player_id: r.body.player_id, display_name: r.body.display_name || '' };
+      saveSession(sess);
+      finish(sess);
     }).catch(function (e) {
       setMsg(e.message || 'Sign-in failed.', 'error');
     });

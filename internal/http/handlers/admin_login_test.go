@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"iduna/internal/auth"
 	"iduna/internal/auth/jwt"
@@ -70,5 +71,31 @@ func TestAdminLoginHandler_EmitsEvents(t *testing.T) {
 	}
 	if recs[2].Event.Type != "iduna:auth.admin_login.failure" || !strings.Contains(string(recs[2].Event.Data), "missing_iduna_admin_permission") {
 		t.Errorf("event 2 = %+v, want a failure with reason=missing_iduna_admin_permission", recs[2].Event)
+	}
+}
+
+func TestAdminLogin_GetRedirectsWhenAlreadySignedInAsAdmin(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	h := &handlers.AdminLoginHandler{Keys: keys}
+	tok, _ := jwt.Sign(keys, map[string]any{"sub": "a", "permissions": []string{"iduna.admin"}, "exp": time.Now().Add(time.Hour).Unix()})
+	req := httptest.NewRequest(http.MethodGet, "/admin/login?next=/admin/kanban", nil)
+	req.AddCookie(&http.Cookie{Name: "iduna_session", Value: tok})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/admin/kanban" {
+		t.Fatalf("want 303 to /admin/kanban, got %d %q", w.Code, w.Header().Get("Location"))
+	}
+	// open-redirect shapes fall back to /admin; no cookie shows the form
+	req = httptest.NewRequest(http.MethodGet, "/admin/login?next=//evil.example", nil)
+	req.AddCookie(&http.Cookie{Name: "iduna_session", Value: tok})
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Header().Get("Location") != "/admin" {
+		t.Fatalf("next not sanitised: %q", w.Header().Get("Location"))
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/login", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("no cookie should render the form, got %d", w.Code)
 	}
 }

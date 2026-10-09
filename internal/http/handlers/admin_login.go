@@ -47,6 +47,19 @@ func (h *AdminLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminLoginHandler) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		// Already signed in as an admin? Skip the form -- a normal app doesn't ask you to sign in again.
+		if h.Keys != nil {
+			if c, err := r.Cookie("iduna_session"); err == nil && c.Value != "" {
+				if claims, err := jwt.Verify(h.Keys, c.Value); err == nil && claimHasPermission(claims, "iduna.admin") {
+					next := r.URL.Query().Get("next")
+					if next == "" || !strings.HasPrefix(next, "/admin") || strings.HasPrefix(next, "//") {
+						next = "/admin"
+					}
+					http.Redirect(w, r, next, http.StatusSeeOther)
+					return
+				}
+			}
+		}
 		renderLoginPage(w, map[string]any{"Next": r.URL.Query().Get("next")})
 		return
 	}
@@ -317,3 +330,14 @@ var adminLoginPageTmpl = template.Must(template.New("admin-login").Parse(`<!doct
 </script>
 </body>
 </html>`))
+
+func claimHasPermission(claims map[string]any, perm string) bool {
+	if ps, ok := claims["permissions"].([]any); ok {
+		for _, p := range ps {
+			if s, _ := p.(string); s == perm {
+				return true
+			}
+		}
+	}
+	return false
+}
