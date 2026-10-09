@@ -1268,6 +1268,15 @@ func main() {
 	mux.Handle("/api/v1/games/deadweight/decks", deckStatsH)
 	mux.Handle("/api/v1/games/deadweight/decks/", deckStatsH)
 	mux.Handle("/api/v1/games/deadweight/card-stats", deckStatsH)
+	// WOTAN Hearthstone deck section (HEARTHSTONE_NORTHSTAR.md): deck-code sharing + basic socials. Public reads,
+	// token-gated writes; the handler verifies the (optional) bearer itself so one prefix serves both.
+	hsH := &handlers.HSHandler{
+		DB:           db,
+		Keys:         keys,
+		ReadLimiter:  middleware.NewIPRateLimiter(300),
+		WriteLimiter: middleware.NewIPRateLimiter(40),
+	}
+	mux.Handle("/api/v1/hs/", hsH)
 	// WOTAN S547: public match-history + replay data (matches.ndjson, dw_server's sibling log to
 	// decks.ndjson above) -- see internal/http/handlers/match_replay.go and internal/matchlog.
 	matchReplayH := &handlers.MatchReplayHandler{
