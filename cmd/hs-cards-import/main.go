@@ -31,6 +31,7 @@ type card struct {
 	Class    string `json:"class"`
 	Rarity   string `json:"rarity"`
 	CardType string `json:"card_type"`
+	CardSet  string `json:"card_set"`
 	Text     string `json:"text"`
 	ImageURL string `json:"image_url"`
 }
@@ -79,7 +80,7 @@ func main() {
 	upsert, err := tx.Prepare(`INSERT INTO hs_cards (dbf_id,name,cost,class,rarity,card_set,text,image_url)
 		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(dbf_id) DO UPDATE SET name=excluded.name,cost=excluded.cost,class=excluded.class,
-		  rarity=excluded.rarity,text=excluded.text,image_url=excluded.image_url`)
+		  rarity=excluded.rarity,card_set=excluded.card_set,text=excluded.text,image_url=excluded.image_url`)
 	if err != nil {
 		log.Fatalf("prepare upsert: %v", err)
 	}
@@ -90,8 +91,7 @@ func main() {
 		if c.DBFID == 0 || c.Name == "" {
 			continue
 		}
-		// card_set stays empty: the set is not in the CardDef/Dbf tables this import reads.
-		if _, err := upsert.Exec(c.DBFID, c.Name, c.Cost, c.Class, c.Rarity, "", c.Text, c.ImageURL); err != nil {
+		if _, err := upsert.Exec(c.DBFID, c.Name, c.Cost, c.Class, c.Rarity, c.CardSet, c.Text, c.ImageURL); err != nil {
 			log.Fatalf("upsert dbf %d: %v", c.DBFID, err)
 		}
 		names[c.DBFID] = namedCard{Name: c.Name, Cost: c.Cost}

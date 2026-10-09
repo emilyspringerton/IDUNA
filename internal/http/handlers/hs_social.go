@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -363,7 +364,34 @@ func (h *HSHandler) parseDeck(w http.ResponseWriter, r *http.Request) {
 		hsErr(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	h.resolveNames(d)
 	writeJSON(w, http.StatusOK, hsParsedOut(d))
+}
+
+// resolveNames fills the display list from hs_cards when the deck code carried no pasted names. It only
+// upgrades a deck whose every dbf_id is in the table, so a partial card table never yields a half-named
+// deck (same all-or-nothing rule hs-cards-import's backfill uses).
+func (h *HSHandler) resolveNames(d *hsdeck.Deck) {
+	if d.NamesResolved || len(d.DBFCards) == 0 {
+		return
+	}
+	named := make([]hsdeck.NamedCard, 0, len(d.DBFCards))
+	for _, c := range d.DBFCards {
+		var name string
+		var cost int
+		if err := h.DB.QueryRow(`SELECT name,cost FROM hs_cards WHERE dbf_id=?`, c.DBF).Scan(&name, &cost); err != nil {
+			return
+		}
+		named = append(named, hsdeck.NamedCard{Name: name, Cost: cost, Count: c.Count})
+	}
+	sort.SliceStable(named, func(i, j int) bool {
+		if named[i].Cost != named[j].Cost {
+			return named[i].Cost < named[j].Cost
+		}
+		return named[i].Name < named[j].Name
+	})
+	d.Cards = named
+	d.NamesResolved = true
 }
 
 func hsParsedOut(d *hsdeck.Deck) map[string]any {
@@ -390,6 +418,7 @@ func (h *HSHandler) createDeck(w http.ResponseWriter, r *http.Request, v hsViewe
 		hsErr(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	h.resolveNames(d)
 	title := in.Title
 	if strings.TrimSpace(title) == "" {
 		title = d.Title

@@ -52,6 +52,7 @@ type hsEnv struct {
 	t    *testing.T
 	h    http.Handler
 	keys *jwt.Keys
+	db   *sql.DB
 }
 
 func newHSEnv(t *testing.T) *hsEnv {
@@ -66,7 +67,7 @@ func newHSEnv(t *testing.T) *hsEnv {
 		t.Fatalf("migrate: %v", err)
 	}
 	keys, _ := jwt.GenerateKeys()
-	return &hsEnv{t: t, keys: keys, h: &handlers.HSHandler{DB: db, Keys: keys}}
+	return &hsEnv{t: t, keys: keys, db: db, h: &handlers.HSHandler{DB: db, Keys: keys}}
 }
 
 func (e *hsEnv) do(sub, method, path, body string) (int, map[string]any) {
@@ -252,3 +253,43 @@ func TestHS_LikeEscapesInSearch(t *testing.T) {
 }
 
 func hsItoa(n int) string { return strconv.Itoa(n) }
+
+// A bare deck code has no pasted names; once hs_cards holds every dbf_id the preview and a created deck
+// get real names with no re-import. A partial table must not produce a half-named deck.
+func TestHS_CodeOnlyDeckResolvesFromCardTable(t *testing.T) {
+	e := newHSEnv(t)
+	e.must(200, "alice-sub", "PUT", "me", `{"handle":"alice_99"}`)
+	body := jstr(map[string]string{"text": hsTestCode})
+
+	pv := e.must(200, "", "POST", "decks/parse", body)
+	if pv["names_resolved"] != false {
+		t.Fatalf("no card table yet, want unresolved: %v", pv)
+	}
+	dbf := pv["dbf_cards"].([]any)
+	for i, c := range dbf {
+		if i == 0 {
+			continue // leave one card missing
+		}
+		id := int(c.(map[string]any)["dbf_id"].(float64))
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost) VALUES (?,?,?)`, id, "Card "+strconv.Itoa(id), 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if pv = e.must(200, "", "POST", "decks/parse", body); pv["names_resolved"] != false {
+		t.Fatalf("partial table must stay unresolved: %v", pv)
+	}
+	first := int(dbf[0].(map[string]any)["dbf_id"].(float64))
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost) VALUES (?,?,?)`, first, "Card "+strconv.Itoa(first), 3); err != nil {
+		t.Fatal(err)
+	}
+	pv = e.must(200, "", "POST", "decks/parse", body)
+	cards, _ := pv["cards"].([]any)
+	if pv["names_resolved"] != true || len(cards) != len(dbf) || cards[0].(map[string]any)["name"] == nil {
+		t.Fatalf("full table must resolve names: %v", pv)
+	}
+	created := e.must(201, "alice-sub", "POST", "decks", jstr(map[string]string{"text": hsTestCode, "title": "Code only"}))
+	got := e.must(200, "", "GET", "decks/"+strconv.Itoa(int(created["id"].(float64))), "")
+	if got["names_resolved"] != true {
+		t.Fatalf("created deck not resolved: %v", got)
+	}
+}
