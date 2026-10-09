@@ -73,6 +73,7 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/drive-slurp/oauth/disconnect", h.DriveSlurp.oauthDisconnect)
 	h.mux.HandleFunc("/admin/drive-slurp/enqueue", h.DriveSlurp.enqueue)
 	h.mux.HandleFunc("/admin/drive-slurp/events", h.DriveSlurp.events)
+	h.mux.HandleFunc("/admin/drive-slurp/upload", h.DriveSlurp.upload)
 }
 
 // ServeHTTP dispatches admin routes. Mount at /admin and /admin/ with auth middleware.

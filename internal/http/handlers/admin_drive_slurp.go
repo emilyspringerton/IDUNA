@@ -42,10 +42,15 @@ package handlers
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -449,6 +454,152 @@ func randomID() string {
 	return fmt.Sprintf("%x", b)
 }
 
+// --- direct upload ---
+
+// driveSlurpMaxUpload caps one direct upload. Hearthstone's dbf bundle is
+// ~44 MB, so 512 MB leaves room for other large local exports without
+// letting one request fill the disk unbounded.
+const driveSlurpMaxUpload = 512 << 20
+
+// upload handles POST /admin/drive-slurp/upload: a drag-and-drop or picked
+// file streamed straight to var/drive-slurp/ without going through Drive.
+// Bytes are hashed while they stream, so identical content is recognised
+// as a duplicate the same way a re-slurped Drive file version is (doneKeys),
+// and a re-upload does not write a second copy. Each accepted upload is
+// logged as a "done" job, so it appears in the job list next to Drive slurps.
+func (h *DriveSlurpHandler) upload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	h.ensureLoaded()
+	r.Body = http.MaxBytesReader(w, r.Body, driveSlurpMaxUpload)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		driveSlurpUploadErr(w, http.StatusBadRequest, "expected multipart upload: "+err.Error())
+		return
+	}
+
+	if err := os.MkdirAll(h.slurpDir(), 0o755); err != nil {
+		driveSlurpUploadErr(w, http.StatusInternalServerError, "create slurp dir: "+err.Error())
+		return
+	}
+
+	// The file part is the only one we accept; anything else is skipped.
+	var part *multipart.Part
+	for {
+		p, perr := mr.NextPart()
+		if perr == io.EOF {
+			break
+		}
+		if perr != nil {
+			driveSlurpUploadErr(w, uploadStatus(perr), "read upload: "+perr.Error())
+			return
+		}
+		if p.FormName() == "file" && p.FileName() != "" {
+			part = p
+			break
+		}
+		p.Close()
+	}
+	if part == nil {
+		driveSlurpUploadErr(w, http.StatusBadRequest, "no file part named \"file\" in upload")
+		return
+	}
+	defer part.Close()
+
+	tmp, err := os.CreateTemp(h.slurpDir(), ".upload-*")
+	if err != nil {
+		driveSlurpUploadErr(w, http.StatusInternalServerError, "create temp file: "+err.Error())
+		return
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			tmp.Close()
+			os.Remove(tmpPath)
+		}
+	}()
+
+	hasher := sha256.New()
+	n, err := io.Copy(io.MultiWriter(tmp, hasher), part)
+	if err != nil {
+		driveSlurpUploadErr(w, uploadStatus(err), "stream upload: "+err.Error())
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		driveSlurpUploadErr(w, http.StatusInternalServerError, "finish write: "+err.Error())
+		return
+	}
+	sum := hex.EncodeToString(hasher.Sum(nil))
+	key := idempotencyKey("upload:"+sum, "")
+
+	// Reserve the key under the lock before renaming, so two concurrent
+	// uploads of the same bytes cannot both commit a copy.
+	h.mu.Lock()
+	if h.doneKeys[key] {
+		h.mu.Unlock()
+		driveSlurpUploadOK(w, map[string]any{"status": "duplicate", "sha256": sum})
+		return
+	}
+	h.doneKeys[key] = true
+	h.mu.Unlock()
+
+	job := &slurpJob{
+		ID:          randomID(),
+		DriveFileID: "upload:" + sum,
+		FileName:    part.FileName(),
+		Status:      "done",
+		Attempts:    1,
+		EnqueuedAt:  time.Now().UTC(),
+		FinishedAt:  time.Now().UTC(),
+	}
+	safeName := unsafeFilenameCharsRe.ReplaceAllString(filepath.Base(job.FileName), "_")
+	if safeName == "" {
+		safeName = "file"
+	}
+	finalPath := filepath.Join(h.slurpDir(), job.ID+"-"+safeName)
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		h.mu.Lock()
+		delete(h.doneKeys, key)
+		h.mu.Unlock()
+		driveSlurpUploadErr(w, http.StatusInternalServerError, "commit upload: "+err.Error())
+		return
+	}
+	committed = true
+	job.SavedPath = finalPath
+
+	h.mu.Lock()
+	h.jobs = append(h.jobs, job)
+	h.mu.Unlock()
+	h.appendJobLog(job)
+	h.bus.broadcast(fmt.Sprintf("[%s] uploaded: saved to %s (%d bytes, sha256 %s)", job.ID, finalPath, n, sum[:12]))
+
+	driveSlurpUploadOK(w, map[string]any{"status": "saved", "job_id": job.ID, "saved_path": finalPath, "bytes": n, "sha256": sum})
+}
+
+// uploadStatus maps a body-read error to 413 when it is the size cap, and
+// 400 for any other malformed-body error.
+func uploadStatus(err error) int {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
+}
+
+func driveSlurpUploadErr(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "error": msg})
+}
+
+func driveSlurpUploadOK(w http.ResponseWriter, v map[string]any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
 // --- background worker ---
 
 // worker drains workCh serially -- one slurp at a time. Simple, correct,
@@ -651,6 +802,16 @@ var adminDriveSlurpTmpl = mustParseTmpl("drive-slurp", `
   version won't double-download) with live progress below.
 </p>
 
+<div id="dropzone" class="section-card" style="margin-bottom:16px;border:2px dashed #888;text-align:center;padding:24px;cursor:pointer">
+  <p style="margin-bottom:8px"><strong>Drop a file here</strong>, or click to choose one.</p>
+  <p class="meta">Uploads go straight to IDUNA (no Google Drive needed). Up to 512 MB. Identical bytes are not stored twice.</p>
+  <input type="file" id="upload-input" style="display:none">
+  <div id="upload-progress-wrap" style="display:none;margin-top:12px">
+    <progress id="upload-progress" max="100" value="0" style="width:100%"></progress>
+    <div id="upload-status" class="meta"></div>
+  </div>
+</div>
+
 {{if not .Connected}}
 <div class="section-card">
   <p style="margin-bottom:12px">Not connected.</p>
@@ -733,6 +894,60 @@ document.querySelectorAll('.slurp-btn').forEach(function (btn) {
     btn.closest('form').submit();
   });
 });
+
+// Drag-and-drop / click-to-pick direct upload. Uses XHR (not fetch) so the
+// browser reports upload progress. A successful save or duplicate reloads
+// the page, so the new job appears in the job list below.
+(function () {
+  var zone = document.getElementById('dropzone');
+  var input = document.getElementById('upload-input');
+  var wrap = document.getElementById('upload-progress-wrap');
+  var bar = document.getElementById('upload-progress');
+  var status = document.getElementById('upload-status');
+  if (!zone || !input) return;
+
+  function setStatus(msg) { status.textContent = msg; }
+
+  function send(file) {
+    wrap.style.display = 'block';
+    bar.value = 0;
+    setStatus('Uploading ' + file.name + ' (' + file.size + ' bytes)...');
+    var fd = new FormData();
+    fd.append('file', file, file.name);
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/admin/drive-slurp/upload');
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) bar.value = Math.round(e.loaded / e.total * 100);
+    };
+    xhr.onload = function () {
+      var body = {};
+      try { body = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status === 200 && body.status === 'saved') {
+        setStatus('Saved ' + body.bytes + ' bytes (sha256 ' + body.sha256.slice(0, 12) + '...). Reloading...');
+        location.reload();
+      } else if (xhr.status === 200 && body.status === 'duplicate') {
+        setStatus('Already slurped: identical bytes are stored. Nothing written.');
+      } else {
+        setStatus('Upload failed (' + xhr.status + '): ' + (body.error || xhr.responseText || 'unknown error'));
+      }
+    };
+    xhr.onerror = function () { setStatus('Upload failed: network error.'); };
+    xhr.send(fd);
+  }
+
+  zone.addEventListener('click', function () { input.click(); });
+  input.addEventListener('change', function () { if (input.files[0]) send(input.files[0]); });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    zone.addEventListener(ev, function (e) { e.preventDefault(); zone.style.background = '#fff8e1'; });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    zone.addEventListener(ev, function (e) { e.preventDefault(); zone.style.background = ''; });
+  });
+  zone.addEventListener('drop', function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) send(f);
+  });
+})();
 
 // Live job log via SSE.
 (function () {
