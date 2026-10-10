@@ -325,3 +325,44 @@ func TestHS_LiveAsksForResyncWithoutBase(t *testing.T) {
 		t.Fatalf("expected no resync after a reset: %v", out)
 	}
 }
+
+// The uplink reports Hearthstone's log-size situation; the page must be told in plain language.
+func TestHS_LiveReportsLogCapWarnings(t *testing.T) {
+	e, tok, dbfs := liveTrackerEnv(t, "gina")
+	send := func(client map[string]any) map[string]any {
+		body := map[string]any{"reset": true, "power": liveGameLines("12:00:00.0000000", dbfs), "client": client}
+		if code, out := e.post(tok, "live/lines", jstr(body)); code != 200 {
+			t.Fatalf("post %d %v", code, out)
+		}
+		return e.must(200, "gina", "GET", "live/state", "")
+	}
+	warn := func(st map[string]any) string {
+		w, _ := st["warnings"].([]any)
+		var b []string
+		for _, x := range w {
+			b = append(b, x.(string))
+		}
+		return strings.Join(b, " | ")
+	}
+	// fixed and growing: no warning
+	if w := warn(send(map[string]any{"cap_fixed": true, "power_bytes": 12000000})); w != "" {
+		t.Fatalf("no warning expected when the limit is lifted: %q", w)
+	}
+	// fixed but Hearthstone predates the fix: restart message
+	if w := warn(send(map[string]any{"cap_fixed": true, "restart_needed": true, "power_bytes": 4000000})); !strings.Contains(w, "Restart Hearthstone once") {
+		t.Fatalf("restart warning missing: %q", w)
+	}
+	// not fixed, nearly full
+	if w := warn(send(map[string]any{"cap_fixed": false, "power_bytes": 9500000})); !strings.Contains(w, "nearly full") {
+		t.Fatalf("near-cap warning missing: %q", w)
+	}
+	// not fixed, at the cap: tracking frozen, say so
+	st := send(map[string]any{"cap_fixed": false, "power_bytes": 10247587})
+	if w := warn(st); !strings.Contains(w, "reached its 10 MB limit") || st["log_bytes"] != float64(10247587) {
+		t.Fatalf("full-log warning missing: %q %v", w, st["log_bytes"])
+	}
+	// the uplink could not write the config: surface why
+	if w := warn(send(map[string]any{"cap_fixed": false, "power_bytes": 100, "fix_error": "permission denied"})); !strings.Contains(w, "permission denied") {
+		t.Fatalf("fix_error not surfaced: %q", w)
+	}
+}

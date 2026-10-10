@@ -51,9 +51,45 @@ type liveSession struct {
 	power    []string
 	dirty    bool
 	base     bool // a reset (full resend) has been received since this session was created
+	client   liveClient
 	computed time.Time
 	state    liveState
 	updated  time.Time
+}
+
+// liveClient is what the uplink reports about the game's log-size limit (Hearthstone stops writing
+// Power.log at ~10,000 KiB per session unless client.config has FileSizeLimit.Int=-1).
+type liveClient struct {
+	Known         bool
+	CapFixed      bool
+	RestartNeeded bool
+	PowerBytes    int64
+	FixError      string
+}
+
+const (
+	hsLogCapBytes  = 10000 * 1024 // Hearthstone's default per-session Power.log limit
+	hsLogNearBytes = 9000 * 1024
+)
+
+// logWarnings turns the uplink's report into plain-language warnings for the page.
+func (c liveClient) logWarnings() []string {
+	if !c.Known {
+		return nil
+	}
+	var w []string
+	switch {
+	case c.CapFixed && c.RestartNeeded:
+		w = append(w, "Hearthstone's log limit has been lifted in client.config. Restart Hearthstone once so it takes effect; until then the log still stops at about 10 MB.")
+	case !c.CapFixed && c.PowerBytes >= hsLogCapBytes:
+		w = append(w, "Hearthstone's log reached its 10 MB limit and has stopped recording, so tracking is frozen. Restart Hearthstone to continue (the uplink can lift the limit for good).")
+	case !c.CapFixed && c.PowerBytes >= hsLogNearBytes:
+		w = append(w, "Hearthstone's log is nearly full (limit about 10 MB). It will stop recording soon.")
+	}
+	if c.FixError != "" {
+		w = append(w, "Could not lift the log limit automatically: "+c.FixError)
+	}
+	return w
 }
 
 type liveCard struct {
@@ -83,8 +119,10 @@ type liveState struct {
 		Name  string     `json:"name"`
 		Cards []liveCard `json:"cards"`
 	} `json:"opponent"`
-	Note      string `json:"note,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	Note      string   `json:"note,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
+	LogBytes  int64    `json:"log_bytes,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
 }
 
 func (h *HSHandler) session(sub string, create bool) *liveSession {
@@ -121,9 +159,15 @@ func (h *HSHandler) liveToken(w http.ResponseWriter, v hsViewer) {
 }
 
 type liveLinesReq struct {
-	Reset bool     `json:"reset"`
-	Decks []string `json:"decks"`
-	Power []string `json:"power"`
+	Reset  bool     `json:"reset"`
+	Decks  []string `json:"decks"`
+	Power  []string `json:"power"`
+	Client *struct {
+		CapFixed      bool   `json:"cap_fixed"`      // client.config has FileSizeLimit.Int=-1
+		RestartNeeded bool   `json:"restart_needed"` // the fix was written after this Hearthstone process started
+		PowerBytes    int64  `json:"power_bytes"`    // current size of the session's Power.log
+		FixError      string `json:"fix_error"`      // why the uplink could not apply the fix, if it could not
+	} `json:"client"`
 }
 
 // liveLines accepts new log lines. Auth: an upload-scoped token or a normal IDUNA token; either way the
@@ -210,8 +254,14 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	if len(s.power) > hsLiveMaxPower {
 		s.power = append([]string(nil), s.power[len(s.power)-hsLiveMaxPower:]...)
 	}
-	s.dirty = true
-	s.updated = time.Now()
+	if req.Client != nil {
+		s.client = liveClient{Known: true, CapFixed: req.Client.CapFixed, RestartNeeded: req.Client.RestartNeeded,
+			PowerBytes: req.Client.PowerBytes, FixError: req.Client.FixError}
+	}
+	if len(req.Decks) > 0 || len(req.Power) > 0 || req.Reset {
+		s.dirty = true
+		s.updated = time.Now()
+	}
 	// After a server restart (every deploy wipes in-memory sessions) the uplink keeps sending only new
 	// lines; without a base the tracker cannot know the deck or the game. Ask it to resend from the start.
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "power_lines": len(s.power), "resync": !s.base})
@@ -237,6 +287,8 @@ func (h *HSHandler) liveState(w http.ResponseWriter, r *http.Request, v hsViewer
 	}
 	st := s.state
 	st.Connected = true
+	st.Warnings = s.client.logWarnings()
+	st.LogBytes = s.client.PowerBytes
 	if st.Left == nil {
 		st.Left = []liveCard{}
 	}
@@ -491,7 +543,8 @@ param(
   [string]$Base = 'https://wotan.okemily.com',
   [string]$Iam = 'https://iam.okemily.com',
   [int]$Port = 51824,                                   # loopback port for the sign-in callback
-  [string]$LogsDir = ''
+  [string]$LogsDir = '',
+  [switch]$NoConfigFix                                  # do not touch Hearthstone's client.config
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -637,6 +690,60 @@ function Get-IamToken {
 }
 $script:authNeeded = (-not $script:Token)
 
+# Hearthstone stops writing Power.log at ~10,000 KiB per session (about 2-3 games), which silently freezes
+# every log-based tracker. client.config next to Hearthstone.exe takes FileSizeLimit.Int=-1 to lift it
+# (HDT and Firestone write the same key). Done once, only if missing, and reported.
+$script:capFixed = $false; $script:restartNeeded = $false; $script:fixError = ''
+function Test-CapFixed([string]$cfg) {
+  if (-not (Test-Path -LiteralPath $cfg)) { return $false }
+  return [bool]([IO.File]::ReadAllText($cfg) -match '(?im)^\s*FileSizeLimit\.Int\s*=\s*-1\s*$')
+}
+function Ensure-LogCap {
+  $cfg = Join-Path (Split-Path $LogsDir -Parent) 'client.config'
+  if (Test-CapFixed $cfg) { $script:capFixed = $true; return }
+  if ($NoConfigFix) { $script:fixError = 'automatic fix disabled (-NoConfigFix)'; return }
+  $nl = [string][char]13 + [string][char]10
+  $text = ''
+  if (Test-Path -LiteralPath $cfg) { $text = [IO.File]::ReadAllText($cfg) }
+  if ($text -match '(?im)^\s*FileSizeLimit\.Int\s*=') {
+    $new = [regex]::Replace($text, '(?im)^[ \t]*FileSizeLimit\.Int[ \t]*=[^\r\n]*', 'FileSizeLimit.Int=-1')
+  } else {
+    $new = 'FileSizeLimit.Int=-1' + $nl + $text
+  }
+  $enc = New-Object Text.UTF8Encoding($false)
+  Write-Host "Hearthstone stops logging at ~10 MB (about 2-3 games). Lifting that in: $cfg"
+  try {
+    [IO.File]::WriteAllText($cfg, $new, $enc)
+  } catch {
+    # Program Files is protected: ask Windows for permission (UAC prompt); the user can decline.
+    try {
+      $tmp = Join-Path $env:TEMP 'wotan_client.config.new'
+      [IO.File]::WriteAllText($tmp, $new, $enc)
+      $cmd = "Copy-Item -LiteralPath '$tmp' -Destination '$cfg' -Force"
+      Write-Host 'Windows will ask permission to write that one file...'
+      Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList @('-NoProfile', '-Command', $cmd)
+      Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    } catch { $script:fixError = 'permission denied; add the line FileSizeLimit.Int=-1 to ' + $cfg + ' yourself' }
+  }
+  if (Test-CapFixed $cfg) {
+    $script:capFixed = $true; $script:fixError = ''
+    $p = Get-Process Hearthstone -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($p -and $p.StartTime -lt (Get-Item -LiteralPath $cfg).LastWriteTime) {
+      $script:restartNeeded = $true
+      Write-Host 'Done. Restart Hearthstone once so it takes effect (until then the log still stops at ~10 MB).'
+    } else { Write-Host 'Done.' }
+  } elseif (-not $script:fixError) {
+    $script:fixError = 'could not write client.config; add the line FileSizeLimit.Int=-1 to ' + $cfg + ' yourself'
+  }
+  if ($script:fixError) { Write-Host "Could not lift the limit automatically: $($script:fixError)" }
+}
+function ClientJson([long]$powerBytes) {
+  $e = ($script:fixError -replace '[\\"]', ' ')
+  return '{"cap_fixed":' + $(if ($script:capFixed) { 'true' } else { 'false' }) + ',"restart_needed":' +
+    $(if ($script:restartNeeded) { 'true' } else { 'false' }) + ',"power_bytes":' + $powerBytes + ',"fix_error":"' + $e + '"}'
+}
+$script:powerBytes = 0
+
 # Pending buffers: a batch is only dropped after the server accepted it, so a 429/network blip never
 # loses log lines (the tracker needs every line of the game).
 $pendD = New-Object 'System.Collections.Generic.List[string]'
@@ -652,7 +759,7 @@ function Flush-Pending {
     $cnt = [Math]::Min(4000, $pendP.Count)
     $arr = $pendP.GetRange(0, $cnt).ToArray()
     $dArr = $pendD.ToArray()
-    $body = '{"reset":' + $(if ($script:pendReset) { 'true' } else { 'false' }) + ',"decks":' + [HsTail]::JsonArr($dArr, 0, $dArr.Length) + ',"power":' + [HsTail]::JsonArr($arr, 0, $arr.Length) + '}'
+    $body = '{"reset":' + $(if ($script:pendReset) { 'true' } else { 'false' }) + ',"decks":' + [HsTail]::JsonArr($dArr, 0, $dArr.Length) + ',"power":' + [HsTail]::JsonArr($arr, 0, $arr.Length) + ',"client":' + (ClientJson $script:powerBytes) + '}'
     try {
       $z = [HsTail]::Frames([Text.Encoding]::UTF8.GetBytes($body))
       $resp = Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $($script:Token)"; 'X-Body-Encoding' = 'lz4-frames' } -ContentType 'application/json' -Body $z -TimeoutSec 30
@@ -677,6 +784,8 @@ function Flush-Pending {
 $ErrorActionPreference = 'Continue'   # a transient file/IO error must not kill the tracker
 $folder = ''; [long]$pOff = 0; [long]$dOff = 0
 $script:resync = $false
+$lastBeat = Get-Date
+try { Ensure-LogCap } catch { $script:fixError = $_.Exception.Message; Write-Host "Config check failed: $($script:fixError)" }
 $pat = 'GameState\.DebugPrint(Power|Game)\(\) - '
 while ($true) {
   try {
@@ -692,11 +801,14 @@ while ($true) {
         $pendD.Clear(); $pendP.Clear()
         Write-Host "Session: $($newest.Name)"
       }
+      $pf = Join-Path $folder 'Power.log'
+      if (Test-Path -LiteralPath $pf) { $script:powerBytes = (Get-Item -LiteralPath $pf).Length }
       $d = [HsTail]::ReadNew((Join-Path $folder 'Decks.log'), [ref]$dOff, $null)
       $p = [HsTail]::ReadNew((Join-Path $folder 'Power.log'), [ref]$pOff, $pat)
       if ($d.Length -gt 0) { $pendD.AddRange($d) }
       if ($p.Length -gt 0) { $pendP.AddRange($p) }
-      if ($pendD.Count -gt 0 -or $pendP.Count -gt 0 -or $script:pendReset) { Flush-Pending }
+      $beat = ((Get-Date) - $lastBeat).TotalSeconds -gt 10
+      if ($pendD.Count -gt 0 -or $pendP.Count -gt 0 -or $script:pendReset -or $beat) { Flush-Pending; $lastBeat = Get-Date }
     }
   } catch {
     Write-Host "Error (continuing): $($_.Exception.Message)"
