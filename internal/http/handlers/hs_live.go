@@ -41,6 +41,7 @@ const (
 var (
 	hsLogPrefixRe = regexp.MustCompile(`^[A-Z] \d{2}:\d{2}:\d{2}\.\d+ `)
 	hsDeckCodeRe  = regexp.MustCompile(`^AAE[A-Za-z0-9+/=]{8,}$`)
+	hsLogClockRe  = regexp.MustCompile(`^[A-Z] (\d{2}):(\d{2}):(\d{2}\.\d+) `)
 	hsPowerLineRe = regexp.MustCompile(`^D \d{2}:\d{2}:\d{2}\.\d+ GameState\.DebugPrint(Power|Game)\(\) - `)
 )
 
@@ -49,6 +50,7 @@ type liveSession struct {
 	decks    []string
 	power    []string
 	dirty    bool
+	base     bool // a reset (full resend) has been received since this session was created
 	computed time.Time
 	state    liveState
 	updated  time.Time
@@ -183,6 +185,7 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if req.Reset {
 		s.power = s.power[:0]
+		s.base = true
 	}
 	for _, ln := range req.Decks {
 		ln = strings.TrimRight(ln, "\r\n")
@@ -209,7 +212,9 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	}
 	s.dirty = true
 	s.updated = time.Now()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "power_lines": len(s.power)})
+	// After a server restart (every deploy wipes in-memory sessions) the uplink keeps sending only new
+	// lines; without a base the tracker cannot know the deck or the game. Ask it to resend from the start.
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "power_lines": len(s.power), "resync": !s.base})
 }
 
 // liveState returns the caller's own tracker state.
@@ -225,7 +230,7 @@ func (h *HSHandler) liveState(w http.ResponseWriter, r *http.Request, v hsViewer
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dirty && time.Since(s.computed) > 700*time.Millisecond {
+	if s.dirty { // recompute whenever new lines arrived (a tracker run is ~0.1s; polls are >=1s apart)
 		s.state = h.computeLive(r.Context(), s)
 		s.computed = time.Now()
 		s.dirty = false
@@ -242,7 +247,7 @@ func (h *HSHandler) liveState(w http.ResponseWriter, r *http.Request, v hsViewer
 	writeJSON(w, http.StatusOK, st)
 }
 
-type queuedDeck struct{ name, id, code string }
+type queuedDeck struct{ name, id, code, ts string }
 
 // lastQueuedDeck finds the most recent "Finding Game With Deck:" block in Decks.log lines.
 func lastQueuedDeck(lines []string) (queuedDeck, bool) {
@@ -252,7 +257,7 @@ func lastQueuedDeck(lines []string) (queuedDeck, bool) {
 		c := strings.TrimSpace(hsLogPrefixRe.ReplaceAllString(raw, ""))
 		switch {
 		case c == "Finding Game With Deck:":
-			cur, in = queuedDeck{}, true
+			cur, in = queuedDeck{ts: hsLogClock(raw)}, true
 		case in && strings.HasPrefix(c, "### "):
 			cur.name = strings.TrimPrefix(c, "### ")
 		case in && strings.HasPrefix(c, "# Deck ID:"):
@@ -263,6 +268,54 @@ func lastQueuedDeck(lines []string) (queuedDeck, bool) {
 		}
 	}
 	return last, found
+}
+
+// hsLogClock returns seconds-of-day from a log line's "X HH:MM:SS.fffffff " prefix, or -1.
+func hsLogClockSecs(line string) float64 {
+	m := hsLogClockRe.FindStringSubmatch(line)
+	if m == nil {
+		return -1
+	}
+	h, _ := strconv.Atoi(m[1])
+	mi, _ := strconv.Atoi(m[2])
+	sec, _ := strconv.ParseFloat(m[3], 64)
+	return float64(h*3600+mi*60) + sec
+}
+
+func hsLogClock(line string) string {
+	if m := hsLogClockRe.FindStringSubmatch(line); m != nil {
+		return m[1] + ":" + m[2] + ":" + m[3]
+	}
+	return ""
+}
+
+// gameStartedBeforeQueue reports whether the current game's CREATE_GAME predates the queued deck's
+// "Finding Game With Deck" line, i.e. the record in the session belongs to the PREVIOUS game and the
+// new deck's match has not started yet. Both lines come from the same machine clock; a wrap past
+// midnight (queue far "later" than the game by clock) means the game is the newer one.
+func gameStartedBeforeQueue(power []string, queueTS string) bool {
+	if queueTS == "" || len(power) == 0 {
+		return false
+	}
+	q := hsLogClockSecs("I " + queueTS + " ")
+	if q < 0 {
+		return false
+	}
+	g := -1.0
+	for _, ln := range power {
+		if strings.HasSuffix(strings.TrimSpace(ln), "GameState.DebugPrintPower() - CREATE_GAME") {
+			g = hsLogClockSecs(ln)
+			break
+		}
+	}
+	if g < 0 {
+		return false
+	}
+	d := q - g // >0: queued after the game started
+	if d > 43200 {
+		return false // clock wrapped past midnight: the game is the newer one
+	}
+	return d > 1
 }
 
 type hsCardRow struct {
@@ -314,7 +367,7 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 		h.liveMu.Unlock()
 	}
 	var rec *hstracker.Record
-	if len(s.power) > 0 {
+	if len(s.power) > 0 && !gameStartedBeforeQueue(s.power, dq.ts) {
 		recs, err := rt.Run(ctx, s.power)
 		if err != nil {
 			st.Note = "Tracker unavailable: " + err.Error()
@@ -325,7 +378,7 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 		}
 	}
 	if rec == nil {
-		st.Note = "Deck ready. Waiting for the game to start."
+		st.Note = "Deck queued. Waiting for the game to start."
 		st.Left = cardsFrom(deckCount, card)
 		st.LeftTotal = size
 		return st
@@ -602,7 +655,7 @@ function Flush-Pending {
     $body = '{"reset":' + $(if ($script:pendReset) { 'true' } else { 'false' }) + ',"decks":' + [HsTail]::JsonArr($dArr, 0, $dArr.Length) + ',"power":' + [HsTail]::JsonArr($arr, 0, $arr.Length) + '}'
     try {
       $z = [HsTail]::Frames([Text.Encoding]::UTF8.GetBytes($body))
-      Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $($script:Token)"; 'X-Body-Encoding' = 'lz4-frames' } -ContentType 'application/json' -Body $z -TimeoutSec 30 | Out-Null
+      $resp = Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $($script:Token)"; 'X-Body-Encoding' = 'lz4-frames' } -ContentType 'application/json' -Body $z -TimeoutSec 30
     } catch {
       $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
       if ($code -eq 401) { Write-Host 'Session expired or not valid - signing in again.'; $script:authNeeded = $true; return }
@@ -611,11 +664,19 @@ function Flush-Pending {
     }
     $pendP.RemoveRange(0, $cnt); $pendD.Clear(); $script:pendReset = $false
     if ($cnt -gt 0) { Write-Host ("sent {0} lines" -f $cnt) }
+    if ($resp -and $resp.resync) {
+      # the server lost its session (restart/deploy): resend this game from the start of the logs
+      Write-Host 'Server asked for a resync - resending the current game.'
+      $script:resync = $true
+      $pendP.Clear(); $pendD.Clear()
+      return
+    }
   } while ($pendP.Count -gt 0)
 }
 
 $ErrorActionPreference = 'Continue'   # a transient file/IO error must not kill the tracker
 $folder = ''; [long]$pOff = 0; [long]$dOff = 0
+$script:resync = $false
 $pat = 'GameState\.DebugPrint(Power|Game)\(\) - '
 while ($true) {
   try {
@@ -623,6 +684,7 @@ while ($true) {
       try { $script:Token = Get-IamToken; $script:authNeeded = $false }
       catch { Write-Host $_.Exception.Message; Start-Sleep -Seconds 30; continue }
     }
+    if ($script:resync) { $pOff = 0; $dOff = 0; $script:pendReset = $true; $script:resync = $false }
     $newest = Get-ChildItem $LogsDir -Directory -Filter 'Hearthstone_*' -ErrorAction Stop | Sort-Object Name -Descending | Select-Object -First 1
     if ($newest) {
       if ($newest.FullName -ne $folder) {

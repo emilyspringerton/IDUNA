@@ -229,3 +229,99 @@ func lz4Frames(t *testing.T, data []byte) []byte {
 	}
 	return out
 }
+
+// liveTrackerEnv builds an env with the tracker runner, the test deck's card table and an upload token.
+func liveTrackerEnv(t *testing.T, sub string) (*hsEnv, string, []int) {
+	t.Helper()
+	parena := os.Getenv("NOCK_PARENA_BIN")
+	if parena == "" {
+		parena = "/home/garybifrost/PARENA/parena"
+	}
+	if _, err := os.Stat(parena); err != nil {
+		t.Skip("parena compiler not available")
+	}
+	t.Setenv("NOCK_PARENA_BIN", parena)
+	t.Setenv("NOCK_PARENA_RUNTIME_DIR", "../../nock/parena_runtime")
+	e := newHSEnv(t)
+	e.h.(*handlers.HSHandler).Tracker = &hstracker.Runner{WorkDir: filepath.Join(t.TempDir(), "trk")}
+	d, err := hsdeck.Decode(liveTestCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dbfs []int
+	for _, c := range d.DBFCards {
+		dbfs = append(dbfs, c.DBF)
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,?,?)`,
+			c.DBF, "Card "+strconv.Itoa(c.DBF), c.DBF%7, "T_"+strconv.Itoa(c.DBF)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return e, e.must(200, sub, "POST", "live/token", "")["token"].(string), dbfs
+}
+
+func liveGameLines(clock string, dbfs []int) []string {
+	pw := func(s string) string { return "D " + clock + " GameState.DebugPrintPower() - " + s }
+	power := []string{pw("CREATE_GAME"), "D " + clock + " GameState.DebugPrintGame() - PlayerID=1, PlayerName=Alice#1",
+		"D " + clock + " GameState.DebugPrintGame() - PlayerID=2, PlayerName=UNKNOWN HUMAN PLAYER"}
+	for id := 10; id < 14; id++ {
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+strconv.Itoa(id)+" CardID="), pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=1"))
+	}
+	power = append(power, pw("TAG_CHANGE Entity=GameEntity tag=TURN value=1 "))
+	for i := 0; i < 2; i++ {
+		id := strconv.Itoa(10 + i)
+		power = append(power, pw("    SHOW_ENTITY - Updating Entity="+id+" CardID=T_"+strconv.Itoa(dbfs[i])),
+			pw("TAG_CHANGE Entity=[entityName=x id="+id+" zone=DECK zonePos=1 cardId=T_"+strconv.Itoa(dbfs[i])+" player=1] tag=ZONE value=HAND "))
+	}
+	return power
+}
+
+// Regression ("stale deck data"): after game 1 ends and the player queues deck B, the session still
+// holds game 1's record until game 2's CREATE_GAME. Deck B must show full, not minus game 1's draws.
+func TestHS_LiveQueuedDeckNotMixedWithPreviousGame(t *testing.T) {
+	e, tok, dbfs := liveTrackerEnv(t, "erin")
+	game1 := liveGameLines("12:00:00.0000000", dbfs) // game 1 started 12:00
+	decks := []string{
+		"I 11:59:30.0000000 Finding Game With Deck:", "I 11:59:30.0000000 ### Deck A",
+		"I 11:59:30.0000000 # Deck ID: 1", "I 11:59:30.0000000 " + liveTestCode,
+	}
+	post := func(reset bool, d, p []string) map[string]any {
+		code, out := e.post(tok, "live/lines", jstr(map[string]any{"reset": reset, "decks": d, "power": p}))
+		if code != 200 {
+			t.Fatalf("post: %d %v", code, out)
+		}
+		return out
+	}
+	post(true, decks, game1)
+	if st := e.must(200, "erin", "GET", "live/state", ""); st["drawn_total"] != float64(2) {
+		t.Fatalf("game 1 should show 2 drawn: %v", st)
+	}
+	// player queues the same deck again at 12:30 -- game 1 is over, game 2 not started
+	post(false, []string{
+		"I 12:30:00.0000000 Finding Game With Deck:", "I 12:30:00.0000000 ### Deck A",
+		"I 12:30:00.0000000 # Deck ID: 1", "I 12:30:00.0000000 " + liveTestCode,
+	}, nil)
+	st := e.must(200, "erin", "GET", "live/state", "")
+	if st["in_game"] == true || st["drawn_total"] != float64(0) || st["left_total"] != float64(30) {
+		t.Fatalf("queued deck must be full and not in a game: in_game=%v drawn=%v left=%v note=%v",
+			st["in_game"], st["drawn_total"], st["left_total"], st["note"])
+	}
+	// game 2 starts at 12:31 -> tracking resumes against the new game only
+	post(false, nil, liveGameLines("12:31:00.0000000", dbfs))
+	st = e.must(200, "erin", "GET", "live/state", "")
+	if st["in_game"] != true || st["drawn_total"] != float64(2) {
+		t.Fatalf("game 2 should be live: %v", st)
+	}
+}
+
+// After a server restart the session is gone; the uplink must be told to resend from the start.
+func TestHS_LiveAsksForResyncWithoutBase(t *testing.T) {
+	e, tok, dbfs := liveTrackerEnv(t, "frank")
+	_, out := e.post(tok, "live/lines", jstr(map[string]any{"power": liveGameLines("12:00:00.0000000", dbfs)}))
+	if out["resync"] != true {
+		t.Fatalf("expected resync request on a baseless session: %v", out)
+	}
+	_, out = e.post(tok, "live/lines", jstr(map[string]any{"reset": true, "power": liveGameLines("12:00:00.0000000", dbfs)}))
+	if out["resync"] != false {
+		t.Fatalf("expected no resync after a reset: %v", out)
+	}
+}
