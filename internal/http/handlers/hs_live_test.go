@@ -156,3 +156,76 @@ func TestHS_LiveLinesNotStarvedByWriteLimiter(t *testing.T) {
 		}
 	}
 }
+
+// An LZ4-framed body (vectors from PARENA's lz4_block.prn) is accepted; garbage frames are rejected.
+func TestHS_LiveLinesAcceptsLZ4Frames(t *testing.T) {
+	e := newHSEnv(t)
+	tok := e.must(200, "dave", "POST", "live/token", "")["token"].(string)
+	comp, err := os.ReadFile("../../hslz4/testdata/log60k.lz4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile("../../hslz4/testdata/log60k.raw")
+	// the raw log slice is plain log text; wrap it as the JSON the endpoint expects, then frame it
+	var lines []string
+	for _, ln := range strings.Split(string(raw), "\n") {
+		lines = append(lines, strings.TrimRight(ln, "\r"))
+	}
+	_ = comp
+	js := []byte(jstr(map[string]any{"power": lines}))
+	frames := lz4Frames(t, js)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/hs/live/lines", strings.NewReader(string(frames)))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("X-Body-Encoding", "lz4-frames")
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("lz4 body: %d %s", w.Code, w.Body.String())
+	}
+	var out map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	if out["power_lines"].(float64) < 100 {
+		t.Fatalf("expected many power lines, got %v", out)
+	}
+	bad := httptest.NewRequest(http.MethodPost, "/api/v1/hs/live/lines", strings.NewReader("\x10\x00\x00\x00\x05\x00\x00\x00zzzzz"))
+	bad.Header.Set("Authorization", "Bearer "+tok)
+	bad.Header.Set("X-Body-Encoding", "lz4-frames")
+	w = httptest.NewRecorder()
+	e.h.ServeHTTP(w, bad)
+	if w.Code != 422 {
+		t.Fatalf("garbage frame: %d, want 422", w.Code)
+	}
+}
+
+// lz4Frames builds [u32 raw][u32 comp][block] frames using only "stored literal" blocks (valid LZ4:
+// a single sequence with literals and no match), enough to exercise the framing + decode path.
+func lz4Frames(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var out []byte
+	for pos := 0; pos < len(data); pos += 60000 {
+		n := len(data) - pos
+		if n > 60000 {
+			n = 60000
+		}
+		var blk []byte
+		if n < 15 {
+			blk = append(blk, byte(n<<4))
+		} else {
+			blk = append(blk, 0xF0)
+			for r := n - 15; ; r -= 255 {
+				if r >= 255 {
+					blk = append(blk, 255)
+					continue
+				}
+				blk = append(blk, byte(r))
+				break
+			}
+		}
+		blk = append(blk, data[pos:pos+n]...)
+		h := make([]byte, 8)
+		h[0], h[1], h[2], h[3] = byte(n), byte(n>>8), byte(n>>16), byte(n>>24)
+		h[4], h[5], h[6], h[7] = byte(len(blk)), byte(len(blk)>>8), byte(len(blk)>>16), byte(len(blk)>>24)
+		out = append(append(out, h...), blk...)
+	}
+	return out
+}

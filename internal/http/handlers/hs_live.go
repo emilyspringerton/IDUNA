@@ -23,17 +23,19 @@ import (
 
 	"iduna/internal/auth/jwt"
 	"iduna/internal/hsdeck"
+	"iduna/internal/hslz4"
 	"iduna/internal/hstracker"
 	"iduna/internal/http/middleware"
 )
 
 const (
-	hsLiveUploadAud  = "hs-live-upload"
-	hsLiveTokenTTL   = 12 * time.Hour
-	hsLiveMaxBody    = 4 << 20
-	hsLiveMaxPower   = 120000 // lines kept for the current game
-	hsLiveMaxDecks   = 800
-	hsLiveMaxLineLen = 4000
+	hsLiveUploadAud   = "hs-live-upload"
+	hsLiveTokenTTL    = 12 * time.Hour
+	hsLiveMaxBody     = 4 << 20
+	hsLiveMaxInflated = 16 << 20 // decompressed ceiling (bomb guard)
+	hsLiveMaxPower    = 120000   // lines kept for the current game
+	hsLiveMaxDecks    = 800
+	hsLiveMaxLineLen  = 4000
 )
 
 var (
@@ -156,6 +158,20 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		hsErr(w, http.StatusRequestEntityTooLarge, "batch too large")
 		return
+	}
+	// LZ4 frames (X-Body-Encoding: lz4-frames) -- the uplink's default; plain JSON still accepted.
+	// A custom header, not Content-Encoding, so no intermediary tries to "helpfully" decode it.
+	if enc := r.Header.Get("X-Body-Encoding"); enc != "" {
+		if enc != "lz4-frames" {
+			hsErr(w, http.StatusUnsupportedMediaType, "unsupported body encoding")
+			return
+		}
+		raw, err := hslz4.DecodeFrames(body, hsLiveMaxInflated)
+		if err != nil {
+			hsErr(w, http.StatusUnprocessableEntity, "bad lz4 body")
+			return
+		}
+		body = raw
 	}
 	var req liveLinesReq
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -495,6 +511,52 @@ public static class HsTail {
     foreach (string raw in text.Split('\n')) { string ln = raw.TrimEnd('\r'); if (re == null || re.IsMatch(ln)) res.Add(ln); }
     return res.ToArray();
   }
+  // LZ4 block compressor (standard LZ4 block format, greedy, 4096-slot hash) + the frame wrapper
+  // [u32 rawLen][u32 compLen][block] the server expects (X-Body-Encoding: lz4-frames).
+  static void PutLen(MemoryStream o, int n) { while (n >= 255) { o.WriteByte(255); n -= 255; } o.WriteByte((byte)n); }
+  static byte[] Block(byte[] s, int off, int len) {
+    MemoryStream o = new MemoryStream();
+    int[] table = new int[4096];
+    int anchor = off, ip = off, end = off + len;
+    int mflimit = end - 12, matchlimit = end - 5;
+    while (ip <= mflimit) {
+      uint seq = (uint)(s[ip] | (s[ip + 1] << 8) | (s[ip + 2] << 16) | (s[ip + 3] << 24));
+      int h = (int)((seq * 2654435761u) >> 20);
+      int refp = table[h] - 1;
+      table[h] = ip + 1;
+      if (refp >= off && ip - refp <= 65535 &&
+          s[refp] == s[ip] && s[refp + 1] == s[ip + 1] && s[refp + 2] == s[ip + 2] && s[refp + 3] == s[ip + 3]) {
+        int ml = 4;
+        while (ip + ml < matchlimit && s[refp + ml] == s[ip + ml]) ml++;
+        int lit = ip - anchor;
+        int tok = (Math.Min(lit, 15) << 4) | Math.Min(ml - 4, 15);
+        o.WriteByte((byte)tok);
+        if (lit >= 15) PutLen(o, lit - 15);
+        o.Write(s, anchor, lit);
+        int d = ip - refp;
+        o.WriteByte((byte)(d & 255)); o.WriteByte((byte)(d >> 8));
+        if (ml - 4 >= 15) PutLen(o, ml - 4 - 15);
+        ip += ml; anchor = ip;
+      } else ip++;
+    }
+    int rem = end - anchor;
+    o.WriteByte((byte)(Math.Min(rem, 15) << 4));
+    if (rem >= 15) PutLen(o, rem - 15);
+    o.Write(s, anchor, rem);
+    return o.ToArray();
+  }
+  public static byte[] Frames(byte[] data) {
+    MemoryStream o = new MemoryStream();
+    for (int pos = 0; pos < data.Length || (pos == 0 && data.Length == 0); pos += 60000) {
+      int n = Math.Min(60000, data.Length - pos);
+      byte[] blk = Block(data, pos, n);
+      o.Write(BitConverter.GetBytes((uint)n), 0, 4);
+      o.Write(BitConverter.GetBytes((uint)blk.Length), 0, 4);
+      o.Write(blk, 0, blk.Length);
+      if (data.Length == 0) break;
+    }
+    return o.ToArray();
+  }
   public static string JsonArr(string[] a, int from, int count) {
     StringBuilder sb = new StringBuilder("[");
     for (int i = 0; i < count; i++) {
@@ -539,7 +601,8 @@ function Flush-Pending {
     $dArr = $pendD.ToArray()
     $body = '{"reset":' + $(if ($script:pendReset) { 'true' } else { 'false' }) + ',"decks":' + [HsTail]::JsonArr($dArr, 0, $dArr.Length) + ',"power":' + [HsTail]::JsonArr($arr, 0, $arr.Length) + '}'
     try {
-      Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $($script:Token)" } -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30 | Out-Null
+      $z = [HsTail]::Frames([Text.Encoding]::UTF8.GetBytes($body))
+      Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $($script:Token)"; 'X-Body-Encoding' = 'lz4-frames' } -ContentType 'application/json' -Body $z -TimeoutSec 30 | Out-Null
     } catch {
       $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
       if ($code -eq 401) { Write-Host 'Session expired or not valid - signing in again.'; $script:authNeeded = $true; return }
