@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,9 @@ func (h *RedgardenGameResultHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		PlayerID string `json:"player_id"`
 		Game     string `json:"game"`
 		Result   string `json:"result"`
+		// HeroID is optional (nil = not reported): when present, the result is also written to
+		// redgarden_player_matches so WOTAN can show a per-player hero breakdown/history.
+		HeroID *int `json:"hero_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
@@ -79,6 +83,16 @@ func (h *RedgardenGameResultHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	hero := -1
+	if body.HeroID != nil && *body.HeroID >= 0 && *body.HeroID <= 63 {
+		hero = *body.HeroID
+	}
+	// Best-effort: the aggregate above is the source of truth for win/loss totals; this row only
+	// feeds WOTAN's per-hero/recent-match view, so a failure here must not fail the report.
+	_, _ = h.DB.ExecContext(r.Context(),
+		`INSERT INTO redgarden_player_matches (player_id, hero_id, result) VALUES (?, ?, ?)`,
+		body.PlayerID, hero, body.Result)
 
 	var wins, losses, matches int
 	err = h.DB.QueryRowContext(r.Context(),
@@ -124,14 +138,20 @@ func (h *RedgardenLeaderboardHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		http.Error(w, "stats not available", http.StatusServiceUnavailable)
 		return
 	}
+	// Both game strings are real: apps/server reports "redgarden", apps/arena_server (the live
+	// 1v1/10v10 arena) has always reported "redgarden-arena" -- the old `game = 'redgarden'`
+	// filter silently hid every arena result. Sum per player across both.
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT p.player_id, p.display_name, s.wins, s.losses, s.matches_played
+		SELECT p.player_id, p.display_name, SUM(s.wins), SUM(s.losses), SUM(s.matches_played)
 		FROM player_game_stats s
 		JOIN players p ON p.player_id = s.player_id
-		WHERE s.game = 'redgarden'
-		ORDER BY s.wins DESC, s.matches_played DESC
+		WHERE s.game IN ('redgarden', 'redgarden-arena')
+		  AND (? = '' OR p.display_name LIKE ? ESCAPE '!')
+		GROUP BY p.player_id, p.display_name
+		ORDER BY SUM(s.wins) DESC, SUM(s.matches_played) DESC
 		LIMIT ?
-	`, limit)
+	`, q, "%"+strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(q)+"%", limit)
 	if err != nil {
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
 		return

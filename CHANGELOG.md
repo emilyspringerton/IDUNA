@@ -2,6 +2,7 @@
 
 ## 2026-10-10
 
+- REDGARDEN player identity + WOTAN read model: `redgarden` game row (guest-register/guest-login/guest-upgrade/sso-exchange via `/api/v1/games/redgarden`, `redgarden.play`); `self-ticket` now accepts a REDGARDEN game token (no DragonsNShit character needed); `game-result` takes optional `hero_id` and logs `redgarden_player_matches`; new public `GET /api/v1/redgarden/players/{id}` profile; leaderboard now sums `redgarden` + `redgarden-arena` (arena results were invisible) and takes `?q=` (sess-20261009-1745-ee80b668)
 - HS live: `GET /api/v1/hs/live/install.ps1` one-time installer (launcher in %LOCALAPPDATA%\WOTAN that fetches the current uplink each start, Desktop + Start menu shortcut, no admin).
 - hs: live deck tracker endpoints (live/token, live/lines, live/state, live/uplink.ps1); vendored HRIP tracker runner (sess-20261009-1745-ee80b668)
 

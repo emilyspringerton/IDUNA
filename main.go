@@ -1434,6 +1434,8 @@ func main() {
 
 	// Public leaderboard read — same trust level as GET /api/v1/players/{id}.
 	mux.Handle("/api/v1/redgarden/leaderboard", &handlers.RedgardenLeaderboardHandler{DB: db})
+	// Public per-player profile (WOTAN's REDGARDEN tab).
+	mux.Handle("/api/v1/redgarden/players/", &handlers.RedgardenPlayerHandler{DB: db})
 
 	redgardenHeroResultH := middleware.RequireAuth(keys)(
 		middleware.RequirePermission("redgarden.match.write")(&handlers.RedgardenHeroResultHandler{DB: db}),

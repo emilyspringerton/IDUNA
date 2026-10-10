@@ -54,34 +54,63 @@ func (h *RedgardenSelfTicketHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	sub, _ := claims["sub"].(string)
-	sub = strings.TrimSpace(sub)
-	if sub == "" {
-		http.Error(w, "token has no subject", http.StatusUnauthorized)
-		return
+	// Two caller shapes, same "only ever your own id" trust model:
+	//   1. a game-scoped REDGARDEN player token (guest-register / guest-login / sso-exchange on
+	//      /api/v1/games/redgarden): game=redgarden, player_id claim, redgarden.play permission.
+	//      No DragonsNShit character needed -- this is the DEADWEIGHT-style "pick a name and play"
+	//      path (founder real-time, 2026-10-10).
+	//   2. the original generic player JWT (sub = player UUID) of someone with a registered
+	//      DragonsNShit character, unchanged.
+	var playerUUID uuid.UUID
+	gameToken := false
+	if g, _ := claims["game"].(string); g == "redgarden" {
+		pid, _ := claims["player_id"].(string)
+		perms, _ := claims["permissions"].([]any)
+		hasPlay := false
+		for _, p := range perms {
+			if ps, _ := p.(string); ps == "redgarden.play" {
+				hasPlay = true
+			}
+		}
+		id, perr := uuid.Parse(strings.TrimSpace(pid))
+		if perr != nil || !hasPlay {
+			http.Error(w, "redgarden player token is missing player_id/redgarden.play", http.StatusForbidden)
+			return
+		}
+		playerUUID = id
+		gameToken = true
 	}
-	playerUUID, err := uuid.Parse(sub)
-	if err != nil {
-		// Non-player tokens (agents, etc.) have non-UUID subjects -- this endpoint is
-		// player-tickets only.
-		http.Error(w, "token subject is not a player id", http.StatusBadRequest)
-		return
-	}
+	if !gameToken {
+		sub, _ := claims["sub"].(string)
+		sub = strings.TrimSpace(sub)
+		if sub == "" {
+			http.Error(w, "token has no subject", http.StatusUnauthorized)
+			return
+		}
+		id, err := uuid.Parse(sub)
+		if err != nil {
+			// Non-player tokens (agents, etc.) have non-UUID subjects -- this endpoint is
+			// player-tickets only.
+			http.Error(w, "token subject is not a player id", http.StatusBadRequest)
+			return
+		}
+		playerUUID = id
 
-	if h.DB == nil {
-		http.Error(w, "characters not available", http.StatusServiceUnavailable)
-		return
-	}
-	var count int
-	if err := h.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM characters WHERE player_id = ?`, playerUUID.String(),
-	).Scan(&count); err != nil {
-		http.Error(w, "db error", http.StatusInternalServerError)
-		return
-	}
-	if count == 0 {
-		http.Error(w, "no registered DragonsNShit character for this player -- create one via apps2/mud telnet first", http.StatusNotFound)
-		return
+		if h.DB == nil {
+			http.Error(w, "characters not available", http.StatusServiceUnavailable)
+			return
+		}
+		var count int
+		if err := h.DB.QueryRowContext(r.Context(),
+			`SELECT COUNT(*) FROM characters WHERE player_id = ?`, playerUUID.String(),
+		).Scan(&count); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		if count == 0 {
+			http.Error(w, "no registered DragonsNShit character for this player -- create one via apps2/mud telnet first", http.StatusNotFound)
+			return
+		}
 	}
 
 	expiresAt := time.Now().Add(RedgardenTicketTTL).UTC()

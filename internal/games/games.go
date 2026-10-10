@@ -107,6 +107,16 @@ var Registry = map[string]Config{
 	// checkpoint/ticket perms" narrow cut big_o's own row already established, since there's no
 	// server-authoritative match concept in a DJ mixer. RecordingsDir is the one genuinely new
 	// resource this game needs: a per-player blob store for recorded mixes.
+	// Founder real-time, 2026-10-10: "update REDGARDEN for IDUNA OAUTH ... same patterns as
+	// DEADWEIGHT where it gives you a name and allows you to save progress / login with IDUNA".
+	// PlayPerm only, same narrow cut as big_o/brawlpit/mixforge: REDGARDEN's server already
+	// reports results as its own agent (redgarden.match.write, REDGARDEN-BOTS), so none of the
+	// bot/match/checkpoint/ticket perms are needed on this row. Guest + linked-IDUNA players get
+	// a connect ticket from /api/v1/redgarden/self-ticket (redgarden_self_ticket.go).
+	"redgarden": {
+		Slug:     "redgarden",
+		PlayPerm: "redgarden.play",
+	},
 	"mixforge": {
 		Slug:              "mixforge",
 		PlayPerm:          "mixforge.play",
