@@ -47,6 +47,7 @@ var (
 
 type liveSession struct {
 	mu       sync.Mutex
+	sub      string
 	decks    []string
 	power    []string
 	dirty    bool
@@ -55,6 +56,7 @@ type liveSession struct {
 	computed time.Time
 	state    liveState
 	updated  time.Time
+	synced   map[string]bool // deck-library syncs already done (deck id + code + game start)
 }
 
 // liveClient is what the uplink reports about the game's log-size limit (Hearthstone stops writing
@@ -119,10 +121,11 @@ type liveState struct {
 		Name  string     `json:"name"`
 		Cards []liveCard `json:"cards"`
 	} `json:"opponent"`
-	Note      string   `json:"note,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
-	LogBytes  int64    `json:"log_bytes,omitempty"`
-	UpdatedAt string   `json:"updated_at,omitempty"`
+	LibraryDeckID int64    `json:"library_deck_id,omitempty"` // set on the poll that synced this game's deck
+	Note          string   `json:"note,omitempty"`
+	Warnings      []string `json:"warnings,omitempty"`
+	LogBytes      int64    `json:"log_bytes,omitempty"`
+	UpdatedAt     string   `json:"updated_at,omitempty"`
 }
 
 func (h *HSHandler) session(sub string, create bool) *liveSession {
@@ -133,7 +136,7 @@ func (h *HSHandler) session(sub string, create bool) *liveSession {
 	}
 	s := h.liveSess[sub]
 	if s == nil && create {
-		s = &liveSession{}
+		s = &liveSession{sub: sub}
 		h.liveSess[sub] = s
 	}
 	return s
@@ -227,6 +230,7 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	s := h.session(sub, true)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	gameEnded := false
 	if req.Reset {
 		s.power = s.power[:0]
 		s.base = true
@@ -250,6 +254,9 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 			s.power = s.power[:0] // a new game: only the current one is tracked live
 		}
 		s.power = append(s.power, ln)
+		if strings.Contains(ln, "value=COMPLETE") || strings.Contains(ln, "tag=PLAYSTATE") {
+			gameEnded = true
+		}
 	}
 	if len(s.power) > hsLiveMaxPower {
 		s.power = append([]string(nil), s.power[len(s.power)-hsLiveMaxPower:]...)
@@ -261,6 +268,13 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	if len(req.Decks) > 0 || len(req.Power) > 0 || req.Reset {
 		s.dirty = true
 		s.updated = time.Now()
+	}
+	// A game just ended: compute now (not on the next page poll) so its deck is synced to the library
+	// even when no browser tab is open.
+	if gameEnded && s.dirty {
+		s.state = h.computeLive(r.Context(), s)
+		s.computed = time.Now()
+		s.dirty = false
 	}
 	// After a server restart (every deploy wipes in-memory sessions) the uplink keeps sending only new
 	// lines; without a base the tracker cannot know the deck or the game. Ask it to resend from the start.
@@ -437,6 +451,20 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 	}
 	st.InGame = rec.Complete == 0
 	st.Turn = rec.Turns
+	if rec.Complete == 1 && s.power != nil {
+		key := dq.id + "|" + dq.code + "|" + hsLogClock(s.power[0])
+		if s.synced == nil {
+			s.synced = map[string]bool{}
+		}
+		if !s.synced[key] {
+			s.synced[key] = true
+			id := h.syncDeckToLibrary(s.sub, dq, deck)
+			if id > 0 {
+				st.LibraryDeckID = id
+			}
+			h.storeLiveGame(s.sub, rec, id) // the game counts even if the deck was removed from the library
+		}
+	}
 	me := rec.Me
 	if me != 1 && me != 2 {
 		st.Left = cardsFrom(deckCount, card)
@@ -816,3 +844,16 @@ while ($true) {
   Start-Sleep -Milliseconds 1000
 }
 `
+
+// storeLiveGame saves a finished live game for its owner, linked to the library deck that was played.
+func (h *HSHandler) storeLiveGame(sub string, rec *hstracker.Record, deckID int64) {
+	body, err := json.Marshal(rec)
+	if err != nil || (rec.Me != 1 && rec.Me != 2) {
+		return
+	}
+	var gr hsGameRecord
+	if json.Unmarshal(body, &gr) != nil || len(gr.Timeline) == 0 {
+		return
+	}
+	h.storeGame(sub, &gr, body, deckID)
+}

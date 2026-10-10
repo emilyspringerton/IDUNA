@@ -366,3 +366,119 @@ func TestHS_LiveReportsLogCapWarnings(t *testing.T) {
 		t.Fatalf("fix_error not surfaced: %q", w)
 	}
 }
+
+// A finished game syncs its deck into the owner's library: private, a changed deck always becomes a new
+// copy (earlier versions are never edited), and nothing leaks to other players until the owner publishes.
+func TestHS_LiveSyncsDeckToLibraryAtGameEnd(t *testing.T) {
+	e, tok, dbfs := liveTrackerEnv(t, "frank")
+	finished := func(clock string) []string {
+		pw := func(s string) string { return "D " + clock + " GameState.DebugPrintPower() - " + s }
+		return append(liveGameLines(clock, dbfs),
+			pw("TAG_CHANGE Entity=Alice#1 tag=PLAYSTATE value=WON "),
+			pw("TAG_CHANGE Entity=GameEntity tag=STATE value=COMPLETE "))
+	}
+	queue := func(clock, code string) []string {
+		return []string{"I " + clock + " Finding Game With Deck:", "I " + clock + " ### Deck A",
+			"I " + clock + " # Deck ID: 7", "I " + clock + " " + code}
+	}
+	post := func(reset bool, d, p []string) {
+		t.Helper()
+		if code, out := e.post(tok, "live/lines", jstr(map[string]any{"reset": reset, "decks": d, "power": p})); code != 200 {
+			t.Fatalf("post: %d %v", code, out)
+		}
+	}
+	library := func(sub string) []any {
+		t.Helper()
+		return e.must(200, sub, "GET", "decks", "")["items"].([]any)
+	}
+
+	// game 1 ends; nobody has polled /live/state, the library is still filled.
+	post(true, queue("11:59:30.0000000", liveTestCode), finished("12:00:00.0000000"))
+	items := library("frank")
+	if len(items) != 1 {
+		t.Fatalf("want 1 synced deck, got %d", len(items))
+	}
+	d1 := items[0].(map[string]any)
+	if d1["title"] != "Deck A" || d1["private"] != true || d1["synced"] != true {
+		t.Fatalf("synced deck: %v", d1)
+	}
+	if got := library("grace"); len(got) != 0 {
+		t.Fatalf("a private synced deck leaked to another player: %v", got)
+	}
+	id := strconv.Itoa(int(d1["id"].(float64)))
+	if code, _ := e.do("grace", "GET", "decks/"+id, ""); code != 404 {
+		t.Fatalf("other player read a private deck: %d", code)
+	}
+	if code, _ := e.do("grace", "PUT", "decks/"+id+"/like", ""); code != 404 {
+		t.Fatalf("other player liked a private deck: %d", code)
+	}
+
+	// the same game resent (resync after a deploy) and a replay of the same deck: still one entry
+	post(true, queue("11:59:30.0000000", liveTestCode), finished("12:00:00.0000000"))
+	post(false, queue("12:10:00.0000000", liveTestCode), finished("12:11:00.0000000"))
+	if got := library("frank"); len(got) != 1 {
+		t.Fatalf("identical deck must not be copied again: %d entries", len(got))
+	}
+
+	// the player edits the deck (same Hearthstone deck id, one card swapped) and plays again
+	d, _ := hsdeck.Decode(liveTestCode)
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (1,'Swapped In',1,'T_1')`); err != nil {
+		t.Fatal(err)
+	}
+	changed := &hsdeck.Deck{Format: d.Format, FormatID: d.FormatID, HeroDBF: d.HeroDBF}
+	for i, c := range d.DBFCards {
+		if i == len(d.DBFCards)-1 {
+			c.DBF = 1 // a different card in the last slot
+		}
+		changed.DBFCards = append(changed.DBFCards, c)
+	}
+	code2 := hsdeck.Encode(changed)
+	post(false, queue("12:20:00.0000000", code2), finished("12:21:00.0000000"))
+	items = library("frank")
+	if len(items) != 2 {
+		t.Fatalf("a changed deck must create a copy, got %d entries", len(items))
+	}
+	titles := map[string]bool{}
+	for _, it := range items {
+		titles[it.(map[string]any)["title"].(string)] = true
+	}
+	if !titles["Deck A"] || !titles["Deck A (copy 1)"] {
+		t.Fatalf("titles: %v", titles)
+	}
+
+	// the first deck already carries a win rate (a finished, won game was played with it)
+	one := e.must(200, "frank", "GET", "decks/"+id, "")
+	if one["games"] != float64(1) || one["wins"] != float64(1) || one["winrate"] != float64(1) {
+		t.Fatalf("deck stats: games=%v wins=%v winrate=%v", one["games"], one["wins"], one["winrate"])
+	}
+
+	// the owner publishes one; now others can see exactly that one
+	e.must(200, "frank", "PATCH", "decks/"+id, `{"private":false}`)
+	if got := library("grace"); len(got) != 1 {
+		t.Fatalf("published deck should be visible to others, got %d", len(got))
+	}
+}
+
+// Players who turn on auto_publish get synced decks published instantly (the default stays private).
+func TestHS_LiveAutoPublishSetting(t *testing.T) {
+	e, tok, dbfs := liveTrackerEnv(t, "heidi")
+	if got := e.must(200, "heidi", "GET", "settings", ""); got["auto_publish"] != false {
+		t.Fatalf("default must be private: %v", got)
+	}
+	e.must(401, "", "GET", "settings", "")
+	if got := e.must(200, "heidi", "PUT", "settings", `{"auto_publish":true}`); got["auto_publish"] != true {
+		t.Fatalf("setting not saved: %v", got)
+	}
+	pw := func(s string) string { return "D 12:00:00.0000000 GameState.DebugPrintPower() - " + s }
+	power := append(liveGameLines("12:00:00.0000000", dbfs),
+		pw("TAG_CHANGE Entity=Alice#1 tag=PLAYSTATE value=LOST "), pw("TAG_CHANGE Entity=GameEntity tag=STATE value=COMPLETE "))
+	decks := []string{"I 11:59:30.0000000 Finding Game With Deck:", "I 11:59:30.0000000 ### Pub",
+		"I 11:59:30.0000000 # Deck ID: 9", "I 11:59:30.0000000 " + liveTestCode}
+	if code, out := e.post(tok, "live/lines", jstr(map[string]any{"reset": true, "decks": decks, "power": power})); code != 200 {
+		t.Fatalf("post: %d %v", code, out)
+	}
+	items := e.must(200, "ivan", "GET", "decks", "")["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["private"] != false || items[0].(map[string]any)["games"] != float64(1) {
+		t.Fatalf("auto-published deck not visible to others with its record: %v", items)
+	}
+}

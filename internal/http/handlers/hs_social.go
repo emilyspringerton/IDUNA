@@ -144,6 +144,8 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.patchDeck(w, r, v, id(1))
 	case len(p) == 2 && p[0] == "decks" && m == http.MethodDelete:
 		h.softDelete(w, v, "hs_decks", "owner_sub", id(1))
+	case len(p) == 3 && p[0] == "decks" && (p[2] == "like" || p[2] == "comments") && !h.deckVisible(v, id(1)):
+		hsErr(w, http.StatusNotFound, "not found")
 	case len(p) == 3 && p[0] == "decks" && p[2] == "like" && (m == http.MethodPut || m == http.MethodDelete):
 		h.toggleLike(w, v, "hs_decks", "hs_deck_likes", "deck_id", id(1), m == http.MethodPut)
 	case len(p) == 3 && p[0] == "decks" && p[2] == "comments" && m == http.MethodGet:
@@ -154,6 +156,10 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteComment(w, v, "hs_deck_comments", "hs_decks", "deck_id", id(1))
 	case len(p) == 2 && p[0] == "post-comments" && m == http.MethodDelete:
 		h.deleteComment(w, v, "hs_post_comments", "hs_wall_posts", "post_id", id(1))
+	case rest == "settings" && m == http.MethodGet:
+		h.getSettings(w, v)
+	case rest == "settings" && m == http.MethodPut:
+		h.putSettings(w, r, v)
 	case rest == "me" && m == http.MethodGet:
 		h.getMe(w, r, v)
 	case rest == "me" && m == http.MethodPut:
@@ -268,20 +274,33 @@ type hsDeckOut struct {
 	LikedByMe     bool              `json:"liked_by_me"`
 	CanEdit       bool              `json:"can_edit"`
 	CreatedAt     string            `json:"created_at"`
+	Private       bool              `json:"private"`
+	Synced        bool              `json:"synced"` // came from the live tracker, not a paste
+	Games         int               `json:"games"`  // tracked finished games with this deck
+	Wins          int               `json:"wins"`
+	Winrate       float64           `json:"winrate"`
 }
 
 const hsDeckCols = `d.id, d.title, d.description, d.class, d.format, d.year, d.deckstring, d.card_count, d.cards_json, d.dbf_json,
  d.names_resolved, COALESCE(p.handle,''), d.likes, d.comments, d.created_at, d.owner_sub,
- EXISTS(SELECT 1 FROM hs_deck_likes l WHERE l.deck_id=d.id AND l.sub=?)`
+ EXISTS(SELECT 1 FROM hs_deck_likes l WHERE l.deck_id=d.id AND l.sub=?), d.private, d.source_deck_id,
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_id=d.id AND g.complete=1 AND g.result IN (1,2,3)),
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_id=d.id AND g.complete=1 AND g.result=1)`
 
 func scanDeck(sc interface{ Scan(...any) error }, v hsViewer, withCards bool) (hsDeckOut, error) {
 	var d hsDeckOut
 	var cardsJSON, dbfJSON, handle, created, owner string
-	var resolved, liked int
+	var resolved, liked, priv int
+	var source string
 	if err := sc.Scan(&d.ID, &d.Title, &d.Description, &d.Class, &d.Format, &d.Year, &d.Deckstring, &d.CardCount, &cardsJSON, &dbfJSON,
-		&resolved, &handle, &d.Likes, &d.Comments, &created, &owner, &liked); err != nil {
+		&resolved, &handle, &d.Likes, &d.Comments, &created, &owner, &liked, &priv, &source, &d.Games, &d.Wins); err != nil {
 		return d, err
 	}
+	d.Private = priv == 1
+	if d.Games > 0 {
+		d.Winrate = float64(d.Wins) / float64(d.Games)
+	}
+	d.Synced = source != ""
 	d.NamesResolved = resolved == 1
 	d.Author = map[string]string{"handle": handle}
 	d.LikedByMe = liked == 1
@@ -312,8 +331,8 @@ func (h *HSHandler) listDecks(w http.ResponseWriter, r *http.Request, v hsViewer
 func (h *HSHandler) queryDecks(w http.ResponseWriter, r *http.Request, v hsViewer, onlyOwner string) {
 	q := r.URL.Query()
 	limit, offset := hsPage(r, 24)
-	where := []string{"d.deleted=0"}
-	args := []any{}
+	where := []string{"d.deleted=0", "(d.private=0 OR d.owner_sub=?)"}
+	args := []any{v.sub}
 	if onlyOwner != "" {
 		where = append(where, "d.owner_sub=?")
 		args = append(args, onlyOwner)
@@ -370,7 +389,7 @@ func (h *HSHandler) queryDecks(w http.ResponseWriter, r *http.Request, v hsViewe
 }
 
 func (h *HSHandler) getDeck(w http.ResponseWriter, r *http.Request, v hsViewer, id int64) {
-	row := h.DB.QueryRow(`SELECT `+hsDeckCols+` FROM hs_decks d LEFT JOIN hs_profiles p ON p.sub=d.owner_sub WHERE d.id=? AND d.deleted=0`, v.sub, id)
+	row := h.DB.QueryRow(`SELECT `+hsDeckCols+` FROM hs_decks d LEFT JOIN hs_profiles p ON p.sub=d.owner_sub WHERE d.id=? AND d.deleted=0 AND (d.private=0 OR d.owner_sub=?)`, v.sub, id, v.sub)
 	d, err := scanDeck(row, v, true)
 	if err != nil {
 		hsErr(w, http.StatusNotFound, "deck not found")
@@ -494,6 +513,12 @@ func (h *HSHandler) createDeck(w http.ResponseWriter, r *http.Request, v hsViewe
 	writeJSON(w, http.StatusCreated, map[string]any{"id": did, "author": handle})
 }
 
+// deckVisible: a private (tracker-synced) deck is visible to its owner only.
+func (h *HSHandler) deckVisible(v hsViewer, id int64) bool {
+	var one int
+	return h.DB.QueryRow(`SELECT 1 FROM hs_decks WHERE id=? AND deleted=0 AND (private=0 OR owner_sub=?)`, id, v.sub).Scan(&one) == nil
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
@@ -511,7 +536,10 @@ func (h *HSHandler) patchDeck(w http.ResponseWriter, r *http.Request, v hsViewer
 		hsErr(w, 403, "not your deck")
 		return
 	}
-	var in struct{ Title, Description *string }
+	var in struct {
+		Title, Description *string
+		Private            *bool
+	}
 	if err := hsDecode(r, &in); err != nil {
 		hsErr(w, 400, "bad request body")
 		return
@@ -523,6 +551,9 @@ func (h *HSHandler) patchDeck(w http.ResponseWriter, r *http.Request, v hsViewer
 			return
 		}
 		h.DB.Exec(`UPDATE hs_decks SET title=?,updated_at=datetime('now') WHERE id=?`, t, id)
+	}
+	if in.Private != nil {
+		h.DB.Exec(`UPDATE hs_decks SET private=?,updated_at=datetime('now') WHERE id=?`, boolInt(*in.Private), id)
 	}
 	if in.Description != nil {
 		d, ok := hsText(*in.Description, 0, 1000)
@@ -726,7 +757,7 @@ func (h *HSHandler) putMe(w http.ResponseWriter, r *http.Request, v hsViewer) {
 }
 
 const hsUserCols = `p.sub, p.handle, p.bio, p.created_at,
- (SELECT COUNT(*) FROM hs_decks d WHERE d.owner_sub=p.sub AND d.deleted=0),
+ (SELECT COUNT(*) FROM hs_decks d WHERE d.owner_sub=p.sub AND d.deleted=0 AND d.private=0),
  (SELECT COUNT(*) FROM hs_wall_posts w WHERE w.owner_sub=p.sub AND w.deleted=0),
  (SELECT COUNT(*) FROM hs_follows f WHERE f.followee_sub=p.sub),
  (SELECT COUNT(*) FROM hs_follows f WHERE f.follower_sub=p.sub),
@@ -922,4 +953,40 @@ func (h *HSHandler) report(w http.ResponseWriter, r *http.Request, v hsViewer) {
 	}
 	h.DB.Exec(`INSERT INTO hs_reports (reporter_sub,kind,target_id,reason) VALUES (?,?,?,?)`, v.sub, in.Kind, tid, reason)
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+// ---- per-player settings ---------------------------------------------------------------------------------
+
+func (h *HSHandler) autoPublish(sub string) bool {
+	var n int
+	h.DB.QueryRow(`SELECT auto_publish FROM hs_settings WHERE sub=?`, sub).Scan(&n)
+	return n == 1
+}
+
+func (h *HSHandler) getSettings(w http.ResponseWriter, v hsViewer) {
+	if v.sub == "" {
+		hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auto_publish": h.autoPublish(v.sub)})
+}
+
+// putSettings: auto_publish=true publishes decks synced from the tracker immediately; the default (false)
+// keeps them private until the owner publishes each one.
+func (h *HSHandler) putSettings(w http.ResponseWriter, r *http.Request, v hsViewer) {
+	if v.sub == "" {
+		hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
+		return
+	}
+	var in struct {
+		AutoPublish *bool `json:"auto_publish"`
+	}
+	if err := hsDecode(r, &in); err != nil {
+		hsErr(w, 400, "bad request body")
+		return
+	}
+	if in.AutoPublish != nil {
+		h.DB.Exec(`INSERT INTO hs_settings (sub,auto_publish) VALUES (?,?) ON CONFLICT(sub) DO UPDATE SET auto_publish=excluded.auto_publish`, v.sub, boolInt(*in.AutoPublish))
+	}
+	h.getSettings(w, v)
 }

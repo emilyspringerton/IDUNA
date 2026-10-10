@@ -67,12 +67,28 @@ func (h *HSHandler) createGame(w http.ResponseWriter, r *http.Request, v hsViewe
 		hsErr(w, http.StatusUnprocessableEntity, "could not tell which player you are; resend with ?me=1 or ?me=2")
 		return
 	}
+	id, dup, mine, theirs, result, err := h.storeGame(v.sub, &rec, body, 0)
+	if err != nil {
+		hsErr(w, http.StatusInternalServerError, "could not store game")
+		return
+	}
+	if dup {
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "duplicate": true})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "my_class": mine, "opp_class": theirs, "result": result})
+}
+
+// storeGame saves one finished game for its owner (deduplicated by content fingerprint). deckID links it to
+// a library deck when the live tracker knows which deck was played.
+func (h *HSHandler) storeGame(sub string, rec *hsGameRecord, body []byte, deckID int64) (id int64, dup bool, myClass, oppClass string, result int, err error) {
 	sum := sha256.Sum256(body)
 	fp := hex.EncodeToString(sum[:])
-	var existing int64
-	if err := h.DB.QueryRow(`SELECT id FROM hs_games WHERE owner_sub=? AND fingerprint=?`, v.sub, fp).Scan(&existing); err == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"id": existing, "duplicate": true})
-		return
+	if err = h.DB.QueryRow(`SELECT id FROM hs_games WHERE owner_sub=? AND fingerprint=?`, sub, fp).Scan(&id); err == nil {
+		if deckID > 0 {
+			h.DB.Exec(`UPDATE hs_games SET deck_id=? WHERE id=? AND deck_id=0`, deckID, id)
+		}
+		return id, true, "", "", 0, nil
 	}
 	opp := 3 - rec.Me
 	result, myName, oppName := rec.Result1, rec.Player1, rec.Player2
@@ -88,16 +104,16 @@ func (h *HSHandler) createGame(w http.ResponseWriter, r *http.Request, v hsViewe
 		}
 	}
 	oc, _ := json.Marshal(oppCards)
-	res, err := h.DB.Exec(`INSERT INTO hs_games (owner_sub,fingerprint,game_type,format,me,result,turns,complete,my_class,opp_class,my_name,opp_name,opp_cards,record_json)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		v.sub, fp, rec.GameType, rec.Format, rec.Me, result, rec.Turns, rec.Complete,
-		h.classOf(&rec, rec.Me), h.classOf(&rec, opp), myName, oppName, string(oc), string(body))
+	myClass, oppClass = h.classOf(rec, rec.Me), h.classOf(rec, opp)
+	res, err := h.DB.Exec(`INSERT INTO hs_games (owner_sub,fingerprint,game_type,format,me,result,turns,complete,my_class,opp_class,my_name,opp_name,opp_cards,record_json,deck_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		sub, fp, rec.GameType, rec.Format, rec.Me, result, rec.Turns, rec.Complete,
+		myClass, oppClass, myName, oppName, string(oc), string(body), deckID)
 	if err != nil {
-		hsErr(w, http.StatusInternalServerError, "could not store game")
-		return
+		return 0, false, "", "", 0, err
 	}
-	id, _ := res.LastInsertId()
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "my_class": h.classOf(&rec, rec.Me), "opp_class": h.classOf(&rec, opp), "result": result})
+	id, _ = res.LastInsertId()
+	return id, false, myClass, oppClass, result, nil
 }
 
 func (h *HSHandler) listGames(w http.ResponseWriter, r *http.Request, v hsViewer) {
