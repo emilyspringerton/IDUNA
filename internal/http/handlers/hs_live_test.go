@@ -450,10 +450,14 @@ func TestHS_LiveSyncsDeckToLibraryAtGameEnd(t *testing.T) {
 		t.Fatalf("titles: %v", titles)
 	}
 
-	// the first deck already carries a win rate (a finished, won game was played with it)
+	// the private page shows my own record and the projected global one; the public pool is still empty
+	// because nothing has been shared
 	one := e.must(200, "frank", "GET", "decks/"+id, "")
-	if one["games"] != float64(1) || one["wins"] != float64(1) || one["winrate"] != float64(1) {
-		t.Fatalf("deck stats: games=%v wins=%v winrate=%v", one["games"], one["wins"], one["winrate"])
+	mine, _ := one["mine"].(map[string]any)
+	proj, _ := one["projected"].(map[string]any)
+	if mine == nil || mine["games"] != float64(1) || mine["wins"] != float64(1) || proj == nil || proj["games"] != float64(1) ||
+		one["games"] != float64(0) || one["stats_shared"] != false {
+		t.Fatalf("private deck stats: %v", one)
 	}
 
 	// publishing needs a handle; once claimed, the deck moves from the private tab to the public library
@@ -503,8 +507,8 @@ func TestHS_LiveAutoPublishSetting(t *testing.T) {
 	e.must(200, "heidi", "PUT", "me", `{"handle":"heidi_hs"}`)
 	e.must(200, "heidi", "PATCH", "decks/"+did, `{"private":false}`)
 	items := e.must(200, "ivan", "GET", "decks", "")["items"].([]any)
-	if len(items) != 1 || items[0].(map[string]any)["private"] != false || items[0].(map[string]any)["games"] != float64(0) {
-		t.Fatalf("published deck not visible to others / must not inherit the private pool: %v", items)
+	if len(items) != 1 || items[0].(map[string]any)["private"] != false || items[0].(map[string]any)["games"] != float64(1) {
+		t.Fatalf("published deck: sharing brings the earlier private record with it: %v", items)
 	}
 }
 
@@ -533,26 +537,55 @@ func TestHS_DeckPoolsAndDedup(t *testing.T) {
 		if len(items) != 1 {
 			t.Fatalf("%s private decks: %d", sub, len(items))
 		}
-		return items[0].(map[string]any)
+		return e.must(200, sub, "GET", "decks/"+strconv.Itoa(int(items[0].(map[string]any)["id"].(float64))), "")
 	}
 	play(jtok, "Judys Name", "WON", "12:00:00.0000000")
 	play(ktok, "Karls Name", "LOST", "12:00:00.0000000")
-	// both private holders see the same pool: 1 win + 1 loss
+	// nothing is shared yet: the public pool is empty for everyone, nobody can tell the deck is being played.
+	// Each private holder sees their own record plus the projected global one (1 win + 1 loss).
 	for _, sub := range []string{"judy", "karl"} {
 		d := mine(sub)
-		if d["games"] != float64(2) || d["wins"] != float64(1) || d["losses"] != float64(1) {
-			t.Fatalf("%s private pool: %v", sub, d)
+		pj, _ := d["projected"].(map[string]any)
+		if d["games"] != float64(0) || pj == nil || pj["games"] != float64(2) || pj["wins"] != float64(1) || pj["losses"] != float64(1) {
+			t.Fatalf("%s private page: %v", sub, d)
 		}
 	}
-	// judy publishes first: her name is the deck's name; the public deck starts with no public games
+	if d := mine("judy"); d["mine"].(map[string]any)["wins"] != float64(1) {
+		t.Fatalf("judy's own record: %v", d["mine"])
+	}
+	// judy publishes first: her name is the deck's, and her record (1 win) is the public pool
 	jd := mine("judy")
 	jid := strconv.Itoa(int(jd["id"].(float64)))
 	e.must(200, "judy", "PATCH", "decks/"+jid, `{"private":false}`)
-	if got := e.must(200, "x", "GET", "decks/"+jid, ""); got["games"] != float64(0) || got["title"] != "Judys Name" {
+	if got := e.must(200, "x", "GET", "decks/"+jid, ""); got["games"] != float64(1) || got["wins"] != float64(1) || got["title"] != "Judys Name" {
 		t.Fatalf("public deck: %v", got)
 	}
+	// karl's private page: public win rate for convenience, his own record, and the projected global one
+	kd := mine("karl")
+	kid := strconv.Itoa(int(kd["id"].(float64)))
+	if kd["games"] != float64(1) || kd["stats_shared"] != false || kd["mine"].(map[string]any)["losses"] != float64(1) || kd["projected"].(map[string]any)["games"] != float64(2) {
+		t.Fatalf("karl before sharing: %v", kd)
+	}
+	// practising in private does not move the public number
+	play(ktok, "Karls Name", "WON", "12:30:00.0000000")
+	if got := e.must(200, "x", "GET", "decks/"+jid, ""); got["games"] != float64(1) {
+		t.Fatalf("a private holder's game leaked into the public pool: %v", got)
+	}
+	// karl chooses to share his stats (retroactively): the public pool now includes both of his games
+	if got := e.must(200, "karl", "PUT", "decks/"+kid+"/share", ""); got["stats_shared"] != true || got["games"] != float64(3) {
+		t.Fatalf("after sharing: %v", got)
+	}
+	if got := e.must(200, "x", "GET", "decks/"+jid, ""); got["games"] != float64(3) || got["wins"] != float64(2) {
+		t.Fatalf("public pool with karl shared: %v", got)
+	}
+	e.must(200, "karl", "DELETE", "decks/"+kid+"/share", "")
+	if got := e.must(200, "x", "GET", "decks/"+jid, ""); got["games"] != float64(1) {
+		t.Fatalf("withdrawn stats must leave the public pool: %v", got)
+	}
+	if code, _ := e.do("judy", "PUT", "decks/"+kid+"/share", ""); code != 404 {
+		t.Fatalf("sharing someone else's deck: %d", code)
+	}
 	// karl publishes the identical deck: merged into judy's, not a second public deck
-	kid := strconv.Itoa(int(mine("karl")["id"].(float64)))
 	out := e.must(200, "karl", "PATCH", "decks/"+kid, `{"private":false,"title":"Karl wants this name"}`)
 	if out["merged_into"] != jd["id"] {
 		t.Fatalf("not merged: %v", out)
@@ -561,12 +594,9 @@ func TestHS_DeckPoolsAndDedup(t *testing.T) {
 	if len(pub) != 1 || pub[0].(map[string]any)["title"] != "Judys Name" {
 		t.Fatalf("want one public deck named by its first publisher: %v", pub)
 	}
-	// from now on both players' games count to the one public deck
-	play(jtok, "Judys Name", "LOST", "13:00:00.0000000")
-	play(ktok, "Karls Name", "WON", "13:00:00.0000000")
 	got := e.must(200, "x", "GET", "decks/"+jid, "")
-	if got["games"] != float64(2) || got["wins"] != float64(1) || got["losses"] != float64(1) {
-		t.Fatalf("public pool: %v", got)
+	if got["games"] != float64(3) || got["wins"] != float64(2) || got["losses"] != float64(1) {
+		t.Fatalf("public pool after both published: %v", got)
 	}
 	// a third player pasting the same deck is pointed at the existing one
 	code, o := e.do("judy", "POST", "decks", `{"text":"`+liveTestCode+`","title":"again"}`)

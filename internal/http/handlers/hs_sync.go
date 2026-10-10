@@ -72,5 +72,8 @@ func (h *HSHandler) syncDeckRow(sub string, dq queuedDeck, deck *hsdeck.Deck) in
 		return 0
 	}
 	id, _ = res.LastInsertId()
+	if !private {
+		h.setShare(sub, deck.Deckstring, true) // auto-publish shares the record with the deck
+	}
 	return id
 }

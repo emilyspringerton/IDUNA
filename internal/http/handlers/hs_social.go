@@ -146,6 +146,8 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.softDelete(w, v, "hs_decks", "owner_sub", id(1))
 	case len(p) == 3 && p[0] == "decks" && (p[2] == "like" || p[2] == "comments") && !h.deckVisible(v, id(1)):
 		hsErr(w, http.StatusNotFound, "not found")
+	case len(p) == 3 && p[0] == "decks" && p[2] == "share" && (m == http.MethodPut || m == http.MethodDelete):
+		h.shareStats(w, r, v, id(1), m == http.MethodPut)
 	case len(p) == 3 && p[0] == "decks" && p[2] == "like" && (m == http.MethodPut || m == http.MethodDelete):
 		h.toggleLike(w, v, "hs_decks", "hs_deck_likes", "deck_id", id(1), m == http.MethodPut)
 	case len(p) == 3 && p[0] == "decks" && p[2] == "comments" && m == http.MethodGet:
@@ -280,15 +282,19 @@ type hsDeckOut struct {
 	Wins          int               `json:"wins"`
 	Losses        int               `json:"losses"`
 	Ties          int               `json:"ties"`
-	Winrate       float64           `json:"winrate"`
+	Winrate       float64           `json:"winrate"` // the PUBLIC pool: players who shared their stats for this exact deck
+	// Only on the owner's own private deck page:
+	Shared    *bool     `json:"stats_shared,omitempty"` // is my record for this deck in the public pool
+	Mine      *hsRecord `json:"mine,omitempty"`         // my own games with this exact deck
+	Projected *hsRecord `json:"projected,omitempty"`    // public pool + every private holder's games
 }
 
 const hsDeckCols = `d.id, d.title, d.description, d.class, d.format, d.year, d.deckstring, d.card_count, d.cards_json, d.dbf_json,
  d.names_resolved, COALESCE(p.handle,''), d.likes, d.comments, d.created_at, d.owner_sub,
  EXISTS(SELECT 1 FROM hs_deck_likes l WHERE l.deck_id=d.id AND l.sub=?), d.private, d.source_deck_id,
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.deck_public=1-d.private AND g.complete=1 AND g.result IN (1,2,3)),
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.deck_public=1-d.private AND g.complete=1 AND g.result=1),
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.deck_public=1-d.private AND g.complete=1 AND g.result=2)`
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result IN (1,2,3)),
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result=1),
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result=2)`
 
 func scanDeck(sc interface{ Scan(...any) error }, v hsViewer, withCards bool) (hsDeckOut, error) {
 	var d hsDeckOut
@@ -412,6 +418,16 @@ func (h *HSHandler) getDeck(w http.ResponseWriter, r *http.Request, v hsViewer, 
 		hsErr(w, http.StatusNotFound, "deck not found")
 		return
 	}
+	if v.sub != "" {
+		var owner string
+		var priv int
+		h.DB.QueryRow(`SELECT owner_sub, private FROM hs_decks WHERE id=?`, id).Scan(&owner, &priv)
+		if owner == v.sub && priv == 1 {
+			sh := h.statsShared(owner, d.Deckstring)
+			mine, proj := h.recordOf(d.Deckstring, owner), h.recordOf(d.Deckstring, "")
+			d.Shared, d.Mine, d.Projected = &sh, &mine, &proj
+		}
+	}
 	writeJSON(w, http.StatusOK, d)
 }
 
@@ -534,6 +550,62 @@ func (h *HSHandler) createDeck(w http.ResponseWriter, r *http.Request, v hsViewe
 	writeJSON(w, http.StatusCreated, map[string]any{"id": did, "author": handle})
 }
 
+type hsRecord struct {
+	Games   int     `json:"games"`
+	Wins    int     `json:"wins"`
+	Losses  int     `json:"losses"`
+	Ties    int     `json:"ties"`
+	Winrate float64 `json:"winrate"`
+}
+
+// recordOf is one player's finished games with exact deck contents (owner != ""), or every player's
+// games, shared or not (owner == "") -- the projected global record shown on private deck pages.
+func (h *HSHandler) recordOf(deckstring, owner string) hsRecord {
+	q := `SELECT COUNT(*), COALESCE(SUM(result=1),0), COALESCE(SUM(result=2),0) FROM hs_games WHERE deck_code=? AND complete=1 AND result IN (1,2,3)`
+	args := []any{deckstring}
+	if owner != "" {
+		q += ` AND owner_sub=?`
+		args = append(args, owner)
+	}
+	var r hsRecord
+	h.DB.QueryRow(q, args...).Scan(&r.Games, &r.Wins, &r.Losses)
+	r.Ties = r.Games - r.Wins - r.Losses
+	if r.Games > 0 {
+		r.Winrate = float64(r.Wins) / float64(r.Games)
+	}
+	return r
+}
+
+func (h *HSHandler) statsShared(owner, deckstring string) bool {
+	var one int
+	return h.DB.QueryRow(`SELECT 1 FROM hs_stat_shares WHERE owner_sub=? AND deck_code=?`, owner, deckstring).Scan(&one) == nil
+}
+
+func (h *HSHandler) setShare(owner, deckstring string, on bool) {
+	if on {
+		h.DB.Exec(`INSERT OR IGNORE INTO hs_stat_shares (owner_sub,deck_code) VALUES (?,?)`, owner, deckstring)
+	} else {
+		h.DB.Exec(`DELETE FROM hs_stat_shares WHERE owner_sub=? AND deck_code=?`, owner, deckstring)
+	}
+}
+
+// shareStats: PUT/DELETE /decks/{id}/share -- include (or withdraw) my record with this deck in its public
+// win rate without publishing the deck itself.
+func (h *HSHandler) shareStats(w http.ResponseWriter, r *http.Request, v hsViewer, id int64, on bool) {
+	var owner, code string
+	var priv, merged int
+	if err := h.DB.QueryRow(`SELECT owner_sub, deckstring, private, merged_into FROM hs_decks WHERE id=? AND deleted=0`, id).Scan(&owner, &code, &priv, &merged); err != nil || owner != v.sub {
+		hsErr(w, http.StatusNotFound, "deck not found")
+		return
+	}
+	if priv == 0 {
+		hsErr(w, http.StatusConflict, "this deck is public, so its stats are shared; make it private to withdraw them")
+		return
+	}
+	h.setShare(owner, code, on)
+	h.getDeck(w, r, v, id)
+}
+
 // publicCanonical is the one public deck for these contents: the first to publish (0 if none).
 func (h *HSHandler) publicCanonical(deckstring string) int64 {
 	var id int64
@@ -609,13 +681,16 @@ func (h *HSHandler) patchDeck(w http.ResponseWriter, r *http.Request, v hsViewer
 			// Identical public decks are one deck: the first to publish picked the name, later ones merge in.
 			if canon := h.publicCanonical(deckstring); canon > 0 && canon != id {
 				h.DB.Exec(`UPDATE hs_decks SET private=0,merged_into=?,published_at=datetime('now'),updated_at=datetime('now') WHERE id=?`, canon, id)
+				h.setShare(owner, deckstring, true)
 				writeJSON(w, http.StatusOK, map[string]any{"id": canon, "merged_into": canon,
 					"message": "This exact deck was already published, so yours now counts toward it."})
 				return
 			}
 			h.DB.Exec(`UPDATE hs_decks SET private=0,published_at=datetime('now'),updated_at=datetime('now') WHERE id=?`, id)
+			h.setShare(owner, deckstring, true)
 		case *in.Private && wasPrivate == 0:
 			h.makePrivate(id)
+			h.setShare(owner, deckstring, false) // back to private: the record leaves the public pool too
 		}
 	}
 	if in.Description != nil {
