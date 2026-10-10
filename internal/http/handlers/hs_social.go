@@ -278,14 +278,17 @@ type hsDeckOut struct {
 	Synced        bool              `json:"synced"` // came from the live tracker, not a paste
 	Games         int               `json:"games"`  // tracked finished games with this deck
 	Wins          int               `json:"wins"`
+	Losses        int               `json:"losses"`
+	Ties          int               `json:"ties"`
 	Winrate       float64           `json:"winrate"`
 }
 
 const hsDeckCols = `d.id, d.title, d.description, d.class, d.format, d.year, d.deckstring, d.card_count, d.cards_json, d.dbf_json,
  d.names_resolved, COALESCE(p.handle,''), d.likes, d.comments, d.created_at, d.owner_sub,
  EXISTS(SELECT 1 FROM hs_deck_likes l WHERE l.deck_id=d.id AND l.sub=?), d.private, d.source_deck_id,
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_id=d.id AND g.complete=1 AND g.result IN (1,2,3)),
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_id=d.id AND g.complete=1 AND g.result=1)`
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.deck_public=1-d.private AND g.complete=1 AND g.result IN (1,2,3)),
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.deck_public=1-d.private AND g.complete=1 AND g.result=1),
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.deck_public=1-d.private AND g.complete=1 AND g.result=2)`
 
 func scanDeck(sc interface{ Scan(...any) error }, v hsViewer, withCards bool) (hsDeckOut, error) {
 	var d hsDeckOut
@@ -293,10 +296,11 @@ func scanDeck(sc interface{ Scan(...any) error }, v hsViewer, withCards bool) (h
 	var resolved, liked, priv int
 	var source string
 	if err := sc.Scan(&d.ID, &d.Title, &d.Description, &d.Class, &d.Format, &d.Year, &d.Deckstring, &d.CardCount, &cardsJSON, &dbfJSON,
-		&resolved, &handle, &d.Likes, &d.Comments, &created, &owner, &liked, &priv, &source, &d.Games, &d.Wins); err != nil {
+		&resolved, &handle, &d.Likes, &d.Comments, &created, &owner, &liked, &priv, &source, &d.Games, &d.Wins, &d.Losses); err != nil {
 		return d, err
 	}
 	d.Private = priv == 1
+	d.Ties = d.Games - d.Wins - d.Losses
 	if d.Games > 0 {
 		d.Winrate = float64(d.Wins) / float64(d.Games)
 	}
@@ -332,7 +336,7 @@ func (h *HSHandler) queryDecks(w http.ResponseWriter, r *http.Request, v hsViewe
 	q := r.URL.Query()
 	limit, offset := hsPage(r, 24)
 	// The library is public decks only. ?private=1 is the signed-in player's own private decks (their tab).
-	where := []string{"d.deleted=0", "d.private=0"}
+	where := []string{"d.deleted=0", "d.private=0", "d.merged_into=0"}
 	args := []any{}
 	if q.Get("private") == "1" {
 		if v.sub == "" {
@@ -398,6 +402,10 @@ func (h *HSHandler) queryDecks(w http.ResponseWriter, r *http.Request, v hsViewe
 }
 
 func (h *HSHandler) getDeck(w http.ResponseWriter, r *http.Request, v hsViewer, id int64) {
+	var into int64
+	if h.DB.QueryRow(`SELECT merged_into FROM hs_decks WHERE id=?`, id).Scan(&into) == nil && into > 0 {
+		id = into // this copy was merged into the deck that was published first
+	}
 	row := h.DB.QueryRow(`SELECT `+hsDeckCols+` FROM hs_decks d LEFT JOIN hs_profiles p ON p.sub=d.owner_sub WHERE d.id=? AND d.deleted=0 AND (d.private=0 OR d.owner_sub=?)`, v.sub, id, v.sub)
 	d, err := scanDeck(row, v, true)
 	if err != nil {
@@ -500,6 +508,10 @@ func (h *HSHandler) createDeck(w http.ResponseWriter, r *http.Request, v hsViewe
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "you've already published this deck", "deck_id": existing})
 		return
 	}
+	if canon := h.publicCanonical(d.Deckstring); canon > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "this exact deck is already in the library", "deck_id": canon})
+		return
+	}
 	cards, _ := json.Marshal(d.Cards)
 	dbf, _ := json.Marshal(d.DBFCards)
 	if d.Cards == nil {
@@ -520,6 +532,26 @@ func (h *HSHandler) createDeck(w http.ResponseWriter, r *http.Request, v hsViewe
 		_ = h.DB.QueryRow(`SELECT id FROM hs_decks WHERE owner_sub=? AND deckstring=?`, v.sub, d.Deckstring).Scan(&did)
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": did, "author": handle})
+}
+
+// publicCanonical is the one public deck for these contents: the first to publish (0 if none).
+func (h *HSHandler) publicCanonical(deckstring string) int64 {
+	var id int64
+	h.DB.QueryRow(`SELECT id FROM hs_decks WHERE deckstring=? AND private=0 AND deleted=0 AND merged_into=0
+		ORDER BY CASE WHEN published_at='' THEN created_at ELSE published_at END, id LIMIT 1`, deckstring).Scan(&id)
+	return id
+}
+
+// makePrivate takes a deck out of the public library. If other players were merged into it, the earliest
+// of them becomes the public deck (and keeps the name its first publisher chose is lost with this deck).
+func (h *HSHandler) makePrivate(id int64) {
+	var heir int64
+	h.DB.QueryRow(`SELECT id FROM hs_decks WHERE merged_into=? AND deleted=0 ORDER BY published_at, id LIMIT 1`, id).Scan(&heir)
+	if heir > 0 {
+		h.DB.Exec(`UPDATE hs_decks SET merged_into=0 WHERE id=?`, heir)
+		h.DB.Exec(`UPDATE hs_decks SET merged_into=? WHERE merged_into=? AND id!=?`, heir, id, heir)
+	}
+	h.DB.Exec(`UPDATE hs_decks SET private=1,merged_into=0,updated_at=datetime('now') WHERE id=?`, id)
 }
 
 // deckVisible: a private (tracker-synced) deck is visible to its owner only.
@@ -569,7 +601,22 @@ func (h *HSHandler) patchDeck(w http.ResponseWriter, r *http.Request, v hsViewer
 		h.DB.Exec(`UPDATE hs_decks SET title=?,updated_at=datetime('now') WHERE id=?`, t, id)
 	}
 	if in.Private != nil {
-		h.DB.Exec(`UPDATE hs_decks SET private=?,updated_at=datetime('now') WHERE id=?`, boolInt(*in.Private), id)
+		var deckstring string
+		var wasPrivate int
+		h.DB.QueryRow(`SELECT deckstring, private FROM hs_decks WHERE id=?`, id).Scan(&deckstring, &wasPrivate)
+		switch {
+		case !*in.Private && wasPrivate == 1:
+			// Identical public decks are one deck: the first to publish picked the name, later ones merge in.
+			if canon := h.publicCanonical(deckstring); canon > 0 && canon != id {
+				h.DB.Exec(`UPDATE hs_decks SET private=0,merged_into=?,published_at=datetime('now'),updated_at=datetime('now') WHERE id=?`, canon, id)
+				writeJSON(w, http.StatusOK, map[string]any{"id": canon, "merged_into": canon,
+					"message": "This exact deck was already published, so yours now counts toward it."})
+				return
+			}
+			h.DB.Exec(`UPDATE hs_decks SET private=0,published_at=datetime('now'),updated_at=datetime('now') WHERE id=?`, id)
+		case *in.Private && wasPrivate == 0:
+			h.makePrivate(id)
+		}
 	}
 	if in.Description != nil {
 		d, ok := hsText(*in.Description, 0, 1000)
@@ -773,7 +820,7 @@ func (h *HSHandler) putMe(w http.ResponseWriter, r *http.Request, v hsViewer) {
 }
 
 const hsUserCols = `p.sub, p.handle, p.bio, p.created_at,
- (SELECT COUNT(*) FROM hs_decks d WHERE d.owner_sub=p.sub AND d.deleted=0 AND d.private=0),
+ (SELECT COUNT(*) FROM hs_decks d WHERE d.owner_sub=p.sub AND d.deleted=0 AND d.private=0 AND d.merged_into=0),
  (SELECT COUNT(*) FROM hs_wall_posts w WHERE w.owner_sub=p.sub AND w.deleted=0),
  (SELECT COUNT(*) FROM hs_follows f WHERE f.followee_sub=p.sub),
  (SELECT COUNT(*) FROM hs_follows f WHERE f.follower_sub=p.sub),

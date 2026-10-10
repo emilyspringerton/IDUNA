@@ -503,7 +503,74 @@ func TestHS_LiveAutoPublishSetting(t *testing.T) {
 	e.must(200, "heidi", "PUT", "me", `{"handle":"heidi_hs"}`)
 	e.must(200, "heidi", "PATCH", "decks/"+did, `{"private":false}`)
 	items := e.must(200, "ivan", "GET", "decks", "")["items"].([]any)
-	if len(items) != 1 || items[0].(map[string]any)["private"] != false || items[0].(map[string]any)["games"] != float64(1) {
-		t.Fatalf("auto-published deck not visible to others with its record: %v", items)
+	if len(items) != 1 || items[0].(map[string]any)["private"] != false || items[0].(map[string]any)["games"] != float64(0) {
+		t.Fatalf("published deck not visible to others / must not inherit the private pool: %v", items)
+	}
+}
+
+// Identical decks of different players share one win/loss pool; a public deck counts only public games;
+// identical public decks are one deck, named by whoever published first.
+func TestHS_DeckPoolsAndDedup(t *testing.T) {
+	e, _, dbfs := liveTrackerEnv(t, "judy")
+	ktok := e.must(200, "karl", "POST", "live/token", "")["token"].(string)
+	jtok := e.must(200, "judy", "POST", "live/token", "")["token"].(string)
+	e.must(200, "judy", "PUT", "me", `{"handle":"judy_hs"}`)
+	e.must(200, "karl", "PUT", "me", `{"handle":"karl_hs"}`)
+	play := func(tok, name, result, clock string) {
+		t.Helper()
+		pw := func(s string) string { return "D " + clock + " GameState.DebugPrintPower() - " + s }
+		power := append(liveGameLines(clock, dbfs),
+			pw("TAG_CHANGE Entity=Alice#1 tag=PLAYSTATE value="+result+" "), pw("TAG_CHANGE Entity=GameEntity tag=STATE value=COMPLETE "))
+		decks := []string{"I 11:59:30.0000000 Finding Game With Deck:", "I 11:59:30.0000000 ### " + name,
+			"I 11:59:30.0000000 # Deck ID: 3", "I 11:59:30.0000000 " + liveTestCode}
+		if code, out := e.post(tok, "live/lines", jstr(map[string]any{"reset": true, "decks": decks, "power": power})); code != 200 {
+			t.Fatalf("post: %d %v", code, out)
+		}
+	}
+	mine := func(sub string) map[string]any {
+		t.Helper()
+		items := e.must(200, sub, "GET", "decks?private=1", "")["items"].([]any)
+		if len(items) != 1 {
+			t.Fatalf("%s private decks: %d", sub, len(items))
+		}
+		return items[0].(map[string]any)
+	}
+	play(jtok, "Judys Name", "WON", "12:00:00.0000000")
+	play(ktok, "Karls Name", "LOST", "12:00:00.0000000")
+	// both private holders see the same pool: 1 win + 1 loss
+	for _, sub := range []string{"judy", "karl"} {
+		d := mine(sub)
+		if d["games"] != float64(2) || d["wins"] != float64(1) || d["losses"] != float64(1) {
+			t.Fatalf("%s private pool: %v", sub, d)
+		}
+	}
+	// judy publishes first: her name is the deck's name; the public deck starts with no public games
+	jd := mine("judy")
+	jid := strconv.Itoa(int(jd["id"].(float64)))
+	e.must(200, "judy", "PATCH", "decks/"+jid, `{"private":false}`)
+	if got := e.must(200, "x", "GET", "decks/"+jid, ""); got["games"] != float64(0) || got["title"] != "Judys Name" {
+		t.Fatalf("public deck: %v", got)
+	}
+	// karl publishes the identical deck: merged into judy's, not a second public deck
+	kid := strconv.Itoa(int(mine("karl")["id"].(float64)))
+	out := e.must(200, "karl", "PATCH", "decks/"+kid, `{"private":false,"title":"Karl wants this name"}`)
+	if out["merged_into"] != jd["id"] {
+		t.Fatalf("not merged: %v", out)
+	}
+	pub := e.must(200, "x", "GET", "decks", "")["items"].([]any)
+	if len(pub) != 1 || pub[0].(map[string]any)["title"] != "Judys Name" {
+		t.Fatalf("want one public deck named by its first publisher: %v", pub)
+	}
+	// from now on both players' games count to the one public deck
+	play(jtok, "Judys Name", "LOST", "13:00:00.0000000")
+	play(ktok, "Karls Name", "WON", "13:00:00.0000000")
+	got := e.must(200, "x", "GET", "decks/"+jid, "")
+	if got["games"] != float64(2) || got["wins"] != float64(1) || got["losses"] != float64(1) {
+		t.Fatalf("public pool: %v", got)
+	}
+	// a third player pasting the same deck is pointed at the existing one
+	code, o := e.do("judy", "POST", "decks", `{"text":"`+liveTestCode+`","title":"again"}`)
+	if code != 409 || o["deck_id"] != jd["id"] {
+		t.Fatalf("duplicate paste: %d %v", code, o)
 	}
 }

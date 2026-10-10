@@ -86,7 +86,10 @@ func (h *HSHandler) storeGame(sub string, rec *hsGameRecord, body []byte, deckID
 	fp := hex.EncodeToString(sum[:])
 	if err = h.DB.QueryRow(`SELECT id FROM hs_games WHERE owner_sub=? AND fingerprint=?`, sub, fp).Scan(&id); err == nil {
 		if deckID > 0 {
-			h.DB.Exec(`UPDATE hs_games SET deck_id=? WHERE id=? AND deck_id=0`, deckID, id)
+			var code string
+			var priv int
+			h.DB.QueryRow(`SELECT deckstring, private FROM hs_decks WHERE id=?`, deckID).Scan(&code, &priv)
+			h.DB.Exec(`UPDATE hs_games SET deck_id=?, deck_code=?, deck_public=? WHERE id=? AND deck_id=0`, deckID, code, boolInt(priv == 0), id)
 		}
 		return id, true, "", "", 0, nil
 	}
@@ -105,10 +108,16 @@ func (h *HSHandler) storeGame(sub string, rec *hsGameRecord, body []byte, deckID
 	}
 	oc, _ := json.Marshal(oppCards)
 	myClass, oppClass = h.classOf(rec, rec.Me), h.classOf(rec, opp)
-	res, err := h.DB.Exec(`INSERT INTO hs_games (owner_sub,fingerprint,game_type,format,me,result,turns,complete,my_class,opp_class,my_name,opp_name,opp_cards,record_json,deck_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	// the win/loss pool: by deck contents, and public only if the player's own copy was public at game end
+	var code string
+	var priv int
+	if deckID > 0 {
+		h.DB.QueryRow(`SELECT deckstring, private FROM hs_decks WHERE id=?`, deckID).Scan(&code, &priv)
+	}
+	res, err := h.DB.Exec(`INSERT INTO hs_games (owner_sub,fingerprint,game_type,format,me,result,turns,complete,my_class,opp_class,my_name,opp_name,opp_cards,record_json,deck_id,deck_code,deck_public)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sub, fp, rec.GameType, rec.Format, rec.Me, result, rec.Turns, rec.Complete,
-		myClass, oppClass, myName, oppName, string(oc), string(body), deckID)
+		myClass, oppClass, myName, oppName, string(oc), string(body), deckID, code, boolInt(code != "" && priv == 0))
 	if err != nil {
 		return 0, false, "", "", 0, err
 	}

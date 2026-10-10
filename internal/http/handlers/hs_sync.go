@@ -59,10 +59,15 @@ func (h *HSHandler) syncDeckRow(sub string, dq queuedDeck, deck *hsdeck.Deck) in
 		cards = []byte("[]")
 	}
 	dbf, _ := json.Marshal(deck.DBFCards)
-	res, err := h.DB.Exec(`INSERT INTO hs_decks (owner_sub,title,description,class,format,year,hero_dbf,deckstring,cards_json,dbf_json,card_count,names_resolved,private,source_deck_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	private := !(h.autoPublish(sub) && hasHandle)
+	var mergedInto int64
+	if !private {
+		mergedInto = h.publicCanonical(deck.Deckstring) // already public under another name: counts toward it
+	}
+	res, err := h.DB.Exec(`INSERT INTO hs_decks (owner_sub,title,description,class,format,year,hero_dbf,deckstring,cards_json,dbf_json,card_count,names_resolved,private,source_deck_id,merged_into,published_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?=0 THEN datetime('now') ELSE '' END)`,
 		sub, title, "Synced from your game tracker.", deck.Class, deck.Format, deck.Year, deck.HeroDBF, deck.Deckstring,
-		string(cards), string(dbf), deck.CardCount, boolInt(deck.NamesResolved), boolInt(!(h.autoPublish(sub) && hasHandle)), dq.id)
+		string(cards), string(dbf), deck.CardCount, boolInt(deck.NamesResolved), boolInt(private), dq.id, mergedInto, boolInt(private))
 	if err != nil {
 		return 0
 	}
