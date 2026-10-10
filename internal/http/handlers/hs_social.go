@@ -331,8 +331,17 @@ func (h *HSHandler) listDecks(w http.ResponseWriter, r *http.Request, v hsViewer
 func (h *HSHandler) queryDecks(w http.ResponseWriter, r *http.Request, v hsViewer, onlyOwner string) {
 	q := r.URL.Query()
 	limit, offset := hsPage(r, 24)
-	where := []string{"d.deleted=0", "(d.private=0 OR d.owner_sub=?)"}
-	args := []any{v.sub}
+	// The library is public decks only. ?private=1 is the signed-in player's own private decks (their tab).
+	where := []string{"d.deleted=0", "d.private=0"}
+	args := []any{}
+	if q.Get("private") == "1" {
+		if v.sub == "" {
+			hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
+			return
+		}
+		where = []string{"d.deleted=0", "d.private=1", "d.owner_sub=?"}
+		args = []any{v.sub}
+	}
 	if onlyOwner != "" {
 		where = append(where, "d.owner_sub=?")
 		args = append(args, onlyOwner)
@@ -543,6 +552,13 @@ func (h *HSHandler) patchDeck(w http.ResponseWriter, r *http.Request, v hsViewer
 	if err := hsDecode(r, &in); err != nil {
 		hsErr(w, 400, "bad request body")
 		return
+	}
+	// Publishing needs a handle (the public deck page shows its author). Private decks never do.
+	if in.Private != nil && !*in.Private {
+		if _, has := h.profileOf(owner); !has {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "claim a handle before publishing a deck", "code": "handle_required"})
+			return
+		}
 	}
 	if in.Title != nil {
 		t, ok := hsText(*in.Title, 1, 80)

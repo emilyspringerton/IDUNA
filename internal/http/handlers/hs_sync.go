@@ -7,8 +7,8 @@ package handlers
 //   - a deck with the same Hearthstone deck id but different contents -> a NEW library entry "<name> (copy N)",
 //     the earlier versions are never edited;
 //   - a deck the owner deleted from the library is not resurrected;
-//   - synced decks start private (owner-only) unless the player turned on auto_publish (PUT /settings);
-//     the owner publishes with PATCH /decks/{id} {"private":false};
+//   - synced decks start private (owner-only) unless the player turned on auto_publish (PUT /settings) AND has claimed a handle;
+//     the owner publishes with PATCH /decks/{id} {"private":false}, which needs a handle (409 handle_required);
 //   - the finished game is stored against the deck, so it already has a win rate when first published.
 
 import (
@@ -40,6 +40,7 @@ func (h *HSHandler) syncDeckRow(sub string, dq queuedDeck, deck *hsdeck.Deck) in
 		h.DB.Exec(`UPDATE hs_decks SET source_deck_id=? WHERE id=? AND source_deck_id=''`, dq.id, id)
 		return id
 	}
+	_, hasHandle := h.profileOf(sub) // no handle -> always private, whatever the setting says
 	h.resolveNames(deck)
 	title := strings.TrimSpace(dq.name)
 	if title == "" {
@@ -61,7 +62,7 @@ func (h *HSHandler) syncDeckRow(sub string, dq queuedDeck, deck *hsdeck.Deck) in
 	res, err := h.DB.Exec(`INSERT INTO hs_decks (owner_sub,title,description,class,format,year,hero_dbf,deckstring,cards_json,dbf_json,card_count,names_resolved,private,source_deck_id)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sub, title, "Synced from your game tracker.", deck.Class, deck.Format, deck.Year, deck.HeroDBF, deck.Deckstring,
-		string(cards), string(dbf), deck.CardCount, boolInt(deck.NamesResolved), boolInt(!h.autoPublish(sub)), dq.id)
+		string(cards), string(dbf), deck.CardCount, boolInt(deck.NamesResolved), boolInt(!(h.autoPublish(sub) && hasHandle)), dq.id)
 	if err != nil {
 		return 0
 	}

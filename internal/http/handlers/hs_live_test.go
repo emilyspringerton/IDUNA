@@ -389,6 +389,10 @@ func TestHS_LiveSyncsDeckToLibraryAtGameEnd(t *testing.T) {
 	}
 	library := func(sub string) []any {
 		t.Helper()
+		return e.must(200, sub, "GET", "decks?private=1", "")["items"].([]any) // the private tab
+	}
+	public := func(sub string) []any {
+		t.Helper()
 		return e.must(200, sub, "GET", "decks", "")["items"].([]any)
 	}
 
@@ -402,7 +406,7 @@ func TestHS_LiveSyncsDeckToLibraryAtGameEnd(t *testing.T) {
 	if d1["title"] != "Deck A" || d1["private"] != true || d1["synced"] != true {
 		t.Fatalf("synced deck: %v", d1)
 	}
-	if got := library("grace"); len(got) != 0 {
+	if got := public("grace"); len(got) != 0 {
 		t.Fatalf("a private synced deck leaked to another player: %v", got)
 	}
 	id := strconv.Itoa(int(d1["id"].(float64)))
@@ -452,11 +456,19 @@ func TestHS_LiveSyncsDeckToLibraryAtGameEnd(t *testing.T) {
 		t.Fatalf("deck stats: games=%v wins=%v winrate=%v", one["games"], one["wins"], one["winrate"])
 	}
 
-	// the owner publishes one; now others can see exactly that one
+	// publishing needs a handle; once claimed, the deck moves from the private tab to the public library
+	if code, _ := e.do("frank", "PATCH", "decks/"+id, `{"private":false}`); code != 409 {
+		t.Fatalf("publish without a handle: %d", code)
+	}
+	e.must(200, "frank", "PUT", "me", `{"handle":"frank_hs"}`)
 	e.must(200, "frank", "PATCH", "decks/"+id, `{"private":false}`)
-	if got := library("grace"); len(got) != 1 {
+	if got := public("grace"); len(got) != 1 {
 		t.Fatalf("published deck should be visible to others, got %d", len(got))
 	}
+	if got := public("frank"); len(got) != 1 || len(library("frank")) != 1 {
+		t.Fatalf("one public, one still private")
+	}
+	e.must(401, "", "GET", "decks?private=1", "")
 }
 
 // Players who turn on auto_publish get synced decks published instantly (the default stays private).
@@ -477,6 +489,19 @@ func TestHS_LiveAutoPublishSetting(t *testing.T) {
 	if code, out := e.post(tok, "live/lines", jstr(map[string]any{"reset": true, "decks": decks, "power": power})); code != 200 {
 		t.Fatalf("post: %d %v", code, out)
 	}
+	// heidi has no handle yet: the deck is synced but stays private whatever the setting says,
+	// and publishing it is refused until she claims one.
+	own := e.must(200, "heidi", "GET", "decks?private=1", "")["items"].([]any)
+	if len(own) != 1 || own[0].(map[string]any)["private"] != true {
+		t.Fatalf("no handle: deck must sync private: %v", own)
+	}
+	did := strconv.Itoa(int(own[0].(map[string]any)["id"].(float64)))
+	if code, out := e.do("heidi", "PATCH", "decks/"+did, `{"private":false}`); code != 409 || out["code"] != "handle_required" {
+		t.Fatalf("publishing without a handle: %d %v", code, out)
+	}
+	e.must(200, "heidi", "PATCH", "decks/"+did, `{"title":"Renamed"}`) // editing a private deck needs no handle
+	e.must(200, "heidi", "PUT", "me", `{"handle":"heidi_hs"}`)
+	e.must(200, "heidi", "PATCH", "decks/"+did, `{"private":false}`)
 	items := e.must(200, "ivan", "GET", "decks", "")["items"].([]any)
 	if len(items) != 1 || items[0].(map[string]any)["private"] != false || items[0].(map[string]any)["games"] != float64(1) {
 		t.Fatalf("auto-published deck not visible to others with its record: %v", items)
