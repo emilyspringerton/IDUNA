@@ -139,6 +139,13 @@ func TestHS_LiveTrackerPrivateAndCountsCardsLeft(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "/api/v1/hs/live/lines") || strings.Contains(w.Body.String(), tok) {
 		t.Fatalf("uplink script: %d", w.Code)
 	}
+	// installer is public, makes shortcuts, and launches the same uplink
+	req = httptest.NewRequest("GET", "/api/v1/hs/live/install.ps1", nil)
+	w = httptest.NewRecorder()
+	e.h.ServeHTTP(w, req)
+	if b := w.Body.String(); w.Code != 200 || !strings.Contains(b, "CreateShortcut") || !strings.Contains(b, "/api/v1/hs/live/uplink.ps1") || strings.Contains(b, tok) {
+		t.Fatalf("installer script: %d", w.Code)
+	}
 	_ = base64.StdEncoding
 }
 

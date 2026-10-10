@@ -2,6 +2,7 @@
 
 ## 2026-10-10
 
+- HS live: `GET /api/v1/hs/live/install.ps1` one-time installer (launcher in %LOCALAPPDATA%\WOTAN that fetches the current uplink each start, Desktop + Start menu shortcut, no admin).
 - hs: live deck tracker endpoints (live/token, live/lines, live/state, live/uplink.ps1); vendored HRIP tracker runner (sess-20261009-1745-ee80b668)
 
 

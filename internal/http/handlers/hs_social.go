@@ -194,6 +194,8 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.liveState(w, r, v)
 	case rest == "live/uplink.ps1" && m == http.MethodGet:
 		h.liveUplink(w)
+	case rest == "live/install.ps1" && m == http.MethodGet:
+		h.liveInstaller(w)
 	case rest == "games" && m == http.MethodPost:
 		h.createGame(w, r, v)
 	case rest == "games" && m == http.MethodGet:

@@ -564,6 +564,62 @@ func (h *HSHandler) liveUplink(w http.ResponseWriter) {
 	_, _ = io.WriteString(w, hsUplinkScript)
 }
 
+// liveInstaller serves a one-time installer: it writes a small launcher and a Desktop + Start Menu shortcut.
+// The launcher fetches the current uplink on every start, so IDUNA deploys update every install automatically.
+func (h *HSHandler) liveInstaller(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, hsInstallerScript)
+}
+
+const hsInstallerScript = `# WOTAN Hearthstone tracker installer. Creates a Desktop shortcut; no admin rights, nothing else is changed.
+param([string]$Base = 'https://wotan.okemily.com')
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$dir = Join-Path $env:LOCALAPPDATA 'WOTAN'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$base = $Base.TrimEnd('/')
+$launcher = Join-Path $dir 'launch.ps1'
+$body = @'
+# WOTAN Hearthstone tracker launcher (written by the installer). Fetches the latest uplink every start.
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$base = '@@BASE@@'
+$cache = Join-Path $PSScriptRoot 'uplink.cached.ps1'
+try {
+  $src = Invoke-RestMethod ($base + '/api/v1/hs/live/uplink.ps1')
+  Set-Content -Path $cache -Value $src -Encoding UTF8
+} catch {
+  if (Test-Path $cache) { Write-Host 'WOTAN unreachable, using the last downloaded tracker.'; $src = Get-Content -Raw $cache }
+  else { Write-Host ('Could not reach WOTAN: ' + $_.Exception.Message); Read-Host 'Press Enter to close'; exit 1 }
+}
+$Host.UI.RawUI.WindowTitle = 'WOTAN Hearthstone Tracker'
+& ([scriptblock]::Create($src)) -Base $base
+Read-Host 'Tracker stopped. Press Enter to close'
+'@
+$body = $body.Replace('@@BASE@@', $base)
+Set-Content -Path $launcher -Value $body -Encoding UTF8
+
+$lnkArgs = '-NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '"'
+$ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$sh = New-Object -ComObject WScript.Shell
+$made = @()
+foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
+  if (-not $folder) { continue }
+  $lnk = $sh.CreateShortcut((Join-Path $folder 'WOTAN Hearthstone Tracker.lnk'))
+  $lnk.TargetPath = $ps
+  $lnk.Arguments = $lnkArgs
+  $lnk.WorkingDirectory = $dir
+  $lnk.IconLocation = (Join-Path $env:SystemRoot 'System32\shell32.dll') + ',13'
+  $lnk.Description = 'Live Hearthstone deck tracker for WOTAN'
+  $lnk.Save()
+  $made += $lnk.FullName
+}
+Write-Host 'Installed. Shortcuts created:'
+$made | ForEach-Object { Write-Host ('  ' + $_) }
+Write-Host 'Double-click "WOTAN Hearthstone Tracker" any time you play. Delete the shortcut and the folder' $dir 'to uninstall.'
+`
+
 const hsUplinkScript = `# WOTAN Hearthstone deck tracker uplink. Read-only: it tails your Hearthstone log files and sends the new
 # lines to WOTAN with a token only valid for uploading your own tracker data. Close this window to stop.
 param(
