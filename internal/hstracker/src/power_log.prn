@@ -1,0 +1,79 @@
+;; tracker/power_log.prn -- low-level scanning helpers for Hearthstone Power.log lines.
+;; Pure: no I/O, no globals; allocation only via the caller's Arena.
+;; Validated against a real Power.log (build 253216, 3 games) -- see tests/ and README.
+
+(module hs/power-log)
+(import string)
+(export find-from at? token-end value-of read-int skip-spaces name-before)
+
+;; does `needle` occur in `s` at index `i`?
+(defn at? [(s : String @ Region) (needle : String @ Region) (i : I32)]
+  : Bool
+  (let [nl (string/length needle)]
+    (if (> (+ i nl) (string/length s))
+      false
+      (loop [j 0]
+        (if (>= j nl)
+          true
+          (if (= (string/char-at s (+ i j)) (string/char-at needle j))
+            (recur (+ j 1))
+            false))))))
+
+;; index of the first occurrence of `needle` in `s` at or after `start`, or -1.
+(defn find-from [(s : String @ Region) (needle : String @ Region) (start : I32)]
+  : I32
+  (let [sl (string/length s)
+        nl (string/length needle)]
+    (loop [i start]
+      (if (> (+ i nl) sl)
+        (- 0 1)
+        (if (at? s needle i)
+          i
+          (recur (+ i 1)))))))
+
+;; end of the token starting at `start`: stops at space, ']' , ',' or end of string.
+(defn token-end [(s : String @ Region) (start : I32)]
+  : I32
+  (let [sl (string/length s)]
+    (loop [i start]
+      (if (>= i sl)
+        sl
+        (let [c (string/char-at s i)]
+          (if (or (= c 32) (or (= c 93) (= c 44)))
+            i
+            (recur (+ i 1))))))))
+
+;; value of `key` (e.g. "tag=") in `s` up to the next delimiter, or "" when absent.
+(defn value-of [(s : String @ Region) (key : String @ Region) (dest : Arena @ Region)]
+  : String @ Region
+  (let [at (find-from s key 0)]
+    (if (< at 0)
+      ""
+      (let [start (+ at (string/length key))]
+        (string/substring s start (token-end s start) dest)))))
+
+;; non-negative decimal at `start`, or -1 when no digit is there.
+(defn read-int [(s : String @ Region) (start : I32)]
+  : I32
+  (let [sl (string/length s)]
+    (loop [i start n 0 any false]
+      (if (and (< i sl) (string/is-digit? (string/char-at s i)))
+        (recur (+ i 1) (+ (* n 10) (- (string/char-at s i) 48)) true)
+        (if any n (- 0 1))))))
+
+;; index of the first non-space character at or after `start`.
+(defn skip-spaces [(s : String @ Region) (start : I32)]
+  : I32
+  (let [sl (string/length s)]
+    (loop [i start]
+      (if (and (< i sl) (= (string/char-at s i) 32))
+        (recur (+ i 1))
+        i))))
+
+;; text between `from` and the next occurrence of `stop` (names may contain spaces), or "".
+(defn name-before [(s : String @ Region) (from : I32) (stop : String @ Region) (dest : Arena @ Region)]
+  : String @ Region
+  (let [e (find-from s stop from)]
+    (if (< e 0)
+      ""
+      (string/substring s from e dest))))

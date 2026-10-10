@@ -1,0 +1,417 @@
+;; tracker/game_state.prn -- folds Hearthstone Power.log text into ONE game's full record:
+;;   header (type/format/players/result/turns), the ordered replay timeline (zone changes, plays,
+;;   turns), and the per-entity card+owner table that deck inference / matchup stats read.
+;; Event-sourced: lines become compact `Fact`s in a per-game Vec; output is derived by scans.
+;; Only GameState.DebugPrintPower()/DebugPrintGame() lines are read -- PowerTaskList.* lines are
+;; exact duplicates (verified on a real log).
+;;
+;; Fact kinds: 1 CARD  (a=entity, s=card id)        2 PLAY (a=entity, b=player, c=turn)
+;;             (CARD c = turn it was revealed in; PLAY s = card id known at play start)
+;;             3 ZONE  (a=entity, c=turn, s=zone)   4 CTRL (a=entity, b=player)
+;;             5 TURN  (a=turn number)
+
+(module hs/game-state)
+(import string)
+(import vec)
+(import hs/power-log)
+(export new-state fold-text summary-json GameState Fact)
+
+(defstruct Fact
+  (kind : I32)
+  (a    : I32)
+  (b    : I32)
+  (c    : I32)
+  (s    : String @ Region))
+
+(defstruct GameState
+  (game-type : String @ Region)
+  (format    : String @ Region)
+  (name1     : String @ Region)
+  (name2     : String @ Region)
+  (result1   : I32)          ;; 0 none, 1 won, 2 lost, 3 tied
+  (result2   : I32)
+  (turn      : I32)
+  (cur       : I32)          ;; entity whose indented "tag=" lines are being read
+  (started   : I32)
+  (complete  : I32)          ;; 0 running, 1 STATE=COMPLETE, 2 aborted by next CREATE_GAME
+  (consumed  : I32)          ;; bytes of the input text fully processed
+  (facts     : (Vec Fact) @ Region))
+
+;; `dest` must be the per-GAME arena (strings and facts persist until the game is summarised).
+(defn new-state [(dest : Arena @ Region)] : GameState @ Region
+  {:game-type "" :format "" :name1 "" :name2 ""
+   :result1 0 :result2 0 :turn 0 :cur 0 :started 0 :complete 0 :consumed 0
+   :facts (vec/new dest)})
+
+;; one place that rebuilds the struct; call sites pass every field (no partial update syntax).
+(defn mk [(st : GameState @ Region) (gt : String @ Region) (fm : String @ Region)
+          (n1 : String @ Region) (n2 : String @ Region) (r1 : I32) (r2 : I32)
+          (turn : I32) (cur : I32) (started : I32) (complete : I32) (consumed : I32)]
+  : GameState @ Region
+  {:game-type gt :format fm :name1 n1 :name2 n2 :result1 r1 :result2 r2
+   :turn turn :cur cur :started started :complete complete :consumed consumed
+   :facts (get-field st :facts)})
+
+(defn with-cur [(st : GameState @ Region) (cur : I32)] : GameState @ Region
+  (mk st (get-field st :game-type) (get-field st :format) (get-field st :name1) (get-field st :name2)
+      (get-field st :result1) (get-field st :result2) (get-field st :turn) cur
+      (get-field st :started) (get-field st :complete) (get-field st :consumed)))
+
+(defn with-turn [(st : GameState @ Region) (turn : I32)] : GameState @ Region
+  (mk st (get-field st :game-type) (get-field st :format) (get-field st :name1) (get-field st :name2)
+      (get-field st :result1) (get-field st :result2) turn (get-field st :cur)
+      (get-field st :started) (get-field st :complete) (get-field st :consumed)))
+
+(defn with-consumed [(st : GameState @ Region) (n : I32) (started : I32)] : GameState @ Region
+  (mk st (get-field st :game-type) (get-field st :format) (get-field st :name1) (get-field st :name2)
+      (get-field st :result1) (get-field st :result2) (get-field st :turn) (get-field st :cur)
+      started (get-field st :complete) n))
+
+(defn with-complete [(st : GameState @ Region) (n : I32) (c : I32)] : GameState @ Region
+  (mk st (get-field st :game-type) (get-field st :format) (get-field st :name1) (get-field st :name2)
+      (get-field st :result1) (get-field st :result2) (get-field st :turn) (get-field st :cur)
+      (get-field st :started) c n))
+
+(defn with-results [(st : GameState @ Region) (r1 : I32) (r2 : I32)] : GameState @ Region
+  (mk st (get-field st :game-type) (get-field st :format) (get-field st :name1) (get-field st :name2)
+      r1 r2 (get-field st :turn) (get-field st :cur)
+      (get-field st :started) (get-field st :complete) (get-field st :consumed)))
+
+(defn push-fact [(st : GameState @ Region) (kind : I32) (a : I32) (b : I32) (c : I32)
+                 (s : String @ Region) (game : Arena @ Region)]
+  : GameState @ Region
+  (do (vec/push! &mut (get-field st :facts)
+                 {:kind kind :a a :b b :c c :s (string/substring s 0 (string/length s) game)})
+      st))
+
+(defn result-code [(v : String @ Region)] : I32
+  (if (string/str-eq? v "WON")
+    1
+    (if (string/str-eq? v "LOST")
+      2
+      (if (string/str-eq? v "TIED") 3 0))))
+
+;; entity id of the reference starting at `from` (just after "Entity="): "[... id=NN ...]" or "NN";
+;; -1 for names (GameEntity, player names).
+(defn ent-id [(p : String @ Region) (from : I32)] : I32
+  (if (= (string/char-at p from) 91)
+    (let [at (power-log/find-from p " id=" from)]
+      (if (< at 0) (- 0 1) (power-log/read-int p (+ at 4))))
+    (power-log/read-int p from)))
+
+(defn handle-card-header [(st : GameState @ Region) (id : I32) (card : String @ Region)
+                          (game : Arena @ Region)]
+  : GameState @ Region
+  (let [s1 (with-cur st id)]
+    (if (> (string/length card) 0)
+      (push-fact s1 1 id 0 (get-field st :turn) card game)
+      s1)))
+
+;; payload = the line text after "... - ", leading spaces removed.
+(defn handle-payload [(st : GameState @ Region) (p : String @ Region)
+                      (scratch : Arena @ Region) (game : Arena @ Region)]
+  : GameState @ Region
+  (if (power-log/at? p "tag=" 0)
+    ;; indented attribute line belonging to the entity from the last FULL_/SHOW_ENTITY header
+    (let [key (power-log/value-of p "tag=" scratch)
+          val (power-log/value-of p "value=" scratch)
+          cur (get-field st :cur)]
+      (if (and (> cur 0) (string/str-eq? key "CONTROLLER"))
+        (push-fact st 4 cur (power-log/read-int val 0) 0 "" game)
+        (if (and (> cur 0) (string/str-eq? key "ZONE"))
+          (push-fact st 3 cur 0 (get-field st :turn) val game)
+          st)))
+    (if (power-log/at? p "FULL_ENTITY - Creating ID=" 0)
+      (handle-card-header st (power-log/read-int p 26) (power-log/value-of p "CardID=" scratch) game)
+      (if (power-log/at? p "SHOW_ENTITY - Updating Entity=" 0)
+        (handle-card-header st (ent-id p 30) (power-log/value-of p "CardID=" scratch) game)
+        (if (power-log/at? p "BLOCK_START BlockType=PLAY " 0)
+          (let [e (power-log/find-from p " Entity=" 0)
+                id (ent-id p (+ e 8))
+                pl (power-log/read-int p (+ (power-log/find-from p " player=" 0) 8))
+                card (power-log/value-of p "cardId=" scratch)
+                s1 (push-fact st 2 id pl (get-field st :turn) card game)]
+            (if (> (string/length card) 0) (push-fact s1 1 id 0 (get-field st :turn) card game) s1))
+          (if (power-log/at? p "TAG_CHANGE Entity=" 0)
+            (let [tag (power-log/value-of p "tag=" scratch)
+                  val (power-log/value-of p "value=" scratch)
+                  ename (power-log/name-before p 18 " tag=" scratch)
+                  id (ent-id p 18)]
+              (if (and (string/str-eq? tag "TURN")
+                       (or (string/str-eq? ename "GameEntity") (string/str-eq? ename "1")))
+                (let [n (power-log/read-int val 0)]
+                  (push-fact (with-turn st n) 5 n 0 n "" game))
+                (if (string/str-eq? tag "PLAYSTATE")
+                  (let [r (result-code val)]
+                    (if (> r 0)
+                      ;; slot by name; an opponent whose name was hidden at game start
+                      ;; ("UNKNOWN HUMAN PLAYER") is whichever slot is left over.
+                      (let [m1 (string/str-eq? ename (get-field st :name1))
+                            m2 (string/str-eq? ename (get-field st :name2))
+                            h1 (string/str-eq? (get-field st :name1) "UNKNOWN HUMAN PLAYER")
+                            to1 (or m1 (and (not m2) h1))
+                            to2 (and (not to1) (or m2 (not m1)))]
+                        (with-results st
+                          (if to1 r (get-field st :result1))
+                          (if to2 r (get-field st :result2))))
+                      st))
+                  (if (and (string/str-eq? tag "STATE") (string/str-eq? val "COMPLETE"))
+                    (with-complete st (get-field st :consumed) 1)
+                    (if (and (> id 0) (string/str-eq? tag "ZONE"))
+                      (push-fact st 3 id 0 (get-field st :turn) val game)
+                      (if (and (> id 0) (string/str-eq? tag "CONTROLLER"))
+                        (push-fact st 4 id (power-log/read-int val 0) 0 "" game)
+                        st))))))
+            st))))))
+
+;; DebugPrintGame lines: GameType= / FormatType= / PlayerID=n, PlayerName=NAME
+(defn handle-game-line [(st : GameState @ Region) (p : String @ Region) (game : Arena @ Region)]
+  : GameState @ Region
+  (if (power-log/at? p "GameType=" 0)
+    (mk st (string/substring p 9 (string/length p) game) (get-field st :format)
+        (get-field st :name1) (get-field st :name2) (get-field st :result1) (get-field st :result2)
+        (get-field st :turn) (get-field st :cur) (get-field st :started) (get-field st :complete)
+        (get-field st :consumed))
+    (if (power-log/at? p "FormatType=" 0)
+      (mk st (get-field st :game-type) (string/substring p 11 (string/length p) game)
+          (get-field st :name1) (get-field st :name2) (get-field st :result1) (get-field st :result2)
+          (get-field st :turn) (get-field st :cur) (get-field st :started) (get-field st :complete)
+          (get-field st :consumed))
+      (if (power-log/at? p "PlayerID=" 0)
+        (let [n (power-log/read-int p 9)
+              nm (power-log/find-from p "PlayerName=" 0)
+              name (string/substring p (+ nm 11) (string/length p) game)]
+          (mk st (get-field st :game-type) (get-field st :format)
+              (if (= n 1) name (get-field st :name1)) (if (= n 2) name (get-field st :name2))
+              (get-field st :result1) (get-field st :result2)
+              (get-field st :turn) (get-field st :cur) (get-field st :started)
+              (get-field st :complete) (get-field st :consumed)))
+        st))))
+
+;; consume one complete line; returns the updated state (consumed = offset after the line).
+(defn handle-line [(st : GameState @ Region) (line : String @ Region) (next : I32)
+                   (scratch : Arena @ Region) (game : Arena @ Region)]
+  : GameState @ Region
+  (let [pw (power-log/find-from line "GameState.DebugPrintPower() - " 0)
+        gm (power-log/find-from line "GameState.DebugPrintGame() - " 0)]
+    (if (>= pw 0)
+      (let [p (string/substring line (power-log/skip-spaces line (+ pw 30)) (string/length line) scratch)]
+        (if (power-log/at? p "CREATE_GAME" 0)
+          (with-consumed st next 1)
+          (with-consumed (handle-payload st p scratch game) next (get-field st :started))))
+      (if (>= gm 0)
+        (let [p (string/substring line (+ gm 29) (string/length line) scratch)]
+          (with-consumed (handle-game-line st p game) next (get-field st :started)))
+        (with-consumed st next (get-field st :started))))))
+
+;; index of the next '\n' at or after `pos`, or -1 at the NUL terminator (never strlen's the buffer).
+(defn newline-from [(text : String @ Region) (pos : I32)]
+  : I32
+  (loop [i pos]
+    (let [c (string/char-at text i)]
+      (if (= c 10)
+        i
+        (if (= c 0)
+          (- 0 1)
+          (recur (+ i 1)))))))
+
+;; Fold newline-terminated lines of `text` (starting at byte 0) into `st`. Stops at once when the
+;; game completes (STATE=COMPLETE) or a new CREATE_GAME arrives while a game was running (aborted,
+;; that line NOT consumed). A trailing partial line is never consumed. Check (get-field st :consumed).
+(defn fold-text [(text : String @ Region) (st : GameState @ Region)
+                 (scratch : Arena @ Region) (game : Arena @ Region)]
+  : GameState @ Region
+  (loop [pos 0 cur st]
+    (let [nl (newline-from text pos)]
+      (if (or (< nl 0) (> (get-field cur :complete) 0))
+        (with-consumed cur pos (get-field cur :started))
+        (let [e (if (and (> nl pos) (= (string/char-at text (- nl 1)) 13)) (- nl 1) nl) ;; CRLF logs
+              line (string/substring text pos e scratch)
+              pw (power-log/find-from line "GameState.DebugPrintPower() - " 0)
+              is-create (and (>= pw 0) (power-log/at? line "CREATE_GAME" (power-log/skip-spaces line (+ pw 30))))]
+          (if (and is-create (= (get-field cur :started) 1))
+            (with-complete cur pos 2)
+            (recur (+ nl 1) (handle-line cur line (+ nl 1) scratch game))))))))
+
+;; --- summary -------------------------------------------------------------------------------
+
+;; latest fact of `kind` for entity `id`: returns its index, or -1.
+(defn last-index [(facts : &(Vec Fact)) (kind : I32) (id : I32)] : I32
+  (loop [i (- (vec/len facts) 1)]
+    (if (< i 0)
+      (- 0 1)
+      (let [f (deref (vec/get facts i))]
+        (if (and (= (get-field f :kind) kind) (= (get-field f :a) id))
+          i
+          (recur (- i 1)))))))
+
+;; first fact of `kind` for entity `id`: index or -1.
+(defn first-index [(facts : &(Vec Fact)) (kind : I32) (id : I32)] : I32
+  (let [n (vec/len facts)]
+    (loop [i 0]
+      (if (>= i n)
+        (- 0 1)
+        (let [f (deref (vec/get facts i))]
+          (if (and (= (get-field f :kind) kind) (= (get-field f :a) id))
+            i
+            (recur (+ i 1))))))))
+
+(defn card-of [(facts : &(Vec Fact)) (id : I32)] : String @ Region
+  (let [i (last-index facts 1 id)]
+    (if (< i 0) "" (get-field (deref (vec/get facts i)) :s))))
+
+;; owning player of entity `id`: latest CTRL; PLAY facts carry it for played cards.
+(defn player-of [(facts : &(Vec Fact)) (id : I32)] : I32
+  (let [i (last-index facts 4 id)]
+    (if (< i 0)
+      (let [j (last-index facts 2 id)]
+        (if (< j 0) 0 (get-field (deref (vec/get facts j)) :b)))
+      (get-field (deref (vec/get facts i)) :b))))
+
+(defn first-zone-of [(facts : &(Vec Fact)) (id : I32)] : String @ Region
+  (let [i (first-index facts 3 id)]
+    (if (< i 0) "" (get-field (deref (vec/get facts i)) :s))))
+
+(defn cat [(a : String @ Region) (b : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (string/concat a b dest))
+
+(defn num [(n : I32) (dest : Arena @ Region)] : String @ Region
+  (string/i32-to-string n dest))
+
+;; number of PLAY blocks by `player` whose card id was already known when the play started
+;; (the local client knows its own card ids; the opponent's show blank until revealed).
+(defn known-plays [(facts : &(Vec Fact)) (player : I32)] : I32
+  (let [n (vec/len facts)]
+    (loop [i 0 c 0]
+      (if (>= i n)
+        c
+        (let [f (deref (vec/get facts i))]
+          (if (and (= (get-field f :kind) 2) (= (get-field f :b) player)
+                   (> (string/length (get-field f :s)) 0))
+            (recur (+ i 1) (+ c 1))
+            (recur (+ i 1) c)))))))
+
+;; non-HERO deck-origin cards of `player` revealed by turn 1 (the opening hand: only the local
+;; client sees its own hand; the opponent's stays hidden until played).
+(defn opening-count [(facts : &(Vec Fact)) (player : I32)] : I32
+  (let [n (vec/len facts)]
+    (loop [i 0 c 0]
+      (if (>= i n)
+        c
+        (let [f (deref (vec/get facts i))
+              id (get-field f :a)]
+          (if (and (= (get-field f :kind) 1) (<= (get-field f :c) 1)
+                   (= (first-index facts 1 id) i)
+                   (not (power-log/at? (get-field f :s) "HERO_" 0))
+                   (not (power-log/at? (get-field f :s) "TIME_EVENT" 0))
+                   (string/str-eq? (first-zone-of facts id) "DECK")
+                   (= (player-of facts id) player))
+            (recur (+ i 1) (+ c 1))
+            (recur (+ i 1) c)))))))
+
+;; the local player (1 or 2): opening-hand reveals first, known-id plays as the fallback; 0 if
+;; undecidable (nothing revealed yet).
+(defn me-of [(facts : &(Vec Fact))] : I32
+  (let [oa (opening-count facts 1)
+        ob (opening-count facts 2)]
+    (if (> oa ob)
+      1
+      (if (> ob oa)
+        2
+        (let [a (known-plays facts 1)
+              b (known-plays facts 2)]
+          (if (> a b) 1 (if (> b a) 2 0)))))))
+
+;; entities: every revealed card, once, with owner and the zone it first appeared in.
+;; ("DECK"/"HAND" first zone = part of that player's deck; PLAY/SETASIDE... = created by effects.)
+(defn entities-json [(facts : &(Vec Fact)) (dest : Arena @ Region)] : String @ Region
+  (let [n (vec/len facts)]
+    (loop [i 0 out ""]
+      (if (>= i n)
+        out
+        (let [f (deref (vec/get facts i))
+              id (get-field f :a)]
+          (if (and (= (get-field f :kind) 1) (= (first-index facts 1 id) i))
+            (recur (+ i 1)
+                   (cat out
+                        (cat (if (> (string/length out) 0) "," "")
+                          (cat (cat "{\"id\":" (num id dest) dest)
+                            (cat (cat ",\"player\":" (num (player-of facts id) dest) dest)
+                              (cat (cat ",\"card\":\"" (card-of facts id) dest)
+                                (cat (cat "\",\"zone0\":\"" (first-zone-of facts id) dest)
+                                     (cat (cat "\",\"t\":" (num (get-field f :c) dest) dest) "}" dest)
+                                     dest)
+                                dest)
+                              dest)
+                            dest)
+                          dest)
+                        dest))
+            (recur (+ i 1) out)))))))
+
+;; replay timeline, in log order: turn starts, zone changes and plays, each resolved to
+;; (owner, card). ["t",turn] | ["z",turn,entity,player,card,zone] | ["p",turn,entity,player,card]
+(defn timeline-json [(facts : &(Vec Fact)) (dest : Arena @ Region)] : String @ Region
+  (let [n (vec/len facts)]
+    (loop [i 0 out ""]
+      (if (>= i n)
+        out
+        (let [f (deref (vec/get facts i))
+              k (get-field f :kind)
+              id (get-field f :a)
+              sep (if (> (string/length out) 0) "," "")]
+          (if (= k 5)
+            (recur (+ i 1) (cat out (cat sep (cat (cat "[\"t\"," (num (get-field f :a) dest) dest) "]" dest) dest) dest))
+            (if (= k 3)
+              (recur (+ i 1)
+                     (cat out
+                          (cat sep
+                            (cat (cat "[\"z\"," (num (get-field f :c) dest) dest)
+                              (cat (cat "," (num id dest) dest)
+                                (cat (cat "," (num (player-of facts id) dest) dest)
+                                  (cat (cat ",\"" (card-of facts id) dest)
+                                    (cat (cat "\",\"" (get-field f :s) dest) "\"]" dest)
+                                    dest)
+                                  dest)
+                                dest)
+                              dest)
+                            dest)
+                          dest))
+              (if (= k 2)
+                (recur (+ i 1)
+                       (cat out
+                            (cat sep
+                              (cat (cat "[\"p\"," (num (get-field f :c) dest) dest)
+                                (cat (cat "," (num id dest) dest)
+                                  (cat (cat "," (num (get-field f :b) dest) dest)
+                                    (cat (cat ",\"" (card-of facts id) dest) "\"]" dest)
+                                    dest)
+                                  dest)
+                                dest)
+                              dest)
+                            dest))
+                (recur (+ i 1) out)))))))))
+
+(defn summary-json [(st : GameState @ Region) (dest : Arena @ Region)] : String @ Region
+  (cat
+      (cat
+        (cat (cat "{\"game_type\":\"" (get-field st :game-type) dest)
+             (cat (cat "\",\"format\":\"" (get-field st :format) dest)
+                  (cat (cat "\",\"player1\":\"" (get-field st :name1) dest)
+                       (cat (cat "\",\"player2\":\"" (get-field st :name2) dest)
+                            (cat (cat "\",\"result1\":" (num (get-field st :result1) dest) dest)
+                                 (cat (cat ",\"result2\":" (num (get-field st :result2) dest) dest)
+                                      (cat (cat ",\"turns\":" (num (get-field st :turn) dest) dest)
+                                           (cat (cat ",\"complete\":" (num (get-field st :complete) dest) dest)
+                                                (cat ",\"me\":" (num (me-of &(get-field st :facts)) dest) dest)
+                                                dest)
+                                           dest)
+                                      dest)
+                                 dest)
+                            dest)
+                       dest)
+                  dest)
+             dest)
+        (cat ",\"entities\":[" (entities-json &(get-field st :facts) dest) dest)
+        dest)
+      (cat "],\"timeline\":[" (cat (timeline-json &(get-field st :facts) dest) "]}" dest) dest)
+      dest))

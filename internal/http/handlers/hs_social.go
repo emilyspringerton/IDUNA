@@ -14,11 +14,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"iduna/internal/auth/jwt"
 	"iduna/internal/hsdeck"
+	"iduna/internal/hstracker"
 	"iduna/internal/http/middleware"
 )
 
@@ -29,6 +31,10 @@ type HSHandler struct {
 	Keys         *jwt.Keys
 	ReadLimiter  *middleware.IPRateLimiter // per IP, nil = unlimited (tests)
 	WriteLimiter *middleware.IPRateLimiter // per subject, nil = unlimited (tests)
+	Tracker      *hstracker.Runner         // live deck tracker (hs_live.go); nil = default runner
+
+	liveMu   sync.Mutex
+	liveSess map[string]*liveSession
 }
 
 var hsHandleRe = regexp.MustCompile(`^[a-z0-9_]{3,20}$`)
@@ -47,6 +53,9 @@ func (h *HSHandler) viewer(r *http.Request) hsViewer {
 	claims, err := jwt.Verify(h.Keys, strings.TrimPrefix(ah, "Bearer "))
 	if err != nil {
 		return hsViewer{}
+	}
+	if aud, _ := claims["aud"].(string); aud == hsLiveUploadAud {
+		return hsViewer{} // upload tokens are good for POST /live/lines only
 	}
 	sub, _ := claims["sub"].(string)
 	v := hsViewer{sub: sub}
@@ -97,6 +106,10 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, hsPrefix), "/")
 	p := strings.Split(rest, "/")
 	m := r.Method
+	if m == http.MethodPost && rest == "live/lines" {
+		h.liveLines(w, r)
+		return
+	}
 	isWrite := m != http.MethodGet && m != http.MethodHead
 	if isWrite && !(m == http.MethodPost && rest == "decks/parse") {
 		if v.sub == "" {
@@ -166,6 +179,12 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listComments(w, r, v, "hs_post_comments", "post_id", id(1))
 	case len(p) == 3 && p[0] == "wall" && p[2] == "comments" && m == http.MethodPost:
 		h.addComment(w, r, v, "hs_wall_posts", "hs_post_comments", "post_id", id(1))
+	case rest == "live/token" && m == http.MethodPost:
+		h.liveToken(w, v)
+	case rest == "live/state" && m == http.MethodGet:
+		h.liveState(w, r, v)
+	case rest == "live/uplink.ps1" && m == http.MethodGet:
+		h.liveUplink(w)
 	case rest == "games" && m == http.MethodPost:
 		h.createGame(w, r, v)
 	case rest == "games" && m == http.MethodGet:
