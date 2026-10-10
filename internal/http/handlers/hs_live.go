@@ -418,12 +418,15 @@ func (h *HSHandler) liveUplink(w http.ResponseWriter) {
 const hsUplinkScript = `# WOTAN Hearthstone deck tracker uplink. Read-only: it tails your Hearthstone log files and sends the new
 # lines to WOTAN with a token only valid for uploading your own tracker data. Close this window to stop.
 param(
-  [Parameter(Mandatory=$true)][string]$Token,
+  [string]$Token = '',                                  # optional: omit to sign in with IAM in your browser
   [string]$Base = 'https://wotan.okemily.com',
+  [string]$Iam = 'https://iam.okemily.com',
+  [int]$Port = 51824,                                   # loopback port for the sign-in callback
   [string]$LogsDir = ''
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$script:Token = $Token
 $url = $Base.TrimEnd('/') + '/api/v1/hs/live/lines'
 if (-not $LogsDir) {
   foreach ($c in @("${env:ProgramFiles(x86)}\Hearthstone\Logs", "$env:ProgramFiles\Hearthstone\Logs", 'C:\Program Files (x86)\Hearthstone\Logs')) {
@@ -436,6 +439,41 @@ Write-Host "Watching $LogsDir"
 # Compiled helper: PowerShell's pipeline is far too slow for tens of thousands of log lines.
 Add-Type -TypeDefinition @'
 using System; using System.IO; using System.Text; using System.Collections.Generic; using System.Text.RegularExpressions;
+using System.Net; using System.Net.Sockets; using System.Threading;
+public static class HsLogin {
+  const string PAGE = "<!doctype html><html><body style=\"font-family:sans-serif;padding:40px\"><p id=m>Signing in...</p><script>var h=location.hash.substring(1);if(h.indexOf('sso_token=')!==-1){fetch('/complete?'+h).then(function(){document.getElementById('m').textContent='Signed in - you can close this window.';}).catch(function(){document.getElementById('m').textContent='Something went wrong - check the PowerShell window.';});}else{document.getElementById('m').textContent='No token received from IDUNA.';}</script></body></html>";
+  // Loopback-only listener (127.0.0.1): returns the IAM token delivered by the sign-in redirect, or null on timeout.
+  public static string WaitForToken(int port, int timeoutSec) {
+    TcpListener l = new TcpListener(IPAddress.Loopback, port);
+    l.Start();
+    try {
+      DateTime end = DateTime.UtcNow.AddSeconds(timeoutSec);
+      while (DateTime.UtcNow < end) {
+        if (!l.Pending()) { Thread.Sleep(100); continue; }
+        using (TcpClient c = l.AcceptTcpClient()) {
+          c.ReceiveTimeout = 3000;
+          NetworkStream st = c.GetStream();
+          byte[] buf = new byte[8192]; int n = 0;
+          try { n = st.Read(buf, 0, buf.Length); } catch (Exception) { }
+          string req = Encoding.ASCII.GetString(buf, 0, n);
+          string[] first = req.Split('\n')[0].Split(' ');
+          string path = first.Length > 1 ? first[1] : "";
+          string token = null, body = PAGE, ct = "text/html; charset=utf-8";
+          if (path.StartsWith("/complete") && path.Contains("sso_token=")) {
+            int i = path.IndexOf("sso_token=") + 10; int j = path.IndexOf('&', i);
+            string t = Uri.UnescapeDataString(j < 0 ? path.Substring(i) : path.Substring(i, j - i));
+            if (t.Split('.').Length == 3) { token = t; body = "ok"; ct = "text/plain"; }
+          }
+          byte[] b = Encoding.UTF8.GetBytes(body);
+          byte[] h = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: " + ct + "\r\nContent-Length: " + b.Length + "\r\nConnection: close\r\n\r\n");
+          st.Write(h, 0, h.Length); st.Write(b, 0, b.Length);
+          if (token != null) return token;
+        }
+      }
+      return null;
+    } finally { l.Stop(); }
+  }
+}
 public static class HsTail {
   public static string[] ReadNew(string path, ref long offset, string pattern) {
     if (!File.Exists(path)) return new string[0];
@@ -472,6 +510,18 @@ public static class HsTail {
 }
 '@
 
+function Get-IamToken {
+  $redirect = "http://127.0.0.1:$Port/callback"
+  $loginUrl = "$Iam/api/v1/auth/sso/login?redirect_uri=" + [Uri]::EscapeDataString($redirect)
+  Write-Host "Opening your browser to sign in with IAM ($Iam) ..."
+  Start-Process $loginUrl
+  $t = [HsLogin]::WaitForToken($Port, 300)
+  if (-not $t) { throw 'Sign-in timed out. Close this window and run the command again.' }
+  Write-Host 'Signed in.'
+  return $t
+}
+$script:authNeeded = (-not $script:Token)
+
 # Pending buffers: a batch is only dropped after the server accepted it, so a 429/network blip never
 # loses log lines (the tracker needs every line of the game).
 $pendD = New-Object 'System.Collections.Generic.List[string]'
@@ -489,10 +539,10 @@ function Flush-Pending {
     $dArr = $pendD.ToArray()
     $body = '{"reset":' + $(if ($script:pendReset) { 'true' } else { 'false' }) + ',"decks":' + [HsTail]::JsonArr($dArr, 0, $dArr.Length) + ',"power":' + [HsTail]::JsonArr($arr, 0, $arr.Length) + '}'
     try {
-      Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $Token" } -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30 | Out-Null
+      Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $($script:Token)" } -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30 | Out-Null
     } catch {
       $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
-      if ($code -eq 401) { Write-Host 'Token expired. Get a new command from the tracker page.'; exit 2 }
+      if ($code -eq 401) { Write-Host 'Session expired or not valid - signing in again.'; $script:authNeeded = $true; return }
       Write-Host "Upload failed (will retry): $($_.Exception.Message)"
       return
     }
@@ -506,6 +556,10 @@ $folder = ''; [long]$pOff = 0; [long]$dOff = 0
 $pat = 'GameState\.DebugPrint(Power|Game)\(\) - '
 while ($true) {
   try {
+    if ($script:authNeeded) {
+      try { $script:Token = Get-IamToken; $script:authNeeded = $false }
+      catch { Write-Host $_.Exception.Message; Start-Sleep -Seconds 30; continue }
+    }
     $newest = Get-ChildItem $LogsDir -Directory -Filter 'Hearthstone_*' -ErrorAction Stop | Sort-Object Name -Descending | Select-Object -First 1
     if ($newest) {
       if ($newest.FullName -ne $folder) {
