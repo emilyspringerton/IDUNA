@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-10-10
+
+- hs: live deck tracker endpoints (live/token, live/lines, live/state, live/uplink.ps1); vendored HRIP tracker runner (sess-20261009-1745-ee80b668)
+
+
 ## 2026-10-09 (cont. 2)
 - hs: POST /api/v1/hs/games (tracker records, class from hero cards, dedupe), GET games/{id} replay (owner-only), GET stats/matchups; hs_cards.card_id (sess-20261009-1745-ee80b668)
 - DRIVE SLURP page: drag-and-drop direct upload (POST /admin/drive-slurp/upload), sha256-deduped, no Drive needed (sess-20261009-1745-ee80b668)
