@@ -24,6 +24,7 @@ import (
 	"iduna/internal/auth/jwt"
 	"iduna/internal/hsdeck"
 	"iduna/internal/hstracker"
+	"iduna/internal/http/middleware"
 )
 
 const (
@@ -135,9 +136,21 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 		hsErr(w, http.StatusUnauthorized, "invalid or expired upload token")
 		return
 	}
-	if h.WriteLimiter != nil && !h.WriteLimiter.Allow("hslive:"+sub) {
-		hsErr(w, http.StatusTooManyRequests, "slow down")
-		return
+	// The uplink posts about once a second while a game is on, so it must not share the 40/min
+	// deck-write limiter (that starved it after ~1 minute and dropped batches). Separate, generous
+	// per-subject bucket; still bounded (and the body is capped) so it cannot be abused.
+	if h.WriteLimiter != nil {
+		h.liveMu.Lock()
+		if h.liveLim == nil {
+			h.liveLim = middleware.NewIPRateLimiter(900)
+		}
+		lim := h.liveLim
+		h.liveMu.Unlock()
+		if !lim.Allow("hslive:" + sub) {
+			w.Header().Set("Retry-After", "5")
+			hsErr(w, http.StatusTooManyRequests, "slow down")
+			return
+		}
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hsLiveMaxBody))
 	if err != nil {
@@ -420,69 +433,94 @@ if (-not $LogsDir) {
 if (-not $LogsDir -or -not (Test-Path $LogsDir)) { Write-Host 'Could not find Hearthstone\Logs. Pass -LogsDir "<path>".'; exit 1 }
 Write-Host "Watching $LogsDir"
 
-function Read-New([string]$path, [ref]$offset) {
-  if (-not (Test-Path $path)) { return @() }
-  $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
-  try {
-    if ($fs.Length -lt $offset.Value) { $offset.Value = 0 }
-    $fs.Seek($offset.Value, 'Begin') | Out-Null
-    $n = [int]($fs.Length - $offset.Value)
-    if ($n -le 0) { return @() }
-    $buf = New-Object byte[] $n
-    $got = $fs.Read($buf, 0, $n)
-    $text = [Text.Encoding]::UTF8.GetString($buf, 0, $got)
-  } finally { $fs.Close() }
-  $last = $text.LastIndexOf("` + "`n" + `")
-  if ($last -lt 0) { return @() }
-  $offset.Value += [Text.Encoding]::UTF8.GetByteCount($text.Substring(0, $last + 1))
-  return @($text.Substring(0, $last).Split("` + "`n" + `") | ForEach-Object { $_.TrimEnd("` + "`r" + `") })
+# Compiled helper: PowerShell's pipeline is far too slow for tens of thousands of log lines.
+Add-Type -TypeDefinition @'
+using System; using System.IO; using System.Text; using System.Collections.Generic; using System.Text.RegularExpressions;
+public static class HsTail {
+  public static string[] ReadNew(string path, ref long offset, string pattern) {
+    if (!File.Exists(path)) return new string[0];
+    byte[] buf; int got = 0;
+    using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
+      if (fs.Length < offset) offset = 0;
+      long n = fs.Length - offset;
+      if (n <= 0) return new string[0];
+      fs.Seek(offset, SeekOrigin.Begin);
+      buf = new byte[n];
+      while (got < n) { int r = fs.Read(buf, got, (int)n - got); if (r <= 0) break; got += r; }
+    }
+    int last = Array.LastIndexOf(buf, (byte)10, got - 1);
+    if (last < 0) return new string[0];
+    offset += last + 1;
+    string text = Encoding.UTF8.GetString(buf, 0, last);
+    Regex re = pattern == null ? null : new Regex(pattern);
+    List<string> res = new List<string>();
+    foreach (string raw in text.Split('\n')) { string ln = raw.TrimEnd('\r'); if (re == null || re.IsMatch(ln)) res.Add(ln); }
+    return res.ToArray();
+  }
+  public static string JsonArr(string[] a, int from, int count) {
+    StringBuilder sb = new StringBuilder("[");
+    for (int i = 0; i < count; i++) {
+      if (i > 0) sb.Append(',');
+      sb.Append('"');
+      foreach (char c in a[from + i]) {
+        if (c == '\\') sb.Append("\\\\"); else if (c == '"') sb.Append("\\\""); else if (c < ' ') sb.Append(' '); else sb.Append(c);
+      }
+      sb.Append('"');
+    }
+    return sb.Append(']').ToString();
+  }
 }
+'@
 
-function JsonStr([string]$s) {
-  # minimal JSON string escape; ConvertTo-Json is far too slow on thousands of lines in PowerShell 5.1
-  $e = $s.Replace('\', '\\').Replace('"', '\"')
-  $e = [regex]::Replace($e, '[\x00-\x1f]', ' ')
-  return '"' + $e + '"'
-}
-function JsonArr([string[]]$a) {
-  if (-not $a -or $a.Count -eq 0) { return '[]' }
-  $sb = New-Object Text.StringBuilder
-  [void]$sb.Append('[')
-  for ($k = 0; $k -lt $a.Count; $k++) { if ($k -gt 0) { [void]$sb.Append(',') }; [void]$sb.Append((JsonStr $a[$k])) }
-  [void]$sb.Append(']')
-  return $sb.ToString()
-}
+# Pending buffers: a batch is only dropped after the server accepted it, so a 429/network blip never
+# loses log lines (the tracker needs every line of the game).
+$pendD = New-Object 'System.Collections.Generic.List[string]'
+$pendP = New-Object 'System.Collections.Generic.List[string]'
+$script:pendReset = $false
 
-function Send([string[]]$decks, [string[]]$power, [bool]$reset) {
-  # only the current game matters: start at the last CREATE_GAME in this batch
-  $start = 0
-  for ($k = $power.Count - 1; $k -ge 0; $k--) { if ($power[$k].EndsWith('GameState.DebugPrintPower() - CREATE_GAME')) { $start = $k; break } }
-  if ($start -gt 0) { $power = $power[$start..($power.Count - 1)]; $reset = $true }
-  for ($i = 0; $i -lt [Math]::Max(1, $power.Count); $i += 4000) {
-    $chunk = if ($power.Count -gt 0) { $power[$i..([Math]::Min($i + 3999, $power.Count - 1))] } else { @() }
-    $d = if ($i -eq 0) { $decks } else { @() }
-    $body = '{"reset":' + $(if ($reset) { 'true' } else { 'false' }) + ',"decks":' + (JsonArr $d) + ',"power":' + (JsonArr $chunk) + '}'
+function Flush-Pending {
+  # only the current game matters: start at the last CREATE_GAME still pending
+  for ($k = $pendP.Count - 1; $k -ge 1; $k--) {
+    if ($pendP[$k].EndsWith('GameState.DebugPrintPower() - CREATE_GAME')) { $pendP.RemoveRange(0, $k); $script:pendReset = $true; break }
+  }
+  do {
+    $cnt = [Math]::Min(4000, $pendP.Count)
+    $arr = $pendP.GetRange(0, $cnt).ToArray()
+    $dArr = $pendD.ToArray()
+    $body = '{"reset":' + $(if ($script:pendReset) { 'true' } else { 'false' }) + ',"decks":' + [HsTail]::JsonArr($dArr, 0, $dArr.Length) + ',"power":' + [HsTail]::JsonArr($arr, 0, $arr.Length) + '}'
     try {
       Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $Token" } -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30 | Out-Null
     } catch {
       $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
       if ($code -eq 401) { Write-Host 'Token expired. Get a new command from the tracker page.'; exit 2 }
-      Write-Host "Upload failed: $($_.Exception.Message)"
+      Write-Host "Upload failed (will retry): $($_.Exception.Message)"
+      return
     }
-    $reset = $false
-  }
+    $pendP.RemoveRange(0, $cnt); $pendD.Clear(); $script:pendReset = $false
+    if ($cnt -gt 0) { Write-Host ("sent {0} lines" -f $cnt) }
+  } while ($pendP.Count -gt 0)
 }
 
-$folder = ''; $pOff = [ref]0; $dOff = [ref]0
+$ErrorActionPreference = 'Continue'   # a transient file/IO error must not kill the tracker
+$folder = ''; [long]$pOff = 0; [long]$dOff = 0
 $pat = 'GameState\.DebugPrint(Power|Game)\(\) - '
 while ($true) {
-  $newest = Get-ChildItem $LogsDir -Directory -Filter 'Hearthstone_*' | Sort-Object Name -Descending | Select-Object -First 1
-  if ($newest) {
-    $reset = $false
-    if ($newest.FullName -ne $folder) { $folder = $newest.FullName; $pOff.Value = 0; $dOff.Value = 0; $reset = $true; Write-Host "Session: $($newest.Name)" }
-    $d = Read-New (Join-Path $folder 'Decks.log') $dOff
-    $p = @(Read-New (Join-Path $folder 'Power.log') $pOff | Where-Object { $_ -match $pat })
-    if ($d.Count -gt 0 -or $p.Count -gt 0 -or $reset) { Send $d $p $reset; if ($p.Count -gt 0) { Write-Host ("sent {0} lines" -f $p.Count) } }
+  try {
+    $newest = Get-ChildItem $LogsDir -Directory -Filter 'Hearthstone_*' -ErrorAction Stop | Sort-Object Name -Descending | Select-Object -First 1
+    if ($newest) {
+      if ($newest.FullName -ne $folder) {
+        $folder = $newest.FullName; $pOff = 0; $dOff = 0; $script:pendReset = $true
+        $pendD.Clear(); $pendP.Clear()
+        Write-Host "Session: $($newest.Name)"
+      }
+      $d = [HsTail]::ReadNew((Join-Path $folder 'Decks.log'), [ref]$dOff, $null)
+      $p = [HsTail]::ReadNew((Join-Path $folder 'Power.log'), [ref]$pOff, $pat)
+      if ($d.Length -gt 0) { $pendD.AddRange($d) }
+      if ($p.Length -gt 0) { $pendP.AddRange($p) }
+      if ($pendD.Count -gt 0 -or $pendP.Count -gt 0 -or $script:pendReset) { Flush-Pending }
+    }
+  } catch {
+    Write-Host "Error (continuing): $($_.Exception.Message)"
   }
   Start-Sleep -Milliseconds 1000
 }

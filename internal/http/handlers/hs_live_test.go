@@ -14,6 +14,7 @@ import (
 	"iduna/internal/hsdeck"
 	"iduna/internal/hstracker"
 	"iduna/internal/http/handlers"
+	"iduna/internal/http/middleware"
 )
 
 // A deck code for a 30-card Druid deck (real, from a Decks.log "Finding Game With Deck" block).
@@ -139,4 +140,19 @@ func TestHS_LiveTrackerPrivateAndCountsCardsLeft(t *testing.T) {
 		t.Fatalf("uplink script: %d", w.Code)
 	}
 	_ = base64.StdEncoding
+}
+
+// The uplink posts about once a second for the whole game. It must never be starved by the 40/min
+// deck-write limiter (regression: batches were 429'd after ~1 minute and the tracker went stale).
+func TestHS_LiveLinesNotStarvedByWriteLimiter(t *testing.T) {
+	e := newHSEnv(t)
+	hh := e.h.(*handlers.HSHandler)
+	hh.WriteLimiter = middleware.NewIPRateLimiter(40)
+	tok := e.must(200, "carol", "POST", "live/token", "")["token"].(string)
+	line := "D 12:00:00.0000000 GameState.DebugPrintPower() - TAG_CHANGE Entity=GameEntity tag=TURN value=1 "
+	for i := 0; i < 200; i++ {
+		if code, out := e.post(tok, "live/lines", jstr(map[string]any{"power": []string{line}})); code != 200 {
+			t.Fatalf("batch %d: status %d %v", i, code, out)
+		}
+	}
 }

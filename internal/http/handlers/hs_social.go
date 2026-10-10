@@ -35,6 +35,7 @@ type HSHandler struct {
 
 	liveMu   sync.Mutex
 	liveSess map[string]*liveSession
+	liveLim  *middleware.IPRateLimiter // uplink batches (about 1/s while playing); separate from WriteLimiter
 }
 
 var hsHandleRe = regexp.MustCompile(`^[a-z0-9_]{3,20}$`)
