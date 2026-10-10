@@ -438,12 +438,32 @@ function Read-New([string]$path, [ref]$offset) {
   return @($text.Substring(0, $last).Split("` + "`n" + `") | ForEach-Object { $_.TrimEnd("` + "`r" + `") })
 }
 
+function JsonStr([string]$s) {
+  # minimal JSON string escape; ConvertTo-Json is far too slow on thousands of lines in PowerShell 5.1
+  $e = $s.Replace('\', '\\').Replace('"', '\"')
+  $e = [regex]::Replace($e, '[\x00-\x1f]', ' ')
+  return '"' + $e + '"'
+}
+function JsonArr([string[]]$a) {
+  if (-not $a -or $a.Count -eq 0) { return '[]' }
+  $sb = New-Object Text.StringBuilder
+  [void]$sb.Append('[')
+  for ($k = 0; $k -lt $a.Count; $k++) { if ($k -gt 0) { [void]$sb.Append(',') }; [void]$sb.Append((JsonStr $a[$k])) }
+  [void]$sb.Append(']')
+  return $sb.ToString()
+}
+
 function Send([string[]]$decks, [string[]]$power, [bool]$reset) {
+  # only the current game matters: start at the last CREATE_GAME in this batch
+  $start = 0
+  for ($k = $power.Count - 1; $k -ge 0; $k--) { if ($power[$k].EndsWith('GameState.DebugPrintPower() - CREATE_GAME')) { $start = $k; break } }
+  if ($start -gt 0) { $power = $power[$start..($power.Count - 1)]; $reset = $true }
   for ($i = 0; $i -lt [Math]::Max(1, $power.Count); $i += 4000) {
     $chunk = if ($power.Count -gt 0) { $power[$i..([Math]::Min($i + 3999, $power.Count - 1))] } else { @() }
-    $body = @{ reset = $reset; decks = @($(if ($i -eq 0) { $decks } else { @() })); power = @($chunk) } | ConvertTo-Json -Compress -Depth 4
+    $d = if ($i -eq 0) { $decks } else { @() }
+    $body = '{"reset":' + $(if ($reset) { 'true' } else { 'false' }) + ',"decks":' + (JsonArr $d) + ',"power":' + (JsonArr $chunk) + '}'
     try {
-      Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $Token" } -ContentType 'application/json' -Body $body | Out-Null
+      Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $Token" } -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30 | Out-Null
     } catch {
       $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
       if ($code -eq 401) { Write-Host 'Token expired. Get a new command from the tracker page.'; exit 2 }
