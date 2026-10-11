@@ -324,6 +324,11 @@
 
 ;; entities: every revealed card, once, with owner and the zone it first appeared in.
 ;; ("DECK"/"HAND" first zone = part of that player's deck; PLAY/SETASIDE... = created by effects.)
+;; "card" is the CURRENT card id (card-of: latest SHOW_ENTITY/FULL_ENTITY wins -- correct for e.g. a
+;; transformed minion, where callers want what it IS now). "card0" is the id this same entity FIRST
+;; revealed as (f itself, the fact that gated this row's emission, is already that first occurrence)
+;; -- callers that need the ORIGINAL identity (e.g. a hero, before any later "become a new hero"
+;; effect overwrites this entity's card via another SHOW_ENTITY) read card0 instead.
 (defn entities-json [(facts : &(Vec Fact)) (dest : Arena @ Region)] : String @ Region
   (let [n (vec/len facts)]
     (loop [i 0 out ""]
@@ -332,20 +337,16 @@
         (let [f (deref (vec/get facts i))
               id (get-field f :a)]
           (if (and (= (get-field f :kind) 1) (= (first-index facts 1 id) i))
-            (recur (+ i 1)
-                   (cat out
-                        (cat (if (> (string/length out) 0) "," "")
-                          (cat (cat "{\"id\":" (num id dest) dest)
-                            (cat (cat ",\"player\":" (num (player-of facts id) dest) dest)
-                              (cat (cat ",\"card\":\"" (card-of facts id) dest)
-                                (cat (cat "\",\"zone0\":\"" (first-zone-of facts id) dest)
-                                     (cat (cat "\",\"t\":" (num (get-field f :c) dest) dest) "}" dest)
-                                     dest)
-                                dest)
-                              dest)
-                            dest)
-                          dest)
-                        dest))
+            (let [r0 (cat "{\"id\":" (num id dest) dest)
+                  r1 (cat r0 (cat ",\"player\":" (num (player-of facts id) dest) dest) dest)
+                  r2 (cat r1 (cat ",\"card\":\"" (card-of facts id) dest) dest)
+                  r3 (cat r2 (cat "\",\"card0\":\"" (get-field f :s) dest) dest)
+                  r4 (cat r3 (cat "\",\"zone0\":\"" (first-zone-of facts id) dest) dest)
+                  r5 (cat r4 (cat "\",\"t\":" (num (get-field f :c) dest) dest) dest)
+                  r6 (cat r5 "}" dest)
+                  sep (if (> (string/length out) 0) "," "")
+                  row (cat sep r6 dest)]
+              (recur (+ i 1) (cat out row dest)))
             (recur (+ i 1) out)))))))
 
 ;; replay timeline, in log order: turn starts, zone changes and plays, each resolved to

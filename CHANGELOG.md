@@ -2,6 +2,35 @@
 
 ## 2026-10-11
 
+- Fixed real bug (follow-up to the me/opponent swap fix earlier today): founder reported the live
+  tracker was STILL glitched, same symptom, across two separate games, and pinned it on "dragon
+  soul essences." Root cause: `game_state.prn`'s `card-of` (used for every entity's `"card"` field)
+  always returns the LATEST known card id for an entity -- correct for most cards, but wrong for
+  `classOfPlayer`'s hero-class signal specifically, because a mid-game "become a new hero" effect
+  overwrites the SAME hero entity's card id via a second `SHOW_ENTITY`. That silently defeated this
+  morning's hero-class cross-check: `classOfPlayer` would resolve the transformed hero (often
+  unmapped to any class) instead of the original one, both sides would stop matching our deck's
+  class, and the override would fall back to the exact reveal-count heuristic it exists to correct.
+  Fix: `entities-json` now also emits `"card0"` (the id this entity FIRST revealed as -- heroes are
+  always revealed via `FULL_ENTITY` at `CREATE_GAME`, before any transform effect can run);
+  `hstracker.Entity` gets a matching `Card0` field; `classOfPlayer` reads `Card0` instead of `Card`.
+  `"card"` itself is untouched, so every other consumer (cards left/drawn, opponent-seen, which
+  correctly want a card's CURRENT identity) is unaffected.
+- Found and fixed a second, related bug while in this code: `computeLive` called `storeLiveGame`
+  with `rec` (and `storeLiveGame` checked/stored `rec.Me` directly) -- the bare heuristic value,
+  not the cross-checked `resolveMe` result the live page itself was already showing. A game could
+  display correctly on the live page and still save under the WRONG player into deck/match history.
+  `resolveMe` is now computed once in `computeLive` and threaded into `storeLiveGame` explicitly.
+  New regression test `TestHS_LiveMeSurvivesMidGameHeroTransform`: constructs a game with the same
+  reveal-count imbalance as this morning's test, plus a mid-game `SHOW_ENTITY` hero transform with
+  no class mapping -- confirmed failing without the `card0` fix (30 left / 0 drawn, the exact
+  pre-fix signature) and passing with it, by temporarily reverting just `classOfPlayer` back to
+  `Card` and restoring it (not a destructive git revert). All `TestHS_*` tests green across 3
+  repeated runs. Full suite has pre-existing, unrelated flakiness in `internal/http/handlers`
+  (guest/draft-run/top-up tests -- confirmed via `git stash` to fail identically with or without
+  this change) and `internal/nock` (missing SDL2 headers / ImageMagick `convert` in this sandbox).
+  session: sess-20261009-1745-ee80b668
+
 - Fixed real bug: WOTAN's Hearthstone live tracker (`hearthstone/tracker.html`) was swapping
   identities mid-game -- the player's own drawn cards showed up in the "opponent revealed" panel
   and vice versa. Founder real-time report, caught while actually playing a tracked game. Root

@@ -259,6 +259,121 @@ func TestHS_LiveMeCrossCheckedAgainstHeroClass(t *testing.T) {
 	}
 }
 
+// Regression for the founder's live report (2026-10-11): a mid-game "become a new hero" effect
+// (dragon/soul-essence-flavored transforms are the real-world trigger, but any such effect works
+// the same way) overwrites OUR hero entity's card id via a second SHOW_ENTITY, same entity ID.
+// game_state.prn's card-of always returns the LATEST card id for an entity -- correct for e.g. a
+// transformed minion, wrong for classOfPlayer's hero-class signal, which needs the ORIGINAL hero.
+// Before entities-json exposed card0 (the first-revealed id), classOfPlayer read Card (now the
+// transformed hero, unmapped to any class) and found neither side matching our deck's class, so
+// the whole cross-check went inert and fell back to the same broken reveal-count heuristic --
+// i.e. the fix from TestHS_LiveMeCrossCheckedAgainstHeroClass silently stopped applying.
+func TestHS_LiveMeSurvivesMidGameHeroTransform(t *testing.T) {
+	parena := os.Getenv("NOCK_PARENA_BIN")
+	if parena == "" {
+		parena = "/home/garybifrost/PARENA/parena"
+	}
+	if _, err := os.Stat(parena); err != nil {
+		t.Skip("parena compiler not available")
+	}
+	t.Setenv("NOCK_PARENA_BIN", parena)
+	t.Setenv("NOCK_PARENA_RUNTIME_DIR", "../../nock/parena_runtime")
+
+	e := newHSEnv(t)
+	hh := e.h.(*handlers.HSHandler)
+	hh.Tracker = &hstracker.Runner{WorkDir: filepath.Join(t.TempDir(), "trk")}
+
+	d, err := hsdeck.Decode(liveTestCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range d.DBFCards {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,?,?)`,
+			c.DBF, "Card "+strconv.Itoa(c.DBF), c.DBF%7, "T_"+strconv.Itoa(c.DBF)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := d.DBFCards[0].DBF, d.DBFCards[1].DBF
+
+	oppClass := ""
+	for _, c := range hsdeck.Classes {
+		if c != d.Class {
+			oppClass = c
+			break
+		}
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (90010,'Me','0','HERO_P1',?)`, d.Class); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (90011,'Opp','0','HERO_P2',?)`, oppClass); err != nil {
+		t.Fatal(err)
+	}
+	// deliberately NO hs_cards row for HERO_DRAGON_FORM: a hero skin the local card table hasn't
+	// seen yet, or a neutral/classless transform target -- either way, card_id alone must not
+	// resolve a class, which is exactly what makes this regression test the transform, not a
+	// lookup gap.
+	for i, id := range []string{"OPP_1", "OPP_2", "OPP_3"} {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,0,?)`, 90020+i, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tok := e.must(200, "alice", "POST", "live/token", "")["token"].(string)
+	pw := func(s string) string { return "D 12:00:00.0000000 GameState.DebugPrintPower() - " + s }
+	gm := func(s string) string { return "D 12:00:00.0000000 GameState.DebugPrintGame() - " + s }
+	power := []string{
+		pw("CREATE_GAME"),
+		gm("PlayerID=1, PlayerName=Alice#1"),
+		gm("PlayerID=2, PlayerName=UNKNOWN HUMAN PLAYER"),
+		pw("    FULL_ENTITY - Creating ID=201 CardID=HERO_P1"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=1"),
+		pw("    FULL_ENTITY - Creating ID=202 CardID=HERO_P2"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=2"),
+		// the transform: same entity (201), new card id, no class mapping -- card-of now returns
+		// this one; card0 must keep returning HERO_P1.
+		pw("    SHOW_ENTITY - Updating Entity=201 CardID=HERO_DRAGON_FORM"),
+	}
+	// same reveal-count imbalance as the sibling test: the bare heuristic alone would call player 2
+	// "me" (3 known-by-turn-1 vs our 2), so this only passes if the class cross-check actually fires.
+	for i, id := range []string{"OPP_1", "OPP_2", "OPP_3"} {
+		eid := strconv.Itoa(300 + i)
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+eid+" CardID="+id),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=2"))
+	}
+	for id := 10; id < 12; id++ {
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+strconv.Itoa(id)+" CardID="),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=1"))
+	}
+	power = append(power, pw("TAG_CHANGE Entity=GameEntity tag=TURN value=1 "))
+	for i, dbf := range []int{first, second} {
+		id := strconv.Itoa(10 + i)
+		power = append(power,
+			pw("    SHOW_ENTITY - Updating Entity="+id+" CardID=T_"+strconv.Itoa(dbf)),
+			pw("TAG_CHANGE Entity=[entityName=x id="+id+" zone=DECK zonePos=1 cardId=T_"+strconv.Itoa(dbf)+" player=1] tag=ZONE value=HAND "))
+	}
+	decks := []string{
+		"I 11:59:30.0000000 Finding Game With Deck:",
+		"I 11:59:30.0000000 ### Test " + d.Class,
+		"I 11:59:30.0000000 # Deck ID: 42",
+		"I 11:59:30.0000000 " + liveTestCode,
+	}
+	body := jstr(map[string]any{"reset": true, "decks": decks, "power": power})
+	if code, out := e.post(tok, "live/lines", body); code != 200 {
+		t.Fatalf("live/lines: %d %v", code, out)
+	}
+
+	st := e.must(200, "alice", "GET", "live/state", "")
+	if st["left_total"] != float64(28) || st["drawn_total"] != float64(2) {
+		t.Fatalf("hero transform defeated the class cross-check, same as the pre-fix bug: want 28 left / 2 drawn, got %v / %v (note=%v)",
+			st["left_total"], st["drawn_total"], st["note"])
+	}
+	opp, _ := st["opponent"].(map[string]any)
+	for _, c := range opp["cards"].([]any) {
+		cid := c.(map[string]any)["name"]
+		if strings.HasPrefix(fmt.Sprint(cid), "Card ") {
+			t.Fatalf("our own drawn card leaked into the opponent panel: %v", opp["cards"])
+		}
+	}
+}
+
 // The uplink posts about once a second for the whole game. It must never be starved by the 40/min
 // deck-write limiter (regression: batches were 429'd after ~1 minute and the tracker went stale).
 func TestHS_LiveLinesNotStarvedByWriteLimiter(t *testing.T) {

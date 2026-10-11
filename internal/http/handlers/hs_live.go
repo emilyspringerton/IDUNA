@@ -451,6 +451,7 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 	}
 	st.InGame = rec.Complete == 0
 	st.Turn = rec.Turns
+	me := h.resolveMe(rec, deck.Class)
 	if rec.Complete == 1 && s.power != nil {
 		key := dq.id + "|" + dq.code + "|" + hsLogClock(s.power[0])
 		if s.synced == nil {
@@ -462,10 +463,9 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 			if id > 0 {
 				st.LibraryDeckID = id
 			}
-			h.storeLiveGame(s.sub, rec, id) // the game counts even if the deck was removed from the library
+			h.storeLiveGame(s.sub, rec, id, me) // the game counts even if the deck was removed from the library
 		}
 	}
-	me := h.resolveMe(rec, deck.Class)
 	if me != 1 && me != 2 {
 		st.Left = cardsFrom(deckCount, card)
 		st.LeftTotal = size
@@ -548,13 +548,22 @@ func (h *HSHandler) resolveMe(rec *hstracker.Record, deckClass string) int {
 
 // classOfPlayer resolves a player slot's class from the first HERO_* card revealed for it -- the
 // same lookup hs_games.go's classOf does for finished games, inlined here for a live *hstracker.Record.
+//
+// Reads Card0 (the entity's FIRST revealed card id), never Card (its current one): a hero-change
+// effect ("become a new hero," e.g. Galakrond-style or similar dragon/soul-themed transforms) emits
+// another SHOW_ENTITY on the SAME hero entity, and game_state.prn's card-of always returns the latest
+// one. Using Card there meant a mid-game hero transform silently defeated this whole cross-check --
+// classOfPlayer would resolve to the TRANSFORMED hero's class (or none), resolveMe would find neither
+// side matching our deck's class, and it would fall back to the same reveal-count heuristic this was
+// built to correct. Card0 is always the original, pre-transform hero, since heroes are revealed via
+// FULL_ENTITY at CREATE_GAME before any in-game effect can run.
 func (h *HSHandler) classOfPlayer(rec *hstracker.Record, player int) string {
 	for _, e := range rec.Entities {
-		if e.Player != player || !strings.HasPrefix(e.Card, "HERO_") {
+		if e.Player != player || !strings.HasPrefix(e.Card0, "HERO_") {
 			continue
 		}
 		var class string
-		if err := h.DB.QueryRow(`SELECT class FROM hs_cards WHERE card_id=? AND class!='' LIMIT 1`, e.Card).Scan(&class); err == nil {
+		if err := h.DB.QueryRow(`SELECT class FROM hs_cards WHERE card_id=? AND class!='' LIMIT 1`, e.Card0).Scan(&class); err == nil {
 			return class
 		}
 	}
@@ -939,9 +948,18 @@ while ($true) {
 `
 
 // storeLiveGame saves a finished live game for its owner, linked to the library deck that was played.
-func (h *HSHandler) storeLiveGame(sub string, rec *hstracker.Record, deckID int64) {
-	body, err := json.Marshal(rec)
-	if err != nil || (rec.Me != 1 && rec.Me != 2) {
+// me is the caller's already-cross-checked resolveMe result, not rec.Me directly -- rec.Me alone is
+// just the bare reveal-count heuristic (game_state.prn's me-of), and using it here would bake the
+// exact wrong-player mixup resolveMe exists to correct permanently into the saved game/deck stats,
+// even on a poll where the live page itself showed the corrected result.
+func (h *HSHandler) storeLiveGame(sub string, rec *hstracker.Record, deckID int64, me int) {
+	if me != 1 && me != 2 {
+		return
+	}
+	resolved := *rec
+	resolved.Me = me
+	body, err := json.Marshal(&resolved)
+	if err != nil {
 		return
 	}
 	var gr hsGameRecord

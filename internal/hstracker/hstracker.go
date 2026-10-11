@@ -25,7 +25,8 @@ var srcFS embed.FS
 type Entity struct {
 	ID     int    `json:"id"`
 	Player int    `json:"player"`
-	Card   string `json:"card"`
+	Card   string `json:"card"`  // current card id (latest SHOW_ENTITY/FULL_ENTITY wins)
+	Card0  string `json:"card0"` // card id this entity FIRST revealed as, e.g. a hero before any later transform
 	Zone0  string `json:"zone0"`
 	T      int    `json:"t"`
 }
