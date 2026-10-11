@@ -20,6 +20,21 @@
   panel). Full `internal/http/handlers` suite green except the pre-existing, unrelated
   `TestNockDoorScriptsHandler_CreateListGet`/`internal/nock` failures (no `parena` binary on this
   sandbox's `$PATH`, confirmed on a clean tree before this change). (session: sess-20261009-1745-ee80b668)
+- Deploy-verified the above: `K8S-CD-01`'s own pipeline auto-rolled `iduna` to image tag `40634e1`
+  with no manual trigger -- new pod `4/4 Running`, `GET /health` 200. Apple #22230.
+- Founder real-time: "put something on the top of iduna iam ... that says by continuing use you
+  consent to cookies with links to the full terms and privacy policy." `sso_login.go`'s hosted
+  SSO/IAM page (`iam.okemily.com`) now shows a dismissible cookie-consent banner above the
+  two-pane login layout, styled to match the page's own cream/gold identity (not WOTAN's
+  neon-brutalist palette), linking out to WOTAN's new `https://wotan.okemily.com/terms.html` and
+  `/privacy.html` -- IDUNA itself has no separate public-facing ToS/Privacy of its own today (see
+  `docs/NORTHSTAR.md`'s "not a product, it is the backbone" framing), so this reuses the one real
+  pair of legal pages that exists rather than inventing a second, redundant set. Dismissal
+  remembered via `localStorage` (`iduna_cookie_consent`), same pattern as this page's own existing
+  `iduna_sso_session` remembering. `go build ./...` clean; `internal/http/handlers` suite green
+  except the same pre-existing, unrelated `TestNockDoorScriptsHandler_CreateListGet` failure
+  (confirmed via `git stash` that it fails identically without this change).
+  session: sess-20261009-1745-ee80b668
 
 ## 2026-10-10
 

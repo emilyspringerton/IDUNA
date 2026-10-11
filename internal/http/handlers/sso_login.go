@@ -189,9 +189,25 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
   @media (max-width: 760px) {
     .visual-pane { display: none; }
   }
+
+  .cookie-banner {
+    background: var(--panel); border-bottom: 2px solid var(--gold); color: var(--text-main);
+    font-family: "Spectral", Georgia, serif; font-size: 0.86rem; padding: 0.65rem 1rem;
+    display: flex; flex-wrap: wrap; gap: 0.6rem 1.2rem; align-items: center; justify-content: center;
+    text-align: center;
+  }
+  .cookie-banner a { color: var(--gold-soft); text-decoration: underline; }
+  .cookie-banner a:hover { color: var(--gold-highlight); }
+  .cookie-banner button { margin: 0; width: auto; padding: 0.35rem 0.9rem; font-size: 0.82rem; }
 </style>
 </head>
 <body>
+<div class="cookie-banner" id="cookie-banner">
+  <span>By continuing to use this site, you consent to cookies. See the
+    <a href="https://wotan.okemily.com/terms.html">Terms of Service</a> and
+    <a href="https://wotan.okemily.com/privacy.html">Privacy Policy</a>.</span>
+  <button type="button" id="cookie-banner-ok">Got it</button>
+</div>
 <div class="sso-shell">
   <div class="form-pane">
     <div class="form-inner">
@@ -236,6 +252,28 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
 <script>
   var redirectURI = {{.RedirectURI}};
   var registering = {{.Signup}};
+
+  // Cookie/local-storage consent notice -- dismiss is remembered per browser, same pattern as
+  // the SSO session remembering below. This page itself only uses localStorage (no cookies of
+  // its own); the banner's "cookies" wording covers the strictly-necessary HttpOnly session
+  // cookies IDUNA's other (admin/portal) surfaces set, matching WOTAN's own cookie-consent.js.
+  (function () {
+    var COOKIE_CONSENT_KEY = 'iduna_cookie_consent';
+    var banner = document.getElementById('cookie-banner');
+    try {
+      if (localStorage.getItem(COOKIE_CONSENT_KEY) === '1' && banner) {
+        banner.parentNode.removeChild(banner);
+        banner = null;
+      }
+    } catch (e) {}
+    var okBtn = document.getElementById('cookie-banner-ok');
+    if (okBtn) {
+      okBtn.addEventListener('click', function () {
+        try { localStorage.setItem(COOKIE_CONSENT_KEY, '1'); } catch (e) {}
+        if (banner && banner.parentNode) banner.parentNode.removeChild(banner);
+      });
+    }
+  })();
 
   // Remembered IDUNA session on THIS origin (iam.okemily.com). A browser that already signed in here must
   // never be shown a blank login form again: offer "Continue as <name>" (one click), or continue silently
