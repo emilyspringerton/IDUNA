@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -147,6 +148,115 @@ func TestHS_LiveTrackerPrivateAndCountsCardsLeft(t *testing.T) {
 		t.Fatalf("installer script: %d", w.Code)
 	}
 	_ = base64.StdEncoding
+}
+
+// Regression: the reveal-count heuristic (game_state.prn's me-of) picks whichever player has more
+// cards known-by-turn-1 as "me" -- a real game can tip that the wrong way (e.g. "The Coin" reveals
+// its CardID on the opponent's side too). When that happens, the old code trusted rec.Me outright
+// and swapped identities: the player's own drawn cards showed up in the "opponent revealed" panel
+// and vice versa. The fix cross-checks against the one deterministic signal available -- the class
+// of the deck actually queued, matched against each side's hero card (revealed from CREATE_GAME).
+func TestHS_LiveMeCrossCheckedAgainstHeroClass(t *testing.T) {
+	parena := os.Getenv("NOCK_PARENA_BIN")
+	if parena == "" {
+		parena = "/home/garybifrost/PARENA/parena"
+	}
+	if _, err := os.Stat(parena); err != nil {
+		t.Skip("parena compiler not available")
+	}
+	t.Setenv("NOCK_PARENA_BIN", parena)
+	t.Setenv("NOCK_PARENA_RUNTIME_DIR", "../../nock/parena_runtime")
+
+	e := newHSEnv(t)
+	hh := e.h.(*handlers.HSHandler)
+	hh.Tracker = &hstracker.Runner{WorkDir: filepath.Join(t.TempDir(), "trk")}
+
+	d, err := hsdeck.Decode(liveTestCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range d.DBFCards {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,?,?)`,
+			c.DBF, "Card "+strconv.Itoa(c.DBF), c.DBF%7, "T_"+strconv.Itoa(c.DBF)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := d.DBFCards[0].DBF, d.DBFCards[1].DBF
+
+	// a class for the opponent's hero that is definitely not ours
+	oppClass := ""
+	for _, c := range hsdeck.Classes {
+		if c != d.Class {
+			oppClass = c
+			break
+		}
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (90010,'Me','0','HERO_P1',?)`, d.Class); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (90011,'Opp','0','HERO_P2',?)`, oppClass); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{"OPP_1", "OPP_2", "OPP_3"} {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,0,?)`, 90020+i, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tok := e.must(200, "alice", "POST", "live/token", "")["token"].(string)
+	pw := func(s string) string { return "D 12:00:00.0000000 GameState.DebugPrintPower() - " + s }
+	gm := func(s string) string { return "D 12:00:00.0000000 GameState.DebugPrintGame() - " + s }
+	power := []string{
+		pw("CREATE_GAME"),
+		gm("PlayerID=1, PlayerName=Alice#1"),
+		gm("PlayerID=2, PlayerName=UNKNOWN HUMAN PLAYER"),
+		// heroes: player 1's matches our queued deck's class, player 2's doesn't
+		pw("    FULL_ENTITY - Creating ID=201 CardID=HERO_P1"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=1"),
+		pw("    FULL_ENTITY - Creating ID=202 CardID=HERO_P2"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=2"),
+	}
+	// the OPPONENT gets 3 cards known-by-turn-1 (modeling whatever tips the heuristic in a real
+	// game -- the Coin, an unusual build, etc.) -- MORE than our own 2, so the bare heuristic
+	// alone would call player 2 "me".
+	for i, id := range []string{"OPP_1", "OPP_2", "OPP_3"} {
+		eid := strconv.Itoa(300 + i)
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+eid+" CardID="+id),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=2"))
+	}
+	// our own 2 deck cards, drawn (DECK -> HAND) -- same shape as the basic tracker test
+	for id := 10; id < 12; id++ {
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+strconv.Itoa(id)+" CardID="),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=1"))
+	}
+	power = append(power, pw("TAG_CHANGE Entity=GameEntity tag=TURN value=1 "))
+	for i, dbf := range []int{first, second} {
+		id := strconv.Itoa(10 + i)
+		power = append(power,
+			pw("    SHOW_ENTITY - Updating Entity="+id+" CardID=T_"+strconv.Itoa(dbf)),
+			pw("TAG_CHANGE Entity=[entityName=x id="+id+" zone=DECK zonePos=1 cardId=T_"+strconv.Itoa(dbf)+" player=1] tag=ZONE value=HAND "))
+	}
+	decks := []string{
+		"I 11:59:30.0000000 Finding Game With Deck:",
+		"I 11:59:30.0000000 ### Test " + d.Class,
+		"I 11:59:30.0000000 # Deck ID: 42",
+		"I 11:59:30.0000000 " + liveTestCode,
+	}
+	body := jstr(map[string]any{"reset": true, "decks": decks, "power": power})
+	if code, out := e.post(tok, "live/lines", body); code != 200 {
+		t.Fatalf("live/lines: %d %v", code, out)
+	}
+
+	st := e.must(200, "alice", "GET", "live/state", "")
+	if st["left_total"] != float64(28) || st["drawn_total"] != float64(2) {
+		t.Fatalf("heuristic alone would have picked the opponent as \"me\": want 28 left / 2 drawn, got %v / %v (note=%v)",
+			st["left_total"], st["drawn_total"], st["note"])
+	}
+	opp, _ := st["opponent"].(map[string]any)
+	for _, c := range opp["cards"].([]any) {
+		cid := c.(map[string]any)["name"]
+		if strings.HasPrefix(fmt.Sprint(cid), "Card ") {
+			t.Fatalf("our own drawn card leaked into the opponent panel: %v", opp["cards"])
+		}
+	}
 }
 
 // The uplink posts about once a second for the whole game. It must never be starved by the 40/min

@@ -1,5 +1,26 @@
 # IDUNA Changelog
 
+## 2026-10-11
+
+- Fixed real bug: WOTAN's Hearthstone live tracker (`hearthstone/tracker.html`) was swapping
+  identities mid-game -- the player's own drawn cards showed up in the "opponent revealed" panel
+  and vice versa. Founder real-time report, caught while actually playing a tracked game. Root
+  cause: `hstracker`'s `me-of` (`game_state.prn`) guesses which `PlayerID` is the local player by
+  counting whose cards are known-by-turn-1 (your own hand reveals its CardIDs immediately; the
+  opponent's stay blank) -- a heuristic that a real game can tip the wrong way (e.g. "The Coin" is
+  non-secret and reveals its CardID on the opponent's side too). `hs_live.go`'s new `resolveMe`
+  cross-checks that guess against the one deterministic signal already on hand: the class of the
+  deck actually queued, matched against each side's revealed `HERO_*` card
+  (`classOfPlayer`, same lookup `hs_games.go`'s `classOf` already does for finished games). Only
+  overrides when exactly one side's resolved class matches ours; defers to the heuristic
+  otherwise. New regression test `TestHS_LiveMeCrossCheckedAgainstHeroClass` constructs a game
+  where the bare heuristic would pick the opponent (3 reveals-by-turn-1 vs our 2) and confirms the
+  override corrects it -- confirmed this test fails without the fix (heuristic alone gives 30
+  left / 0 drawn instead of 28 / 2, and the player's own drawn cards leak into the opponent
+  panel). Full `internal/http/handlers` suite green except the pre-existing, unrelated
+  `TestNockDoorScriptsHandler_CreateListGet`/`internal/nock` failures (no `parena` binary on this
+  sandbox's `$PATH`, confirmed on a clean tree before this change). (session: sess-20261009-1745-ee80b668)
+
 ## 2026-10-10
 
 - REDGARDEN player identity + WOTAN read model: `redgarden` game row (guest-register/guest-login/guest-upgrade/sso-exchange via `/api/v1/games/redgarden`, `redgarden.play`); `self-ticket` now accepts a REDGARDEN game token (no DragonsNShit character needed); `game-result` takes optional `hero_id` and logs `redgarden_player_matches`; new public `GET /api/v1/redgarden/players/{id}` profile; leaderboard now sums `redgarden` + `redgarden-arena` (arena results were invisible) and takes `?q=` (sess-20261009-1745-ee80b668)

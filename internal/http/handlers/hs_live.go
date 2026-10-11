@@ -465,7 +465,7 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 			h.storeLiveGame(s.sub, rec, id) // the game counts even if the deck was removed from the library
 		}
 	}
-	me := rec.Me
+	me := h.resolveMe(rec, deck.Class)
 	if me != 1 && me != 2 {
 		st.Left = cardsFrom(deckCount, card)
 		st.LeftTotal = size
@@ -522,6 +522,43 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 	}
 	st.Opponent.Cards = h.cardsByID(oppSeen, card)
 	return st
+}
+
+// resolveMe cross-checks the tracker's reveal-count guess (rec.Me -- see game_state.prn's me-of)
+// against the one piece of ground truth this handler already has: the class of the deck we just
+// queued. Heroes are revealed for both players right at CREATE_GAME, so as soon as either side's
+// HERO_* card is readable, class is a deterministic signal -- unlike the reveal-count heuristic,
+// which can be tipped the wrong way (e.g. "The Coin" is non-secret and reveals its CardID on the
+// opponent's side too, same as any of our own hand cards). Only overrides when exactly one side's
+// resolved class matches ours; otherwise defers to the heuristic unchanged.
+func (h *HSHandler) resolveMe(rec *hstracker.Record, deckClass string) int {
+	want := hsdeck.NormalizeClass(deckClass)
+	if want == "" {
+		return rec.Me
+	}
+	mine, theirs := strings.EqualFold(h.classOfPlayer(rec, 1), want), strings.EqualFold(h.classOfPlayer(rec, 2), want)
+	if mine && !theirs {
+		return 1
+	}
+	if theirs && !mine {
+		return 2
+	}
+	return rec.Me
+}
+
+// classOfPlayer resolves a player slot's class from the first HERO_* card revealed for it -- the
+// same lookup hs_games.go's classOf does for finished games, inlined here for a live *hstracker.Record.
+func (h *HSHandler) classOfPlayer(rec *hstracker.Record, player int) string {
+	for _, e := range rec.Entities {
+		if e.Player != player || !strings.HasPrefix(e.Card, "HERO_") {
+			continue
+		}
+		var class string
+		if err := h.DB.QueryRow(`SELECT class FROM hs_cards WHERE card_id=? AND class!='' LIMIT 1`, e.Card).Scan(&class); err == nil {
+			return class
+		}
+	}
+	return ""
 }
 
 func cardsFrom(counts map[string]int, known map[string]hsCardRow) []liveCard {
