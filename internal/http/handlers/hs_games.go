@@ -30,19 +30,25 @@ type hsGameRecord struct {
 		ID     int    `json:"id"`
 		Player int    `json:"player"`
 		Card   string `json:"card"`
+		Card0  string `json:"card0"`
 		Zone0  string `json:"zone0"`
 	} `json:"entities"`
 	Timeline json.RawMessage `json:"timeline"`
 }
 
-// classOf resolves a player's class from the first HERO_* card revealed for that slot.
+// classOf resolves a player's class from the first HERO_* card revealed for that slot. Reads Card0
+// (the entity's FIRST revealed card id), never Card (its current one) -- same reason hs_live.go's
+// classOfPlayer does: a hero-change effect (e.g. Dragon Soul Essence) mutates Card after reveal, and
+// looking the current value up in hs_cards either finds nothing (my_class/opp_class saved blank) or
+// resolves the wrong class. This struct is decoded independently of hstracker.Record (the live path's
+// type), so it needs its own Card0 field -- the live-path fix for this never reached it.
 func (h *HSHandler) classOf(rec *hsGameRecord, player int) string {
 	for _, e := range rec.Entities {
-		if e.Player != player || !strings.HasPrefix(e.Card, "HERO_") {
+		if e.Player != player || !strings.HasPrefix(e.Card0, "HERO_") {
 			continue
 		}
 		var class string
-		if err := h.DB.QueryRow(`SELECT class FROM hs_cards WHERE card_id=? AND class!='' LIMIT 1`, e.Card).Scan(&class); err == nil {
+		if err := h.DB.QueryRow(`SELECT class FROM hs_cards WHERE card_id=? AND class!='' LIMIT 1`, e.Card0).Scan(&class); err == nil {
 			return class
 		}
 	}

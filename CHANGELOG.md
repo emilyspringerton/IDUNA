@@ -2,6 +2,40 @@
 
 ## 2026-10-11
 
+- Fixed real bug (second follow-up to the me/opponent swap fix): founder reported the deck tracker
+  "still isnt working" even after the `card0`/hero-transform fix below went live. The live page
+  itself checked out fine against a pasted snapshot; the saved win/loss record didn't. `kubectl
+  cp`'d the live `var/iduna.db` out and inspected it directly (no `sqlite3` CLI in the pod, no
+  per-request logging, so this was the only way to see real data): 8 games correctly recorded
+  today, 2 corrupted (`hs_games` ids 8 and 12 -- blank `my_class`, one also `result=0`/unknown).
+  Root cause: `hs_games.go`'s `classOf` -- used whenever a finished game is *persisted*
+  (`storeLiveGame` and the direct `POST /api/v1/hs/games` ingest path both) -- independently
+  decodes its own `hsGameRecord` type and reads the plain `Card` field for each side's `HERO_*`
+  reveal. The `card0` fix below updated `hs_live.go`'s `classOfPlayer` (the live page) to read
+  `Card0` instead, but never touched this sibling function -- even though its own comment cites
+  `classOf` as the precedent the live fix was modeled on. A mid-game hero transform mutates `Card`
+  after reveal, so `classOf` either finds nothing (blank `my_class`) or the wrong class: live page
+  correct, saved record wrong. Fixed: added `Card0` to `hsGameRecord.Entities`, switched `classOf`
+  to read it, same as `classOfPlayer`. New `hs_games_test.go`
+  (`TestHS_CreateGameClassSurvivesHeroTransform`, `TestHS_CreateGameClassFallsBackWithoutTransform`)
+  drives the real `POST /api/v1/hs/games` path end to end. Full `internal/http/handlers` suite
+  green except the same pre-existing, unrelated `TestNockDoorScriptsHandler_CreateListGet`/
+  `internal/nock` failures (no `parena` on this sandbox's `$PATH`). Checked both historical rows
+  for a safe backfill and left them as-is rather than guess: row 8 predates the original `card0`
+  fix entirely (no `card0` key anywhere in its stored `record_json` -- the reveal data needed is
+  genuinely gone); row 12 postdates it but its own player's hero entity still has no
+  `HERO_`-prefixed `card0` in its record -- a distinct, not-yet-diagnosed capture gap, not this bug.
+  Apple #22234. session: sess-20261009-1745-ee80b668
+
+- Added regression test ruling out one hypothesis for the founder's "relogged and it fixed it but
+  only for 1 game" report: a cross-game state leak on the LIVE path (`s.power`, `s.synced`, or the
+  hero-class signal surviving incorrectly from one game into the next within the same session).
+  `TestHS_LiveMeCrossCheckSurvivesASecondGameSameSession` plays the same fixture twice in one
+  session with the same reused low entity IDs (Hearthstone itself reuses them from `CREATE_GAME`
+  on every match) and checks both games resolve independently. Passes clean -- no leak on the live
+  path. The actual cause was the separate, persisted-record bug fixed above. session:
+  sess-20261009-1745-ee80b668
+
 - Fixed real bug (follow-up to the me/opponent swap fix earlier today): founder reported the live
   tracker was STILL glitched, same symptom, across two separate games, and pinned it on "dragon
   soul essences." Root cause: `game_state.prn`'s `card-of` (used for every entity's `"card"` field)

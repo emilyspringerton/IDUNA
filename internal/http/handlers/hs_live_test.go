@@ -374,6 +374,129 @@ func TestHS_LiveMeSurvivesMidGameHeroTransform(t *testing.T) {
 	}
 }
 
+// Founder report (2026-10-11, after the card0 fix shipped): "relogged and it fixed it but only for
+// 1 game" -- i.e. the SAME class-mismatch symptom came back on the very next game of the same
+// session. heroClassCheckGameLines below is the exact fixture from
+// TestHS_LiveMeCrossCheckedAgainstHeroClass, parameterized by clock so it can be played twice with
+// the SAME entity IDs (201/202 heroes, 300..302 opponent reveals) -- Hearthstone itself reuses low
+// entity IDs from CREATE_GAME on every match, so two real consecutive games legitimately look like
+// this. If anything about session/game-boundary state (s.power, s.synced, the hero-class signal)
+// leaks across the boundary, game 2 is where it would show up.
+func heroClassCheckGameLines(clock string, class, oppClass string) []string {
+	pw := func(s string) string { return "D " + clock + " GameState.DebugPrintPower() - " + s }
+	gm := func(s string) string { return "D " + clock + " GameState.DebugPrintGame() - " + s }
+	power := []string{
+		pw("CREATE_GAME"),
+		gm("PlayerID=1, PlayerName=Alice#1"),
+		gm("PlayerID=2, PlayerName=UNKNOWN HUMAN PLAYER"),
+		pw("    FULL_ENTITY - Creating ID=201 CardID=HERO_P1"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=1"),
+		pw("    FULL_ENTITY - Creating ID=202 CardID=HERO_P2"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=2"),
+	}
+	for i, id := range []string{"OPP_1", "OPP_2", "OPP_3"} {
+		eid := strconv.Itoa(300 + i)
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+eid+" CardID="+id),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=2"))
+	}
+	for id := 10; id < 12; id++ {
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+strconv.Itoa(id)+" CardID="),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=1"))
+	}
+	power = append(power, pw("TAG_CHANGE Entity=GameEntity tag=TURN value=1 "))
+	return power
+}
+
+func TestHS_LiveMeCrossCheckSurvivesASecondGameSameSession(t *testing.T) {
+	parena := os.Getenv("NOCK_PARENA_BIN")
+	if parena == "" {
+		parena = "/home/garybifrost/PARENA/parena"
+	}
+	if _, err := os.Stat(parena); err != nil {
+		t.Skip("parena compiler not available")
+	}
+	t.Setenv("NOCK_PARENA_BIN", parena)
+	t.Setenv("NOCK_PARENA_RUNTIME_DIR", "../../nock/parena_runtime")
+
+	e := newHSEnv(t)
+	hh := e.h.(*handlers.HSHandler)
+	hh.Tracker = &hstracker.Runner{WorkDir: filepath.Join(t.TempDir(), "trk")}
+
+	d, err := hsdeck.Decode(liveTestCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range d.DBFCards {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,?,?)`,
+			c.DBF, "Card "+strconv.Itoa(c.DBF), c.DBF%7, "T_"+strconv.Itoa(c.DBF)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := d.DBFCards[0].DBF, d.DBFCards[1].DBF
+	oppClass := ""
+	for _, c := range hsdeck.Classes {
+		if c != d.Class {
+			oppClass = c
+			break
+		}
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (90010,'Me','0','HERO_P1',?)`, d.Class); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (90011,'Opp','0','HERO_P2',?)`, oppClass); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{"OPP_1", "OPP_2", "OPP_3"} {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,0,?)`, 90020+i, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok := e.must(200, "alice", "POST", "live/token", "")["token"].(string)
+	drawLines := func(clock string) []string {
+		var out []string
+		pw := func(s string) string { return "D " + clock + " GameState.DebugPrintPower() - " + s }
+		for i, dbf := range []int{first, second} {
+			id := strconv.Itoa(10 + i)
+			out = append(out,
+				pw("    SHOW_ENTITY - Updating Entity="+id+" CardID=T_"+strconv.Itoa(dbf)),
+				pw("TAG_CHANGE Entity=[entityName=x id="+id+" zone=DECK zonePos=1 cardId=T_"+strconv.Itoa(dbf)+" player=1] tag=ZONE value=HAND "))
+		}
+		return out
+	}
+	checkGame := func(label, clock string) {
+		t.Helper()
+		decks := []string{
+			"I " + clock + " Finding Game With Deck:",
+			"I " + clock + " ### Test " + d.Class,
+			"I " + clock + " # Deck ID: 42",
+			"I " + clock + " " + liveTestCode,
+		}
+		power := append(heroClassCheckGameLines(clock, d.Class, oppClass), drawLines(clock)...)
+		body := jstr(map[string]any{"decks": decks, "power": power})
+		if code, out := e.post(tok, "live/lines", body); code != 200 {
+			t.Fatalf("%s: live/lines: %d %v", label, code, out)
+		}
+		st := e.must(200, "alice", "GET", "live/state", "")
+		if st["left_total"] != float64(28) || st["drawn_total"] != float64(2) {
+			t.Fatalf("%s: heuristic alone would have picked the opponent as \"me\": want 28 left / 2 drawn, got %v / %v (note=%v)",
+				label, st["left_total"], st["drawn_total"], st["note"])
+		}
+		opp, _ := st["opponent"].(map[string]any)
+		for _, c := range opp["cards"].([]any) {
+			cid := c.(map[string]any)["name"]
+			if strings.HasPrefix(fmt.Sprint(cid), "Card ") {
+				t.Fatalf("%s: our own drawn card leaked into the opponent panel: %v", label, opp["cards"])
+			}
+		}
+	}
+	// game 1: fresh session, needs the initial resend (reset:true implied by liveTrackerEnv's bare post)
+	if code, out := e.post(tok, "live/lines", jstr(map[string]any{"reset": true})); code != 200 {
+		t.Fatalf("priming reset: %d %v", code, out)
+	}
+	checkGame("game 1", "12:00:00.0000000")
+	// same deck, queued again -- entity IDs 201/202/300-302/10-11 all get reused by the real client
+	// exactly like this, since Hearthstone restarts entity numbering from CREATE_GAME every match.
+	checkGame("game 2", "12:31:00.0000000")
+}
+
 // The uplink posts about once a second for the whole game. It must never be starved by the 40/min
 // deck-write limiter (regression: batches were 429'd after ~1 minute and the tracker went stale).
 func TestHS_LiveLinesNotStarvedByWriteLimiter(t *testing.T) {
