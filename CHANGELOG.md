@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-12
+- fix(hs): live tracker's session line buffer silently discarded the opening CREATE_GAME/hero/deck-DECK burst on long games once line count exceeded the cap (tail-only trim) -- now preserves a fixed head region across the trim so the player's own entities never go blind mid-match (sess-20261009-1745-ee80b668)
 - fix(hs): duplicate STATE=COMPLETE logging spawned a phantom empty record right after every live game, hiding the real result and the player's own drawn cards (sess-20261009-1745-ee80b668)
 - fix(hs): uplink's Ensure-LogCap never re-checked the restart-needed condition when client.config already had the fix line from an earlier run, so a long-running Hearthstone session kept silently capping Power.log at ~10MB; also the player's real client.config was missing the [Log] section header Hearthstone's own log.config convention expects (sess-20261009-1745-ee80b668)
 - fix(hs): duplicate CREATE_GAME (GameState + indented PowerTaskList copy, same instant) aborted every live game a few hundred lines in, hiding the player's own drawn cards for the rest of the match while the opponent's kept working; fold-text now trusts only GameState's own CREATE_GAME to abort, hs_live.go's liveLines hardened the same way (recognizes the real indented duplicate, dedupes by clock); Ginkgo/Gomega suite + real Power.log fixture added in internal/hstracker, new hs_live_test.go case (sess-20261009-1745-ee80b668)
