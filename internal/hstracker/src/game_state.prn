@@ -162,7 +162,16 @@
                       (if (and (> id 0) (string/str-eq? tag "CONTROLLER"))
                         (push-fact st 4 id (power-log/read-int val 0) 0 "" game)
                         st))))))
-            st))))))
+            ;; a transform on an ALREADY-known entity (hero change, Faceless-copy-style effects,
+            ;; Dragon Soul-type reforges, etc.): same header shape as SHOW_ENTITY -- the header line
+            ;; re-declares the entity's full current tag set in the indented lines that follow, so
+            ;; `cur` must repoint here too. Previously unhandled: the line fell through to plain `st`
+            ;; with `cur` left stale at whatever entity was last seen, so the NEXT entity's own
+            ;; CONTROLLER/ZONE tag lines got silently attributed to that stale leftover entity instead
+            ;; -- the live tracker's "my own card shows up under the opponent" bug for this card family.
+            (if (power-log/at? p "CHANGE_ENTITY - Updating Entity=" 0)
+              (handle-card-header st (ent-id p 32) (power-log/value-of p "CardID=" scratch) game)
+              st)))))))
 
 ;; DebugPrintGame lines: GameType= / FormatType= / PlayerID=n, PlayerName=NAME
 (defn handle-game-line [(st : GameState @ Region) (p : String @ Region) (game : Arena @ Region)]
@@ -189,11 +198,23 @@
         st))))
 
 ;; consume one complete line; returns the updated state (consumed = offset after the line).
+;;
+;; GameState.DebugPrint*() is tried first (unchanged offsets/behavior for every line that has it).
+;; PowerTaskList.DebugPrint*() is read on EQUAL FOOTING, not skipped as an assumed duplicate: verified
+;; against a real captured game that CREATE_GAME itself, and whole nested TRIGGER/POWER sub-blocks (a
+;; multi-stage spell chain's own BLOCK_START/TAG_CHANGE sequence), can exist ONLY under PowerTaskList
+;; with no GameState copy at all on a current Hearthstone client build. Before this, such a game never
+;; saw CREATE_GAME, so `started` never became 1 and the live (--live, game still in progress) trailer
+;; never emitted -- the tracker looked "stuck" for the whole match and only ever produced a real
+;; record once STATE=COMPLETE (a TAG_CHANGE, independently GameState-logged) ended it. Prefix lengths
+;; differ (13 vs 9 char component name), so each gets its own skip offset.
 (defn handle-line [(st : GameState @ Region) (line : String @ Region) (next : I32)
                    (scratch : Arena @ Region) (game : Arena @ Region)]
   : GameState @ Region
   (let [pw (power-log/find-from line "GameState.DebugPrintPower() - " 0)
-        gm (power-log/find-from line "GameState.DebugPrintGame() - " 0)]
+        gm (power-log/find-from line "GameState.DebugPrintGame() - " 0)
+        ptpw (power-log/find-from line "PowerTaskList.DebugPrintPower() - " 0)
+        ptgm (power-log/find-from line "PowerTaskList.DebugPrintGame() - " 0)]
     (if (>= pw 0)
       (let [p (string/substring line (power-log/skip-spaces line (+ pw 30)) (string/length line) scratch)]
         (if (power-log/at? p "CREATE_GAME" 0)
@@ -202,7 +223,15 @@
       (if (>= gm 0)
         (let [p (string/substring line (+ gm 29) (string/length line) scratch)]
           (with-consumed (handle-game-line st p game) next (get-field st :started)))
-        (with-consumed st next (get-field st :started))))))
+        (if (>= ptpw 0)
+          (let [p (string/substring line (power-log/skip-spaces line (+ ptpw 34)) (string/length line) scratch)]
+            (if (power-log/at? p "CREATE_GAME" 0)
+              (with-consumed st next 1)
+              (with-consumed (handle-payload st p scratch game) next (get-field st :started))))
+          (if (>= ptgm 0)
+            (let [p (string/substring line (+ ptgm 33) (string/length line) scratch)]
+              (with-consumed (handle-game-line st p game) next (get-field st :started)))
+            (with-consumed st next (get-field st :started))))))))
 
 ;; index of the next '\n' at or after `pos`, or -1 at the NUL terminator (never strlen's the buffer).
 (defn newline-from [(text : String @ Region) (pos : I32)]
@@ -228,7 +257,9 @@
         (let [e (if (and (> nl pos) (= (string/char-at text (- nl 1)) 13)) (- nl 1) nl) ;; CRLF logs
               line (string/substring text pos e scratch)
               pw (power-log/find-from line "GameState.DebugPrintPower() - " 0)
-              is-create (and (>= pw 0) (power-log/at? line "CREATE_GAME" (power-log/skip-spaces line (+ pw 30))))]
+              ptpw (power-log/find-from line "PowerTaskList.DebugPrintPower() - " 0)
+              is-create (or (and (>= pw 0) (power-log/at? line "CREATE_GAME" (power-log/skip-spaces line (+ pw 30))))
+                            (and (>= ptpw 0) (power-log/at? line "CREATE_GAME" (power-log/skip-spaces line (+ ptpw 34)))))]
           (if (and is-create (= (get-field cur :started) 1))
             (with-complete cur pos 2)
             (recur (+ nl 1) (handle-line cur line (+ nl 1) scratch game))))))))

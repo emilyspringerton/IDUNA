@@ -308,9 +308,9 @@ func TestHS_GameRecordsAndMatchups(t *testing.T) {
 			"game_type": "GT_RANKED", "format": "FT_STANDARD", "player1": "Hero#1", "player2": "Foe#2",
 			"result1": r1, "result2": r2, "turns": turns, "complete": 1, "me": me,
 			"entities": []map[string]any{
-				{"id": 64, "player": 1, "card": "HERO_08", "zone0": "PLAY"},
-				{"id": 66, "player": 2, "card": "HERO_06", "zone0": "PLAY"},
-				{"id": 40, "player": 2, "card": "CORE_X", "zone0": "DECK"},
+				{"id": 64, "player": 1, "card": "HERO_08", "card0": "HERO_08", "zone0": "PLAY"},
+				{"id": 66, "player": 2, "card": "HERO_06", "card0": "HERO_06", "zone0": "PLAY"},
+				{"id": 40, "player": 2, "card": "CORE_X", "card0": "CORE_X", "zone0": "DECK"},
 			},
 			"timeline": [][]any{{"t", 1}, {"p", 1, 40, 2, "CORE_X"}},
 		})

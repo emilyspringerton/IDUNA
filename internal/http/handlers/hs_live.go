@@ -42,7 +42,12 @@ var (
 	hsLogPrefixRe = regexp.MustCompile(`^[A-Z] \d{2}:\d{2}:\d{2}\.\d+ `)
 	hsDeckCodeRe  = regexp.MustCompile(`^AAE[A-Za-z0-9+/=]{8,}$`)
 	hsLogClockRe  = regexp.MustCompile(`^[A-Z] (\d{2}):(\d{2}):(\d{2}\.\d+) `)
-	hsPowerLineRe = regexp.MustCompile(`^D \d{2}:\d{2}:\d{2}\.\d+ GameState\.DebugPrint(Power|Game)\(\) - `)
+	// Real log, not assumed: PowerTaskList.DebugPrint*() is read on equal footing with GameState's,
+	// not dropped as a presumed duplicate. CREATE_GAME itself, and whole nested TRIGGER/POWER
+	// sub-blocks, were found with NO GameState copy at all on a real Hearthstone client build
+	// (the live tracker never saw CREATE_GAME for that match, so it stayed "waiting for the game to
+	// start" for the whole game -- see game_state.prn's handle-line for the matching parser fix).
+	hsPowerLineRe = regexp.MustCompile(`^D \d{2}:\d{2}:\d{2}\.\d+ (?:GameState|PowerTaskList)\.DebugPrint(Power|Game)\(\) - `)
 )
 
 type liveSession struct {
@@ -250,7 +255,7 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 		if len(ln) > hsLiveMaxLineLen || !hsPowerLineRe.MatchString(ln) {
 			continue
 		}
-		if strings.HasSuffix(strings.TrimSpace(ln), "GameState.DebugPrintPower() - CREATE_GAME") {
+		if strings.HasSuffix(strings.TrimSpace(ln), "DebugPrintPower() - CREATE_GAME") {
 			s.power = s.power[:0] // a new game: only the current one is tracked live
 		}
 		s.power = append(s.power, ln)
@@ -369,7 +374,7 @@ func gameStartedBeforeQueue(power []string, queueTS string) bool {
 	}
 	g := -1.0
 	for _, ln := range power {
-		if strings.HasSuffix(strings.TrimSpace(ln), "GameState.DebugPrintPower() - CREATE_GAME") {
+		if strings.HasSuffix(strings.TrimSpace(ln), "DebugPrintPower() - CREATE_GAME") {
 			g = hsLogClockSecs(ln)
 			break
 		}
@@ -883,7 +888,7 @@ $script:pendReset = $false
 function Flush-Pending {
   # only the current game matters: start at the last CREATE_GAME still pending
   for ($k = $pendP.Count - 1; $k -ge 1; $k--) {
-    if ($pendP[$k].EndsWith('GameState.DebugPrintPower() - CREATE_GAME')) { $pendP.RemoveRange(0, $k); $script:pendReset = $true; break }
+    if ($pendP[$k].EndsWith('DebugPrintPower() - CREATE_GAME')) { $pendP.RemoveRange(0, $k); $script:pendReset = $true; break }
   }
   do {
     $cnt = [Math]::Min(4000, $pendP.Count)
@@ -916,7 +921,7 @@ $folder = ''; [long]$pOff = 0; [long]$dOff = 0
 $script:resync = $false
 $lastBeat = Get-Date
 try { Ensure-LogCap } catch { $script:fixError = $_.Exception.Message; Write-Host "Config check failed: $($script:fixError)" }
-$pat = 'GameState\.DebugPrint(Power|Game)\(\) - '
+$pat = '(?:GameState|PowerTaskList)\.DebugPrint(Power|Game)\(\) - '
 while ($true) {
   try {
     if ($script:authNeeded) {
