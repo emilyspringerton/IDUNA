@@ -35,7 +35,7 @@ func RequireAuth(keys *jwt.Keys) func(http.Handler) http.Handler {
 			}
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			claims, err := jwt.Verify(keys, token)
-			if err != nil {
+			if err != nil || isClubContextToken(claims) {
 				writeUnauthorized(w)
 				return
 			}
@@ -72,7 +72,7 @@ func RequireCookieAuth(keys *jwt.Keys, iamStore AgentStatusChecker, loginURL str
 				return
 			}
 			claims, err := jwt.Verify(keys, token)
-			if err != nil {
+			if err != nil || isClubContextToken(claims) {
 				redirectOrJSON(w, r, loginURL)
 				return
 			}
@@ -272,4 +272,22 @@ func writeForbidden(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write([]byte(`{"code":"FORBIDDEN","message":"insufficient permissions"}`))
+}
+
+// isClubContextToken reports whether claims are a WOTAN club-context token (aud "wotan-club",
+// minted by POST /api/v1/clubs/{id}/token for external verifiers). Such a token is a narrow,
+// offline-verifiable statement of one club role -- never a general IDUNA identity -- so the shared
+// auth middleware refuses it, same as the clubs/HS handlers' own viewer().
+func isClubContextToken(claims map[string]any) bool {
+	switch a := claims["aud"].(type) {
+	case string:
+		return a == "wotan-club"
+	case []any:
+		for _, v := range a {
+			if s, _ := v.(string); s == "wotan-club" {
+				return true
+			}
+		}
+	}
+	return false
 }
