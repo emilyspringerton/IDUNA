@@ -58,6 +58,9 @@ type SSOLoginHandler struct {
 	// BattlenetEnabled shows "Sign in with Battle.net" as the PRIMARY (competitive) door, above
 	// Google/email which are social-only. Off when BNET_CLIENT_ID/SECRET aren't set.
 	BattlenetEnabled bool
+	// TwitchEnabled shows "Sign in with Twitch" (served by IdentityOAuthHandler, identity-only --
+	// no stream-key or email scope, I8). Off when TWITCH_CLIENT_ID/SECRET aren't set.
+	TwitchEnabled bool
 }
 
 func (h *SSOLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +92,7 @@ func (h *SSOLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Signup:      signup,
 		Google:      h.GoogleEnabled,
 		Battlenet:   h.BattlenetEnabled,
+		Twitch:      h.TwitchEnabled,
 	})
 }
 
@@ -108,6 +112,7 @@ type ssoLoginPageData struct {
 	Signup      bool
 	Google      bool
 	Battlenet   bool
+	Twitch      bool
 }
 
 // html/template contextually auto-escapes RedirectURI both as HTML (the
@@ -186,9 +191,17 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
   }
   a.bnet-btn:hover { background: #0074e0; }
   .bnet-note { margin: 0.5rem 0 0; font-size: 0.74rem; color: var(--text-faint); text-align: center; }
-  a.bnet-btn + a.google-btn, .bnet-note + a.google-btn { margin-top: 1rem; }
+  a.bnet-btn + a.google-btn, .bnet-note + a.google-btn, a.bnet-btn + a.twitch-btn, .bnet-note + a.twitch-btn { margin-top: 1rem; }
   a.google-btn:hover { background: #f8f9fa; border-color: var(--gold); }
   a.google-btn svg { width: 18px; height: 18px; flex: none; }
+  a.twitch-btn {
+    display: flex; align-items: center; justify-content: center; gap: 0.6rem; margin-top: 1.9rem;
+    padding: 0.7rem 1rem; font-family: "Spectral", Georgia, serif; font-size: 0.95rem; text-decoration: none;
+    border: 1px solid #772ce8; border-radius: 5px; background: #9147ff; color: #fff;
+  }
+  a.twitch-btn:hover { background: #772ce8; }
+  a.twitch-btn svg { width: 18px; height: 18px; flex: none; }
+  a.google-btn + a.twitch-btn { margin-top: 1rem; }
   .or-rule { display: flex; align-items: center; gap: 0.8rem; margin: 1.3rem 0 0; color: var(--text-faint); font-size: 0.74rem; letter-spacing: 0.1em; text-transform: uppercase; }
   .or-rule::before, .or-rule::after { content: ""; flex: 1; border-top: 1px solid var(--line-soft); }
   .msg { margin-top: 1.1rem; font-size: 0.84rem; min-height: 1.1em; }
@@ -258,7 +271,13 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
         <span>Sign in with Google</span>
       </a>
       {{end}}
-      {{if or .Google .Battlenet}}<div class="or-rule">or</div>{{end}}
+      {{if .Twitch}}
+      <a class="twitch-btn" id="twitch-btn" href="#">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M4 2 2 6v14h6v2h4l2-2h4l4-4V2H4zm2 2h14v10l-2 2h-5l-2 2v-2H6V4zm3 2v6h2V6H9zm5 0v6h2V6h-2z"/></svg>
+        <span>Sign in with Twitch</span>
+      </a>
+      {{end}}
+      {{if or .Google .Battlenet .Twitch}}<div class="or-rule">or</div>{{end}}
       <form id="sso-form">
         <div>
           <label class="field" for="email">Email</label>
@@ -375,6 +394,11 @@ var ssoLoginTemplate = template.Must(template.New("sso_login").Parse(`<!doctype 
   var googleBtn = document.getElementById('google-btn');
   if (googleBtn) {
     googleBtn.href = '/api/v1/auth/sso/google/start?redirect_uri=' + encodeURIComponent(redirectURI);
+  }
+
+  var twitchBtn = document.getElementById('twitch-btn');
+  if (twitchBtn) {
+    twitchBtn.href = '/api/v1/auth/sso/twitch/start?redirect_uri=' + encodeURIComponent(redirectURI);
   }
 
   function setMsg(text, kind) {

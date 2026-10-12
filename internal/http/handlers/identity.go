@@ -34,8 +34,10 @@ const (
 	identityEventSrc   = "iduna-wotan-identity"
 )
 
-// loginDoorProviders are the identities that can sign a player in. Twitch is link-only (IQ-2).
-var loginDoorProviders = map[string]bool{idProvBattlenet: true, idProvGoogle: true, idProvLocal: true}
+// loginDoorProviders are the identities that can sign a player in. Twitch joined as a login door
+// 2026-10-12 (IQ-2 resolved: founder confirmed Twitch-as-login) — still identity-only, no stream-key
+// or email scope (I8 still holds).
+var loginDoorProviders = map[string]bool{idProvBattlenet: true, idProvGoogle: true, idProvLocal: true, idProvTwitch: true}
 
 // hsTagShapeRe is "looks like a BattleTag": a name with no spaces, a '#', and 1-8 digits.
 var hsTagShapeRe = regexp.MustCompile(`^[^\s#]{1,24}#[0-9]{1,8}$`)

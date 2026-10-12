@@ -1374,6 +1374,7 @@ func main() {
 		AllowedHosts:     ssoAllowedHosts,
 		GoogleEnabled:    googleSSOEnabled,
 		BattlenetEnabled: os.Getenv("BNET_CLIENT_ID") != "" && os.Getenv("BNET_CLIENT_SECRET") != "",
+		TwitchEnabled:    os.Getenv("TWITCH_CLIENT_ID") != "" && os.Getenv("TWITCH_CLIENT_SECRET") != "",
 	}
 	mux.Handle("/api/v1/auth/sso/login", ssoLoginH)
 	// "Sign in with Google" for that same page. Every URL here must also be listed as an
@@ -1410,10 +1411,11 @@ func main() {
 	}
 	mux.Handle("/api/v1/auth/sso/google/start", ssoGoogleH)
 	mux.Handle("/api/v1/auth/sso/google/callback", ssoGoogleH)
-	// WOTAN identity federation (IDENTITY_NORTHSTAR.md, chunk ID-A): Battle.net SSO (login + link) and the
-	// Twitch link-only callback. Both providers answer 404 provider_not_configured until their application
-	// credentials are set -- registering the Battle.net / Twitch apps is a human-only step (develop.battle.net,
-	// dev.twitch.tv); BNET_REDIRECT_URI / TWITCH_REDIRECT_URI must be registered there verbatim.
+	// WOTAN identity federation (IDENTITY_NORTHSTAR.md, chunk ID-A): Battle.net SSO (login + link) and
+	// Twitch SSO (login + link, IQ-2 resolved 2026-10-12). Both providers answer 404
+	// provider_not_configured until their application credentials are set -- registering the
+	// Battle.net / Twitch apps is a human-only step (develop.battle.net, dev.twitch.tv);
+	// BNET_REDIRECT_URI / TWITCH_REDIRECT_URI must be registered there verbatim.
 	identityOAuthH := &handlers.IdentityOAuthHandler{
 		DB:                 db,
 		Keys:               keys,

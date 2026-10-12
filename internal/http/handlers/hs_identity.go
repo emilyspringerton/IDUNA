@@ -141,7 +141,17 @@ func (h *HSHandler) putIdentityPrefs(w http.ResponseWriter, r *http.Request, v h
 	writeJSON(w, http.StatusOK, map[string]any{"show_twitch_name": st, "show_battletag": sb})
 }
 
+// identityLinkStart is always link mode -- this route exists to attach a provider identity to the
+// caller's own, already-authenticated player, never to sign a new session in (that's the public
+// /api/v1/auth/sso/{prov}/start route instead). IdentityOAuthHandler.start infers link mode from a
+// non-empty linkSub, which requires an authenticated caller here just as much as the pid lookup
+// inside start itself does -- check it explicitly so an anonymous call 401s rather than silently
+// falling through to a login-mode start.
 func (h *HSHandler) identityLinkStart(w http.ResponseWriter, r *http.Request, v hsViewer, prov string) {
+	if v.sub == "" {
+		hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
+		return
+	}
 	if h.OAuth == nil || !h.OAuth.configured(prov) {
 		notConfigured(w)
 		return

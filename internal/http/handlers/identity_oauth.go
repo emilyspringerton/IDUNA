@@ -1,15 +1,19 @@
 package handlers
 
-// identity_oauth.go -- Battle.net SSO (login + link) and the Twitch link flow (IDENTITY_NORTHSTAR sections
-// 2 and 4.1/4.2). Modeled on sso_google.go: same redirect allowlist (SSOLoginHandler.hostAllowed), injectable
-// network seams, tokens handed back in a URL fragment, never a query string.
+// identity_oauth.go -- Battle.net SSO (login + link) and Twitch SSO (login + link, IQ-2 resolved
+// 2026-10-12) (IDENTITY_NORTHSTAR sections 2 and 4.1/4.2). Modeled on sso_google.go: same redirect
+// allowlist (SSOLoginHandler.hostAllowed), injectable network seams, tokens handed back in a URL
+// fragment, never a query string. Twitch still requests zero scopes either way (I8): identity only,
+// never the stream key, never email.
 //
-//	GET  /api/v1/auth/sso/battlenet/start?redirect_uri=...[&mode=link][&region=us|eu|kr|tw]
-//	        link mode needs the player session: Authorization: Bearer <token> (fetch -> 200
-//	        {"authorize_url": ...}, the page then navigates there) or, for a plain full-page navigation,
-//	        ?access_token=<token> (302 straight to the provider). Both set the signed flow cookie.
-//	        Link results come back as fragment keys: #linked=<provider>&identity_id=N or #link_error=<code>.
-//	GET  /api/v1/auth/sso/battlenet/callback   | GET /api/v1/auth/sso/twitch/callback
+//	GET  /api/v1/auth/sso/{battlenet,twitch}/start?redirect_uri=...[&mode=link][&region=us|eu|kr|tw]
+//	        no mode (or mode=login): a plain sign-in, same shape as sso_google.go -- mints an IDUNA
+//	        session JWT via finishLogin. mode=link needs the player session: Authorization: Bearer
+//	        <token> (fetch -> 200 {"authorize_url": ...}, the page then navigates there) or, for a
+//	        plain full-page navigation, ?access_token=<token> (302 straight to the provider). Both
+//	        set the signed flow cookie. Link results come back as fragment keys:
+//	        #linked=<provider>&identity_id=N or #link_error=<code>.
+//	GET  /api/v1/auth/sso/{battlenet,twitch}/callback
 //	GET|POST /api/v1/hs/me/identities/{battlenet|twitch}/start   (link mode, via HSHandler, bearer required)
 //
 // CSRF / link-hijack defence: the flow cookie is an ES256 JWT (aud iduna-oauth-state, deliberately no `sub`)
@@ -138,11 +142,6 @@ func (h *IdentityOAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	switch parts[1] {
 	case "start":
-		if prov == idProvTwitch {
-			// Twitch is link-only and its start lives under /api/v1/hs/me/identities/twitch/start.
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": "twitch is link-only", "code": "link_only"})
-			return
-		}
 		h.start(w, r, prov, "")
 	case "callback":
 		h.callback(w, r, prov)
@@ -156,7 +155,7 @@ func (h *IdentityOAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 func (h *IdentityOAuthHandler) start(w http.ResponseWriter, r *http.Request, prov, linkSub string) {
 	q := r.URL.Query()
 	mode := "login"
-	if prov == idProvTwitch || q.Get("mode") == "link" || linkSub != "" {
+	if q.Get("mode") == "link" || linkSub != "" {
 		mode = "link"
 	}
 	redir := q.Get("redirect_uri")
@@ -340,7 +339,7 @@ func (h *IdentityOAuthHandler) callback(w http.ResponseWriter, r *http.Request, 
 		h.finishLink(w, r, prov, redir, pid, user, string(extraJSON))
 		return
 	}
-	if prov != idProvBattlenet {
+	if !loginDoorProviders[prov] {
 		http.Error(w, "this provider cannot be used to sign in", http.StatusBadRequest)
 		return
 	}

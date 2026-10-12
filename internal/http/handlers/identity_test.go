@@ -252,6 +252,63 @@ func TestIdentity_BattlenetLoginCreatesPlayerAndResolvesSamePlayer(t *testing.T)
 	}
 }
 
+func (e *idEnv) twitchLogin(code, sub, login string) string {
+	e.t.Helper()
+	e.users[code] = &handlers.OAuthUser{Sub: sub, Display: login}
+	w := e.flow("twitch", "/api/v1/auth/sso/twitch/start?redirect_uri="+url.QueryEscape(idRedirect), "", code, "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "iduna_sso_session") {
+		e.t.Fatalf("twitch login: %d %s", w.Code, w.Body.String())
+	}
+	return e.pidOf("twitch", sub)
+}
+
+// TestIdentity_TwitchLoginCreatesPlayerAndResolvesSamePlayer covers IDENT-06 (IQ-2 resolved
+// 2026-10-12, founder confirmed Twitch-as-login): Twitch is now a real login door, same shape as
+// Battle.net, but still carries zero OAuth scopes (I8 unaffected by the door being open).
+func TestIdentity_TwitchLoginCreatesPlayerAndResolvesSamePlayer(t *testing.T) {
+	e := newIDEnv(t)
+	// start: no scope, state set, redirect allowlisted -- a plain (non-link) start now succeeds.
+	w := httptest.NewRecorder()
+	e.oauth.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/twitch/start?redirect_uri="+url.QueryEscape(idRedirect), nil))
+	if w.Code != 302 {
+		t.Fatalf("start: %d", w.Code)
+	}
+	u, _ := url.Parse(w.Header().Get("Location"))
+	if u.Host != "id.twitch.tv" || u.Query().Get("scope") != "" || u.Query().Get("state") == "" || u.Query().Get("client_id") != "tid" {
+		t.Fatalf("authorize url: %s", u)
+	}
+	bad := httptest.NewRecorder()
+	e.oauth.ServeHTTP(bad, httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/twitch/start?redirect_uri="+url.QueryEscape("https://evil.example/x"), nil))
+	if bad.Code != 400 {
+		t.Fatalf("evil redirect: %d", bad.Code)
+	}
+
+	pid := e.twitchLogin("tc1", "tw-100", "alice_tv")
+	if pid == "" {
+		t.Fatal("no player created")
+	}
+	var prov, name string
+	_ = e.db.QueryRow(`SELECT provider, display_name FROM players WHERE player_id=?`, pid).Scan(&prov, &name)
+	if prov != "twitch" || name != "alice_tv" {
+		t.Fatalf("player: %s %s", prov, name)
+	}
+	// a second login resolves to the SAME player, no duplicate
+	if again := e.twitchLogin("tc2", "tw-100", "alice_tv"); again != pid {
+		t.Fatalf("second login: %s vs %s", again, pid)
+	}
+	var n int
+	_ = e.db.QueryRow(`SELECT COUNT(*) FROM players`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("players: %d", n)
+	}
+	// disabled players cannot sign in
+	_, _ = e.db.Exec(`UPDATE players SET disabled_at='2026-01-01T00:00:00Z' WHERE player_id=?`, pid)
+	e.users["tc3"] = &handlers.OAuthUser{Sub: "tw-100", Display: "alice_tv"}
+	if w := e.flow("twitch", "/api/v1/auth/sso/twitch/start?redirect_uri="+url.QueryEscape(idRedirect), "", "tc3", ""); w.Code != 403 {
+		t.Fatalf("disabled: %d", w.Code)
+	}
+}
+
 // ---- linking ----------------------------------------------------------------------------------------------------
 
 func TestIdentity_LinkModeAndIdentityTaken(t *testing.T) {
@@ -373,7 +430,7 @@ func TestIdentity_StateAndCookieBoundToSession(t *testing.T) {
 	}
 }
 
-func TestIdentity_TwitchLinkOnlyNoScopesOnePerPlayer(t *testing.T) {
+func TestIdentity_TwitchLinkNoScopesOnePerPlayer(t *testing.T) {
 	e := newIDEnv(t)
 	p1 := e.bnetLogin("c1", "bn-1", "Alice#1111")
 	p2 := e.bnetLogin("c2", "bn-2", "Bob#2222")
@@ -395,12 +452,6 @@ func TestIdentity_TwitchLinkOnlyNoScopesOnePerPlayer(t *testing.T) {
 	// anonymous start refused
 	if c, _, _ := e.hsReq("", "GET", "me/identities/twitch/start?redirect_uri="+url.QueryEscape(idRedirect), ""); c != 401 {
 		t.Fatalf("anonymous twitch start: %d", c)
-	}
-	// twitch is never a login door
-	lw := httptest.NewRecorder()
-	e.oauth.ServeHTTP(lw, httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/twitch/start?redirect_uri="+url.QueryEscape(idRedirect), nil))
-	if lw.Code != 404 {
-		t.Fatalf("twitch login start: %d", lw.Code)
 	}
 
 	f := fragmentOf(t, e.flow("twitch", start, e.bearer(p1), "t1", ""))

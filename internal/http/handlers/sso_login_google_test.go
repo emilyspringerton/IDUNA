@@ -23,3 +23,18 @@ func TestSSOLogin_GoogleButtonOnlyWhenEnabled(t *testing.T) {
 		}
 	}
 }
+
+func TestSSOLogin_TwitchButtonOnlyWhenEnabled(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		h := &handlers.SSOLoginHandler{AllowedHosts: []string{"localhost"}, TwitchEnabled: enabled}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/login?redirect_uri=http://localhost/x", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d", w.Code)
+		}
+		has := strings.Contains(w.Body.String(), `id="twitch-btn"`)
+		if has != enabled {
+			t.Errorf("TwitchEnabled=%v but button present=%v", enabled, has)
+		}
+	}
+}
