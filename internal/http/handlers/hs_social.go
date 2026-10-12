@@ -57,6 +57,8 @@ func (h *HSHandler) viewer(r *http.Request) hsViewer {
 	}
 	if aud, _ := claims["aud"].(string); aud == hsLiveUploadAud {
 		return hsViewer{} // upload tokens are good for POST /live/lines only
+	} else if aud == clubTokenAud {
+		return hsViewer{} // club-context tokens (clubs.go) are for external verifiers, never WOTAN identity
 	}
 	sub, _ := claims["sub"].(string)
 	v := hsViewer{sub: sub}

@@ -1277,6 +1277,19 @@ func main() {
 		WriteLimiter: middleware.NewIPRateLimiter(40),
 	}
 	mux.Handle("/api/v1/hs/", hsH)
+	// WOTAN Phase 2 Clubs (CLUBS_NORTHSTAR.md): clubs, roles, invites, feed, club-context token, platform admin API.
+	// Membership is re-read from the DB on every request; the JWT only identifies the caller. /api/v1/me/clubs is
+	// the "my clubs" alias; /api/v1/users/ is already taken, so a profile's badges live at /api/v1/clubs/users/{handle}/clubs.
+	clubsH := &handlers.ClubsHandler{
+		DB:           db,
+		Keys:         keys,
+		ReadLimiter:  middleware.NewIPRateLimiter(300),
+		WriteLimiter: middleware.NewIPRateLimiter(40),
+		EventLog:     unifiedLog,
+	}
+	mux.Handle("/api/v1/clubs", clubsH)
+	mux.Handle("/api/v1/clubs/", clubsH)
+	mux.Handle("/api/v1/me/clubs", clubsH)
 	// WOTAN S547: public match-history + replay data (matches.ndjson, dw_server's sibling log to
 	// decks.ndjson above) -- see internal/http/handlers/match_replay.go and internal/matchlog.
 	matchReplayH := &handlers.MatchReplayHandler{
