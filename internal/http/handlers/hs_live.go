@@ -135,6 +135,8 @@ type liveState struct {
 		Cards []liveCard `json:"cards"`
 	} `json:"opponent"`
 	LibraryDeckID int64    `json:"library_deck_id,omitempty"` // set on the poll that synced this game's deck
+	SyncTarget    string   `json:"sync_target,omitempty"`     // where finished games go right now (display only)
+	SyncInvalid   bool     `json:"sync_target_invalid,omitempty"`
 	Note          string   `json:"note,omitempty"`
 	Warnings      []string `json:"warnings,omitempty"`
 	LogBytes      int64    `json:"log_bytes,omitempty"`
@@ -351,7 +353,9 @@ func (h *HSHandler) liveState(w http.ResponseWriter, r *http.Request, v hsViewer
 	}
 	s := h.session(v.sub, false)
 	if s == nil {
-		writeJSON(w, http.StatusOK, liveState{Left: []liveCard{}, Drawn: []liveCard{}, Note: "Waiting for your PC. Start the uplink from this page."})
+		tgt := h.syncTargetOf(v.sub)
+		writeJSON(w, http.StatusOK, liveState{Left: []liveCard{}, Drawn: []liveCard{}, Note: "Waiting for your PC. Start the uplink from this page.",
+			SyncTarget: tgt.Label(), SyncInvalid: !tgt.Valid})
 		return
 	}
 	s.mu.Lock()
@@ -372,6 +376,8 @@ func (h *HSHandler) liveState(w http.ResponseWriter, r *http.Request, v hsViewer
 		st.Drawn = []liveCard{}
 	}
 	st.UpdatedAt = s.updated.UTC().Format(time.RFC3339)
+	tgt := h.syncTargetOf(v.sub)
+	st.SyncTarget, st.SyncInvalid = tgt.Label(), !tgt.Valid
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -982,6 +988,17 @@ function Flush-Pending {
   } while ($pendP.Count -gt 0)
 }
 
+# Display only: the server decides where finished games go (this script never names a club).
+$script:syncShown = $false
+function Show-SyncTarget {
+  try {
+    $st = Invoke-RestMethod -Uri ($Base.TrimEnd('/') + '/api/v1/hs/live/sync-target') -Headers @{ Authorization = "Bearer $($script:Token)" } -TimeoutSec 15
+    $label = $st.label
+    if (-not $label) { $label = $st.kind }
+    Write-Host "Syncing to: $label"
+    if ($st.sync_target_invalid) { Write-Host 'Your club sync target is no longer valid - games are kept private until you pick one on WOTAN.' }
+  } catch {}
+}
 $ErrorActionPreference = 'Continue'   # a transient file/IO error must not kill the tracker
 $folder = ''; [long]$pOff = 0; [long]$dOff = 0
 $script:resync = $false
@@ -991,9 +1008,10 @@ $pat = '(?:GameState|PowerTaskList)\.DebugPrint(Power|Game)\(\) - '
 while ($true) {
   try {
     if ($script:authNeeded) {
-      try { $script:Token = Get-IamToken; $script:authNeeded = $false }
+      try { $script:Token = Get-IamToken; $script:authNeeded = $false; $script:syncShown = $false }
       catch { Write-Host $_.Exception.Message; Start-Sleep -Seconds 30; continue }
     }
+    if (-not $script:syncShown) { Show-SyncTarget; $script:syncShown = $true }
     if ($script:resync) { $pOff = 0; $dOff = 0; $script:pendReset = $true; $script:resync = $false }
     $newest = Get-ChildItem $LogsDir -Directory -Filter 'Hearthstone_*' -ErrorAction Stop | Sort-Object Name -Descending | Select-Object -First 1
     if ($newest) {
@@ -1037,5 +1055,5 @@ func (h *HSHandler) storeLiveGame(sub string, rec *hstracker.Record, deckID int6
 	if json.Unmarshal(body, &gr) != nil || len(gr.Timeline) == 0 {
 		return
 	}
-	h.storeGame(sub, &gr, body, deckID)
+	_, _, _, _, _, _, _ = h.storeGame(sub, &gr, body, deckID)
 }

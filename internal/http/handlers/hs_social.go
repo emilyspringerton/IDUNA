@@ -105,8 +105,13 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	v := h.viewer(r)
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, hsPrefix), "/")
+	if r.Method == http.MethodGet && rest == "live/sync-target" {
+		// The one read-only route the upload-scoped token may call (display only; never returns a club id).
+		h.liveSyncTarget(w, r)
+		return
+	}
+	v := h.viewer(r)
 	p := strings.Split(rest, "/")
 	m := r.Method
 	if m == http.MethodPost && rest == "live/lines" {
@@ -190,6 +195,16 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listComments(w, r, v, "hs_post_comments", "post_id", id(1))
 	case len(p) == 3 && p[0] == "wall" && p[2] == "comments" && m == http.MethodPost:
 		h.addComment(w, r, v, "hs_wall_posts", "hs_post_comments", "post_id", id(1))
+	case rest == "me/sync-target" && m == http.MethodGet:
+		h.getSyncTarget(w, v)
+	case rest == "me/sync-target" && m == http.MethodPut:
+		h.putSyncTarget(w, r, v)
+	case rest == "me/rank" && m == http.MethodGet:
+		h.getRank(w, v)
+	case rest == "me/rank" && m == http.MethodPut:
+		h.putRank(w, r, v)
+	case len(p) == 3 && p[0] == "games" && p[2] == "target" && m == http.MethodPatch:
+		h.retargetGame(w, r, v, id(1))
 	case rest == "live/token" && m == http.MethodPost:
 		h.liveToken(w, v)
 	case rest == "live/state" && m == http.MethodGet:
@@ -296,9 +311,9 @@ type hsDeckOut struct {
 const hsDeckCols = `d.id, d.title, d.description, d.class, d.format, d.year, d.deckstring, d.card_count, d.cards_json, d.dbf_json,
  d.names_resolved, COALESCE(p.handle,''), d.likes, d.comments, d.created_at, d.owner_sub,
  EXISTS(SELECT 1 FROM hs_deck_likes l WHERE l.deck_id=d.id AND l.sub=?), d.private, d.source_deck_id,
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result IN (1,2,3)),
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result=1),
- (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result=2)`
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND g.visibility='personal' AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result IN (1,2,3)),
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND g.visibility='personal' AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result=1),
+ (SELECT COUNT(*) FROM hs_games g WHERE g.deck_code=d.deckstring AND g.complete=1 AND g.visibility='personal' AND EXISTS(SELECT 1 FROM hs_stat_shares s WHERE s.owner_sub=g.owner_sub AND s.deck_code=g.deck_code) AND g.result=2)`
 
 func scanDeck(sc interface{ Scan(...any) error }, v hsViewer, withCards bool) (hsDeckOut, error) {
 	var d hsDeckOut
@@ -570,6 +585,8 @@ func (h *HSHandler) recordOf(deckstring, owner string) hsRecord {
 	if owner != "" {
 		q += ` AND owner_sub=?`
 		args = append(args, owner)
+	} else {
+		q += ` AND visibility='personal'` // the projected global pool never includes club/private practice games
 	}
 	var r hsRecord
 	h.DB.QueryRow(q, args...).Scan(&r.Games, &r.Wins, &r.Losses)
@@ -1082,7 +1099,7 @@ func (h *HSHandler) report(w http.ResponseWriter, r *http.Request, v hsViewer) {
 		return
 	}
 	switch in.Kind {
-	case "deck", "comment", "post", "user":
+	case "deck", "comment", "post", "user", "club", "club_post":
 	default:
 		hsErr(w, 422, "unknown report kind")
 		return

@@ -404,6 +404,10 @@ func (h *ClubsHandler) clubRoutes(w http.ResponseWriter, r *http.Request, v club
 		h.featureDeck(w, r, v, id, p[1], m == http.MethodPut)
 	case n == 1 && p[0] == "audit" && m == http.MethodGet:
 		h.clubAudit(w, r, v, id)
+	case n == 2 && p[0] == "analytics" && p[1] == "matchups" && m == http.MethodGet:
+		h.analyticsMatchups(w, r, v, id)
+	case n == 2 && p[0] == "analytics" && p[1] == "contributors" && m == http.MethodGet:
+		h.analyticsContributors(w, r, v, id)
 	default:
 		hsErr(w, http.StatusNotFound, "not found")
 	}
@@ -740,6 +744,8 @@ func (h *ClubsHandler) bySlug(w http.ResponseWriter, r *http.Request, v clubView
 		h.publicRoster(w, r, v, slug)
 	case len(p) == 2 && p[1] == "decks" && m == http.MethodGet:
 		h.publicDecks(w, v, slug)
+	case len(p) == 2 && p[1] == "contributors" && m == http.MethodGet:
+		h.publicContributors(w, r, v, slug)
 	case len(p) == 2 && p[1] == "requests" && m == http.MethodPost:
 		h.createRequest(w, r, v, slug)
 	default:
@@ -813,7 +819,7 @@ func (h *ClubsHandler) publicRoster(w http.ResponseWriter, r *http.Request, v cl
 		}
 		it := map[string]any{"handle": handle, "role": role, "is_owner": owner, "joined_at": hsTime(joined)}
 		if lr > 0 {
-			it["rank"] = map[string]any{"legend_rank": lr, "verified": rv == 1, "region": region}
+			it["rank"] = map[string]any{"legend_rank": lr, "verified": rv == 1, "rank_verified": rv == 1, "region": region}
 		}
 		items = append(items, it)
 	}
@@ -1255,7 +1261,9 @@ func (h *ClubsHandler) listMembers(w http.ResponseWriter, r *http.Request, v clu
 			it["battletag_verified"] = btv == 1
 		}
 		if lr > 0 {
-			it["rank"] = map[string]any{"legend_rank": lr, "verified": rv == 1, "region": region}
+			// the web client reads battletag/flags from this object whenever it exists, so repeat them here
+			it["rank"] = map[string]any{"legend_rank": lr, "verified": rv == 1, "rank_verified": rv == 1, "region": region,
+				"battletag": bt, "battletag_verified": btv == 1}
 		}
 		items = append(items, it)
 	}
@@ -2178,7 +2186,7 @@ func (h *ClubsHandler) featureDeck(w http.ResponseWriter, r *http.Request, v clu
 		var have, already int
 		_ = tx.tx.QueryRow(`SELECT COUNT(*) FROM club_featured_decks WHERE club_id=?`, g.c.ID).Scan(&have)
 		_ = tx.tx.QueryRow(`SELECT COUNT(*) FROM club_featured_decks WHERE club_id=? AND deck_id=?`, g.c.ID, deckID).Scan(&already)
-		if already == 0 && have >= clubFeaturedCap {
+		if already == 0 && have >= h.setting(tx.tx, "featured_decks_cap", clubFeaturedCap) {
 			clubErr(w, http.StatusConflict, "featured_cap", "unfeature a deck first")
 			return
 		}

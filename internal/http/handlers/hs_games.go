@@ -73,7 +73,7 @@ func (h *HSHandler) createGame(w http.ResponseWriter, r *http.Request, v hsViewe
 		hsErr(w, http.StatusUnprocessableEntity, "could not tell which player you are; resend with ?me=1 or ?me=2")
 		return
 	}
-	id, dup, mine, theirs, result, err := h.storeGame(v.sub, &rec, body, 0)
+	id, dup, mine, theirs, result, invalid, err := h.storeGame(v.sub, &rec, body, 0)
 	if err != nil {
 		hsErr(w, http.StatusInternalServerError, "could not store game")
 		return
@@ -82,12 +82,16 @@ func (h *HSHandler) createGame(w http.ResponseWriter, r *http.Request, v hsViewe
 		writeJSON(w, http.StatusOK, map[string]any{"id": id, "duplicate": true})
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "my_class": mine, "opp_class": theirs, "result": result})
+	out := map[string]any{"id": id, "my_class": mine, "opp_class": theirs, "result": result}
+	if invalid {
+		out["sync_target_invalid"] = true
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 // storeGame saves one finished game for its owner (deduplicated by content fingerprint). deckID links it to
 // a library deck when the live tracker knows which deck was played.
-func (h *HSHandler) storeGame(sub string, rec *hsGameRecord, body []byte, deckID int64) (id int64, dup bool, myClass, oppClass string, result int, err error) {
+func (h *HSHandler) storeGame(sub string, rec *hsGameRecord, body []byte, deckID int64) (id int64, dup bool, myClass, oppClass string, result int, syncInvalid bool, err error) {
 	sum := sha256.Sum256(body)
 	fp := hex.EncodeToString(sum[:])
 	if err = h.DB.QueryRow(`SELECT id FROM hs_games WHERE owner_sub=? AND fingerprint=?`, sub, fp).Scan(&id); err == nil {
@@ -97,7 +101,7 @@ func (h *HSHandler) storeGame(sub string, rec *hsGameRecord, body []byte, deckID
 			h.DB.QueryRow(`SELECT deckstring, private FROM hs_decks WHERE id=?`, deckID).Scan(&code, &priv)
 			h.DB.Exec(`UPDATE hs_games SET deck_id=?, deck_code=?, deck_public=? WHERE id=? AND deck_id=0`, deckID, code, boolInt(priv == 0), id)
 		}
-		return id, true, "", "", 0, nil
+		return id, true, "", "", 0, false, nil
 	}
 	opp := 3 - rec.Me
 	result, myName, oppName := rec.Result1, rec.Player1, rec.Player2
@@ -120,15 +124,18 @@ func (h *HSHandler) storeGame(sub string, rec *hsGameRecord, body []byte, deckID
 	if deckID > 0 {
 		h.DB.QueryRow(`SELECT deckstring, private FROM hs_decks WHERE id=?`, deckID).Scan(&code, &priv)
 	}
-	res, err := h.DB.Exec(`INSERT INTO hs_games (owner_sub,fingerprint,game_type,format,me,result,turns,complete,my_class,opp_class,my_name,opp_name,opp_cards,record_json,deck_id,deck_code,deck_public)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	// Telemetry routing (CLUBS_NORTHSTAR section 6): the server resolves the owner's stored sync target and
+	// re-verifies membership at insert time. The uplink never names a club (R9).
+	clubID, visibility, syncInvalid := h.routeFor(sub)
+	res, err := h.DB.Exec(`INSERT INTO hs_games (owner_sub,fingerprint,game_type,format,me,result,turns,complete,my_class,opp_class,my_name,opp_name,opp_cards,record_json,deck_id,deck_code,deck_public,club_id,visibility)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sub, fp, rec.GameType, rec.Format, rec.Me, result, rec.Turns, rec.Complete,
-		myClass, oppClass, myName, oppName, string(oc), string(body), deckID, code, boolInt(code != "" && priv == 0))
+		myClass, oppClass, myName, oppName, string(oc), string(body), deckID, code, boolInt(code != "" && priv == 0), clubID, visibility)
 	if err != nil {
-		return 0, false, "", "", 0, err
+		return 0, false, "", "", 0, false, err
 	}
 	id, _ = res.LastInsertId()
-	return id, false, myClass, oppClass, result, nil
+	return id, false, myClass, oppClass, result, syncInvalid, nil
 }
 
 func (h *HSHandler) listGames(w http.ResponseWriter, r *http.Request, v hsViewer) {
@@ -184,6 +191,10 @@ func (h *HSHandler) matchups(w http.ResponseWriter, r *http.Request, v hsViewer)
 	q := `SELECT my_class, opp_class, COUNT(*), SUM(result=1), SUM(result=2), SUM(result=3)
 		FROM hs_games WHERE complete=1 AND result IN (1,2,3) AND my_class!='' AND opp_class!=''`
 	args := []any{}
+	if r.URL.Query().Get("scope") != "mine" {
+		// the public aggregate: club practice and private games never leak into it
+		q += ` AND visibility='personal'`
+	}
 	if r.URL.Query().Get("scope") == "mine" {
 		if v.sub == "" {
 			hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
