@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -552,6 +553,46 @@ func TestHS_LiveLinesAcceptsLZ4Frames(t *testing.T) {
 	}
 }
 
+// Regression (founder report, 2026-10-12): Ensure-LogCap used to return the instant client.config
+// ALREADY had the fix line, before ever checking whether the currently-running Hearthstone process
+// started before that fix was written. A config fixed in an earlier uplink session, with
+// Hearthstone running continuously since (exactly the founder's case -- a long play session,
+// config patched days prior), made the uplink report cap_fixed:true/restart_needed:false forever,
+// even though the live process never read the lifted limit and was still silently capping
+// Power.log at ~10 MB -- which froze the live tracker with no warning at all telling the player
+// why. This can only be checked at the text level: this sandbox has no PowerShell runtime to
+// execute the script against a real client.config/process, so this proves the known-bad early
+// return is gone and the restart-time check is reachable regardless of which branch got the file
+// into a fixed state, not that the full script behaves correctly end to end on Windows.
+func TestHS_LiveUplinkScriptChecksRestartNeededEvenWhenAlreadyFixed(t *testing.T) {
+	e := newHSEnv(t)
+	req := httptest.NewRequest("GET", "/api/v1/hs/live/uplink.ps1", nil)
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("uplink script: %d", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "if (Test-CapFixed $cfg) { $script:capFixed = $true; return }") {
+		t.Fatalf("the old early-return bug (skips the restart-needed check when the file was already fixed) is still present")
+	}
+	fn := body[strings.Index(body, "function Ensure-LogCap"):]
+	fn = fn[:strings.Index(fn, "\nfunction ")]
+	if !strings.Contains(fn, "if (-not (Test-CapFixed $cfg))") {
+		t.Fatalf("Ensure-LogCap no longer gates the write path on Test-CapFixed as expected: %s", fn)
+	}
+	// the restart-time comparison must come AFTER that gated block closes, so it runs whether this
+	// call wrote the fix just now or found it already in place from an earlier run.
+	gateEnd := strings.Index(fn, "if (-not (Test-CapFixed $cfg))")
+	restartCheck := strings.Index(fn, "$p.StartTime -lt")
+	if restartCheck < 0 || restartCheck < gateEnd {
+		t.Fatalf("restart-needed check must be reachable regardless of branch: %s", fn)
+	}
+	if strings.Count(fn, "$p.StartTime -lt") != 1 {
+		t.Fatalf("expected exactly one restart-time check, not one per branch: %s", fn)
+	}
+}
+
 // lz4Frames builds [u32 raw][u32 comp][block] frames using only "stored literal" blocks (valid LZ4:
 // a single sequence with literals and no match), enough to exercise the framing + decode path.
 func lz4Frames(t *testing.T, data []byte) []byte {
@@ -665,6 +706,74 @@ func TestHS_LiveQueuedDeckNotMixedWithPreviousGame(t *testing.T) {
 	st = e.must(200, "erin", "GET", "live/state", "")
 	if st["in_game"] != true || st["drawn_total"] != float64(2) {
 		t.Fatalf("game 2 should be live: %v", st)
+	}
+}
+
+// Regression (2026-10-12, root-caused live against the founder's own real game): Hearthstone logs
+// every CREATE_GAME twice -- once under GameState.DebugPrintPower(), once under
+// PowerTaskList.DebugPrintPower(), the same instant, and the real PowerTaskList copy is indented a
+// few extra spaces before CREATE_GAME. liveLines's old wipe check (HasSuffix on one fixed-spacing
+// string) never actually matched that real shape at all -- not a deliberate guard, just an
+// accident of a too-narrow string match -- so this specific capture never wiped here even before
+// the fix. The real, confirmed bug was entirely in the PRN tracker (internal/hstracker's own
+// Ginkgo suite root-causes and fixes that part against this exact fixture). This test instead
+// proves the hardened replacement -- which DOES correctly recognize the real indented duplicate,
+// using a clock comparison rather than a fixed-spacing string -- keeps behaving correctly rather
+// than regressing into a real wipe now that it actually sees the line it's checking for.
+func TestHS_LiveLinesDoesNotWipeOnDuplicateCreateGameAcrossBatches(t *testing.T) {
+	e, tok, _ := liveTrackerEnv(t, "founder")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "hstracker", "testdata", "real_duplicate_create_game.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, ln := range strings.Split(string(raw), "\n") {
+		lines = append(lines, strings.TrimRight(ln, "\r"))
+	}
+	dup := -1
+	for i, ln := range lines {
+		if i > 0 && strings.Contains(ln, "DebugPrintPower() - ") && strings.HasSuffix(strings.TrimSpace(ln), "CREATE_GAME") {
+			dup = i
+			break
+		}
+	}
+	if dup < 0 {
+		t.Fatal("fixture has no duplicate CREATE_GAME line -- fixture changed?")
+	}
+	// batch 1: everything up to (not including) the duplicate -- the player's own deck declarations
+	// and opening hand are in here. batch 2: the duplicate line onward.
+	batch1, batch2 := lines[:dup], lines[dup:]
+	// the real file also has a handful of DebugPrintGame/DebugPrintOptions/DebugDump/OnEntityChoices
+	// lines liveLines legitimately filters out (only DebugPrintPower() lines are kept) -- count
+	// whatever actually matches that same shape instead of assuming every raw line survives.
+	keepable := regexp.MustCompile(`^D \d{2}:\d{2}:\d{2}\.\d+ (?:GameState|PowerTaskList)\.DebugPrint(?:Power|Game)\(\) - `)
+	want := func(ls []string) int {
+		n := 0
+		for _, ln := range ls {
+			if keepable.MatchString(ln) {
+				n++
+			}
+		}
+		return n
+	}
+
+	code, resp1 := e.post(tok, "live/lines", jstr(map[string]any{"reset": true, "power": batch1}))
+	if code != 200 {
+		t.Fatalf("batch 1: %d %v", code, resp1)
+	}
+	n1, _ := resp1["power_lines"].(float64)
+	if n1 != float64(want(batch1)) {
+		t.Fatalf("batch 1: expected %d keepable lines, power_lines=%v", want(batch1), resp1["power_lines"])
+	}
+
+	code, resp2 := e.post(tok, "live/lines", jstr(map[string]any{"power": batch2}))
+	if code != 200 {
+		t.Fatalf("batch 2: %d %v", code, resp2)
+	}
+	n2, _ := resp2["power_lines"].(float64)
+	if want2 := want(batch1) + want(batch2); n2 != float64(want2) {
+		t.Fatalf("the duplicate CREATE_GAME wiped batch 1's lines: want %d (= %d + %d), got power_lines=%v",
+			want2, want(batch1), want(batch2), resp2["power_lines"])
 	}
 }
 

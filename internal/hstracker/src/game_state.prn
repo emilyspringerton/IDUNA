@@ -247,6 +247,23 @@
 ;; Fold newline-terminated lines of `text` (starting at byte 0) into `st`. Stops at once when the
 ;; game completes (STATE=COMPLETE) or a new CREATE_GAME arrives while a game was running (aborted,
 ;; that line NOT consumed). A trailing partial line is never consumed. Check (get-field st :consumed).
+;;
+;; Regression (2026-10-12, founder's own live game, root-caused against a real captured Power.log):
+;; a real Hearthstone build logs EVERY CREATE_GAME twice -- once under GameState.DebugPrintPower(),
+;; once under PowerTaskList.DebugPrintPower(), same instant, same event. Before this fix, BOTH
+;; variants could trigger the abort-as-complete=2 branch below, so the harmless PowerTaskList twin
+;; (arriving a few lines after its own GameState original, while :started is already 1) was treated
+;; as "a genuinely new game interrupted this one" -- the live record fractured into two segments
+;; seconds into every match, and the second (the one --live actually serves) never saw the first
+;; segment's FULL_ENTITY declarations for the player's own deck. The player's own cards then never
+;; resolve a card0/zone0 again for the rest of the match (nothing re-declares them), while the
+;; opponent's cards keep working fine (they get a fresh SHOW_ENTITY every time one is actually
+;; played, well after the split) -- exactly the live symptom reported ("opponent revealed shows up,
+;; my own drawn cards never do"). Only a GameState-logged CREATE_GAME is trusted to mean "a genuinely
+;; new game," matching the comment on handle-line above: GameState is read first/authoritatively;
+;; PowerTaskList is a fallback STARTER for builds that skip GameState's own copy entirely (the
+;; TestLiveTrailerFiresWhenCreateGameIsOnlyUnderPowerTaskList regression this must not break), never
+;; an independent trigger to abort a game already in progress.
 (defn fold-text [(text : String @ Region) (st : GameState @ Region)
                  (scratch : Arena @ Region) (game : Arena @ Region)]
   : GameState @ Region
@@ -257,10 +274,8 @@
         (let [e (if (and (> nl pos) (= (string/char-at text (- nl 1)) 13)) (- nl 1) nl) ;; CRLF logs
               line (string/substring text pos e scratch)
               pw (power-log/find-from line "GameState.DebugPrintPower() - " 0)
-              ptpw (power-log/find-from line "PowerTaskList.DebugPrintPower() - " 0)
-              is-create (or (and (>= pw 0) (power-log/at? line "CREATE_GAME" (power-log/skip-spaces line (+ pw 30))))
-                            (and (>= ptpw 0) (power-log/at? line "CREATE_GAME" (power-log/skip-spaces line (+ ptpw 34)))))]
-          (if (and is-create (= (get-field cur :started) 1))
+              is-create-gamestate (and (>= pw 0) (power-log/at? line "CREATE_GAME" (power-log/skip-spaces line (+ pw 30))))]
+          (if (and is-create-gamestate (= (get-field cur :started) 1))
             (with-complete cur pos 2)
             (recur (+ nl 1) (handle-line cur line (+ nl 1) scratch game))))))))
 

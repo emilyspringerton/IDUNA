@@ -55,6 +55,7 @@ type liveSession struct {
 	sub      string
 	decks    []string
 	power    []string
+	createTS string // clock of the current game's own CREATE_GAME line (see the wipe check in liveLines)
 	dirty    bool
 	base     bool // a reset (full resend) has been received since this session was created
 	client   liveClient
@@ -255,8 +256,24 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 		if len(ln) > hsLiveMaxLineLen || !hsPowerLineRe.MatchString(ln) {
 			continue
 		}
-		if strings.HasSuffix(strings.TrimSpace(ln), "DebugPrintPower() - CREATE_GAME") {
-			s.power = s.power[:0] // a new game: only the current one is tracked live
+		// Hardened 2026-10-12 alongside the real bug this was meant to guard against (root-caused in
+		// internal/hstracker's game_state.prn, against a real captured Power.log): Hearthstone logs
+		// every CREATE_GAME twice -- once under GameState.DebugPrintPower(), once under
+		// PowerTaskList.DebugPrintPower(), same instant, same event, with the PowerTaskList copy
+		// indented a few extra spaces before CREATE_GAME. The old check here (HasSuffix against one
+		// fixed-spacing string) never actually matched that real indented shape, so it happened to
+		// never wipe on it -- not a deliberate guard, an accident of too-narrow a string match that
+		// would have broken the moment the duplicate's exact spacing changed. This now genuinely
+		// recognizes the real shape (marker text + CREATE_GAME suffix, independent of what's between
+		// them) and distinguishes "the same game's own duplicate" from "a real new game" by clock
+		// instead of relying on not matching at all: a genuinely new game's CREATE_GAME has a
+		// materially later clock than the one already being tracked; the duplicate shares it exactly.
+		if strings.Contains(ln, "DebugPrintPower() - ") && strings.HasSuffix(strings.TrimSpace(ln), "CREATE_GAME") {
+			ts := hsLogClock(ln)
+			if ts == "" || ts != s.createTS {
+				s.power = s.power[:0] // a new game: only the current one is tracked live
+				s.createTS = ts
+			}
 		}
 		s.power = append(s.power, ln)
 		if strings.Contains(ln, "value=COMPLETE") || strings.Contains(ln, "tag=PLAYSTATE") {
@@ -835,38 +852,47 @@ function Test-CapFixed([string]$cfg) {
 }
 function Ensure-LogCap {
   $cfg = Join-Path (Split-Path $LogsDir -Parent) 'client.config'
-  if (Test-CapFixed $cfg) { $script:capFixed = $true; return }
-  if ($NoConfigFix) { $script:fixError = 'automatic fix disabled (-NoConfigFix)'; return }
-  $nl = [string][char]13 + [string][char]10
-  $text = ''
-  if (Test-Path -LiteralPath $cfg) { $text = [IO.File]::ReadAllText($cfg) }
-  if ($text -match '(?im)^\s*FileSizeLimit\.Int\s*=') {
-    $new = [regex]::Replace($text, '(?im)^[ \t]*FileSizeLimit\.Int[ \t]*=[^\r\n]*', 'FileSizeLimit.Int=-1')
-  } else {
-    $new = 'FileSizeLimit.Int=-1' + $nl + $text
-  }
-  $enc = New-Object Text.UTF8Encoding($false)
-  Write-Host "Hearthstone stops logging at ~10 MB (about 2-3 games). Lifting that in: $cfg"
-  try {
-    [IO.File]::WriteAllText($cfg, $new, $enc)
-  } catch {
-    # Program Files is protected: ask Windows for permission (UAC prompt); the user can decline.
-    try {
-      $tmp = Join-Path $env:TEMP 'wotan_client.config.new'
-      [IO.File]::WriteAllText($tmp, $new, $enc)
-      $cmd = "Copy-Item -LiteralPath '$tmp' -Destination '$cfg' -Force"
-      Write-Host 'Windows will ask permission to write that one file...'
-      Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList @('-NoProfile', '-Command', $cmd)
-      Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-    } catch { $script:fixError = 'permission denied; add the line FileSizeLimit.Int=-1 to ' + $cfg + ' yourself' }
+  # Regression (2026-10-12 founder report): this used to return here the moment the file ALREADY
+  # had the fix line, skipping the restart-needed check below entirely -- so a config fixed in an
+  # earlier session, with Hearthstone running continuously since before that fix existed, reported
+  # cap_fixed:true/restart_needed:false forever, even though THIS running Hearthstone process never
+  # actually read the lifted limit and was still silently capping Power.log at ~10 MB. The check now
+  # always runs, whichever branch got the file into a fixed state.
+  if (-not (Test-CapFixed $cfg)) {
+    if ($NoConfigFix) { $script:fixError = 'automatic fix disabled (-NoConfigFix)' }
+    else {
+      $nl = [string][char]13 + [string][char]10
+      $text = ''
+      if (Test-Path -LiteralPath $cfg) { $text = [IO.File]::ReadAllText($cfg) }
+      if ($text -match '(?im)^\s*FileSizeLimit\.Int\s*=') {
+        $new = [regex]::Replace($text, '(?im)^[ \t]*FileSizeLimit\.Int[ \t]*=[^\r\n]*', 'FileSizeLimit.Int=-1')
+      } else {
+        $new = 'FileSizeLimit.Int=-1' + $nl + $text
+      }
+      $enc = New-Object Text.UTF8Encoding($false)
+      Write-Host "Hearthstone stops logging at ~10 MB (about 2-3 games). Lifting that in: $cfg"
+      try {
+        [IO.File]::WriteAllText($cfg, $new, $enc)
+      } catch {
+        # Program Files is protected: ask Windows for permission (UAC prompt); the user can decline.
+        try {
+          $tmp = Join-Path $env:TEMP 'wotan_client.config.new'
+          [IO.File]::WriteAllText($tmp, $new, $enc)
+          $cmd = "Copy-Item -LiteralPath '$tmp' -Destination '$cfg' -Force"
+          Write-Host 'Windows will ask permission to write that one file...'
+          Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList @('-NoProfile', '-Command', $cmd)
+          Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        } catch { $script:fixError = 'permission denied; add the line FileSizeLimit.Int=-1 to ' + $cfg + ' yourself' }
+      }
+    }
   }
   if (Test-CapFixed $cfg) {
     $script:capFixed = $true; $script:fixError = ''
     $p = Get-Process Hearthstone -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($p -and $p.StartTime -lt (Get-Item -LiteralPath $cfg).LastWriteTime) {
       $script:restartNeeded = $true
-      Write-Host 'Done. Restart Hearthstone once so it takes effect (until then the log still stops at ~10 MB).'
-    } else { Write-Host 'Done.' }
+      Write-Host 'Hearthstone must be restarted once for the lifted log limit to take effect (it is still capped at ~10 MB until then).'
+    }
   } elseif (-not $script:fixError) {
     $script:fixError = 'could not write client.config; add the line FileSizeLimit.Int=-1 to ' + $cfg + ' yourself'
   }
