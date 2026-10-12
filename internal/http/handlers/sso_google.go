@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -231,10 +230,6 @@ func (h *SSOGoogleHandler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	claims, err := verify(r.Context(), idToken, h.GoogleClientID)
 	if err != nil {
-		// TEMP DIAGNOSTIC (2026-10-12, remove once root-caused): the real reason this failed —
-		// no PII, just which Verify check tripped.
-		log.Printf("sso_google: id_token verify failed — err=%v redirect_uri=%q client_id_set=%v",
-			err, h.redirectURIFor(r), h.GoogleClientID != "")
 		http.Error(w, "Google id_token invalid", http.StatusUnauthorized)
 		return
 	}

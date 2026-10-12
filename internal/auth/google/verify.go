@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -15,7 +16,9 @@ import (
 	"time"
 )
 
-const googleCertsURL = "https://www.googleapis.com/oauth2/v3/certs"
+// googleCertsURL is a var (not const) so tests can point it at a local JWKS server instead of
+// the real Google endpoint.
+var googleCertsURL = "https://www.googleapis.com/oauth2/v3/certs"
 
 // GoogleClaims holds the fields we extract from a verified Google ID token.
 type GoogleClaims struct {
@@ -69,7 +72,7 @@ func Verify(ctx context.Context, idToken string, googleClientID string) (*Google
 	}
 	sigInput := parts[0] + "." + parts[1]
 	digest := sha256.Sum256([]byte(sigInput))
-	if err := rsa.VerifyPKCS1v15(pubKey, 0x04, digest[:], sigBytes); err != nil {
+	if err := rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, digest[:], sigBytes); err != nil {
 		return nil, fmt.Errorf("google: signature invalid: %w", err)
 	}
 
