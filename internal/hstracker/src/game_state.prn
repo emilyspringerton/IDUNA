@@ -208,6 +208,22 @@
 ;; never emitted -- the tracker looked "stuck" for the whole match and only ever produced a real
 ;; record once STATE=COMPLETE (a TAG_CHANGE, independently GameState-logged) ended it. Prefix lengths
 ;; differ (13 vs 9 char component name), so each gets its own skip offset.
+;;
+;; Regression (2026-10-12, founder's own live session, caught live mid-game via WOTAN's "note: waiting
+;; for your opening hand" message): every non-CREATE_GAME line is dropped (consumed, but never handed to
+;; handle-payload/handle-game-line) while :started is still 0. Hearthstone double-logs STATE=COMPLETE
+;; exactly like it double-logs CREATE_GAME (GameState then an indented PowerTaskList echo, same instant),
+;; and the PowerTaskList copy is followed by its own trailing re-statement of a few end-of-game tags
+;; (PLAYSTATE, NUM_TURNS_IN_HAND, ...) before its STATE=COMPLETE. host.c's fold_buffer, right after
+;; emit_game() prints the real completed record, folds whatever text remains in the SAME read into a
+;; FRESH GameState (started=0) -- and before this fix, THAT fresh state fed those trailing echoes
+;; straight to handle-payload, so its own STATE=COMPLETE (fold-text's stop-on-complete check does not
+;; care whether a game ever genuinely started) printed a second, near-empty phantom record (0 entities,
+;; :me unresolved) immediately after every real game. hs_live.go always reads the LAST record, so the
+;; live page showed this phantom -- full deck, nothing drawn, "waiting for your opening hand" -- instead
+;; of either the just-finished game's real result or a clean "ready for the next game" state. A brand
+;; new game's FIRST real line is always its own CREATE_GAME (GameState or PowerTaskList), never anything
+;; else, so it is always safe to ignore every line until one arrives.
 (defn handle-line [(st : GameState @ Region) (line : String @ Region) (next : I32)
                    (scratch : Arena @ Region) (game : Arena @ Region)]
   : GameState @ Region
@@ -219,18 +235,26 @@
       (let [p (string/substring line (power-log/skip-spaces line (+ pw 30)) (string/length line) scratch)]
         (if (power-log/at? p "CREATE_GAME" 0)
           (with-consumed st next 1)
-          (with-consumed (handle-payload st p scratch game) next (get-field st :started))))
+          (if (= (get-field st :started) 0)
+            (with-consumed st next 0)
+            (with-consumed (handle-payload st p scratch game) next (get-field st :started)))))
       (if (>= gm 0)
-        (let [p (string/substring line (+ gm 29) (string/length line) scratch)]
-          (with-consumed (handle-game-line st p game) next (get-field st :started)))
+        (if (= (get-field st :started) 0)
+          (with-consumed st next 0)
+          (let [p (string/substring line (+ gm 29) (string/length line) scratch)]
+            (with-consumed (handle-game-line st p game) next (get-field st :started))))
         (if (>= ptpw 0)
           (let [p (string/substring line (power-log/skip-spaces line (+ ptpw 34)) (string/length line) scratch)]
             (if (power-log/at? p "CREATE_GAME" 0)
               (with-consumed st next 1)
-              (with-consumed (handle-payload st p scratch game) next (get-field st :started))))
+              (if (= (get-field st :started) 0)
+                (with-consumed st next 0)
+                (with-consumed (handle-payload st p scratch game) next (get-field st :started)))))
           (if (>= ptgm 0)
-            (let [p (string/substring line (+ ptgm 33) (string/length line) scratch)]
-              (with-consumed (handle-game-line st p game) next (get-field st :started)))
+            (if (= (get-field st :started) 0)
+              (with-consumed st next 0)
+              (let [p (string/substring line (+ ptgm 33) (string/length line) scratch)]
+                (with-consumed (handle-game-line st p game) next (get-field st :started))))
             (with-consumed st next (get-field st :started))))))))
 
 ;; index of the next '\n' at or after `pos`, or -1 at the NUL terminator (never strlen's the buffer).
