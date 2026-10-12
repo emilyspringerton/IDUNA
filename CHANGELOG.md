@@ -1930,3 +1930,7 @@ self-improvement run. They form the paper trail that closes the RSI loop.
 
 - `/admin` overview, `/admin/users`, `/admin/agents`, `/admin/audit`
 - IAM events audit log viewer
+
+## 2026-10-12 (identity federation, reconcile)
+- Uplink script (`hsUplinkScript`) gains `-Key`/`-SaveKey`/`-ForgetKey` (key exchange via `/api/v1/hs/live/exchange`, DPAPI-stored); patch authored in HRIP `tracker/uplink/uplink-key.patch`, structure-tested only (no PowerShell runtime).
+- SSO login page: Battle.net is the primary door when `BNET_CLIENT_ID/SECRET` are set; Google/email secondary.

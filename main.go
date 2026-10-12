@@ -1371,8 +1371,9 @@ func main() {
 	ssoAllowedHosts := strings.Split(getenv("SSO_ALLOWED_REDIRECT_HOSTS", "wotan.okemily.com,localhost,127.0.0.1"), ",")
 	googleSSOEnabled := googleClientID != "" && os.Getenv("GOOGLE_CLIENT_SECRET") != ""
 	ssoLoginH := &handlers.SSOLoginHandler{
-		AllowedHosts:  ssoAllowedHosts,
-		GoogleEnabled: googleSSOEnabled,
+		AllowedHosts:     ssoAllowedHosts,
+		GoogleEnabled:    googleSSOEnabled,
+		BattlenetEnabled: os.Getenv("BNET_CLIENT_ID") != "" && os.Getenv("BNET_CLIENT_SECRET") != "",
 	}
 	mux.Handle("/api/v1/auth/sso/login", ssoLoginH)
 	// "Sign in with Google" for that same page. Needs SSO_GOOGLE_REDIRECT_URI registered as an

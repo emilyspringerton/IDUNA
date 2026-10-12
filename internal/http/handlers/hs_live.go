@@ -761,6 +761,9 @@ const hsUplinkScript = `# WOTAN Hearthstone deck tracker uplink. Read-only: it t
 # lines to WOTAN with a token only valid for uploading your own tracker data. Close this window to stop.
 param(
   [string]$Token = '',                                  # optional: omit to sign in with IAM in your browser
+  [string]$Key = '',                                    # optional: a WOTAN upload key (wt_...) from Account settings
+  [switch]$SaveKey,                                     # store the key, DPAPI-encrypted for this Windows user (prompts if no -Key)
+  [switch]$ForgetKey,                                   # delete the stored key and exit the key flow
   [string]$Base = 'https://wotan.okemily.com',
   [string]$Iam = 'https://iam.okemily.com',
   [int]$Port = 51824,                                   # loopback port for the sign-in callback
@@ -911,6 +914,56 @@ function Get-IamToken {
 }
 $script:authNeeded = (-not $script:Token)
 
+# Upload key (IDENTITY_NORTHSTAR section 4.3). The key is exchanged at init for the same 12 h upload token the
+# browser sign-in produces, so everything after this (lines, resync, sync-target) is unchanged. A saved key lives
+# in %APPDATA%\WOTAN\upload-key.dat, encrypted with Windows DPAPI (readable only by this Windows user on this PC).
+$script:UploadKey = ''
+$script:KeyFile = Join-Path $env:APPDATA 'WOTAN\upload-key.dat'
+function ConvertTo-PlainKey([System.Security.SecureString]$sec) {
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+function Save-UploadKey([string]$k) {
+  New-Item -ItemType Directory -Force -Path (Split-Path $script:KeyFile -Parent) | Out-Null
+  ConvertTo-SecureString $k -AsPlainText -Force | ConvertFrom-SecureString | Set-Content -LiteralPath $script:KeyFile -Encoding ASCII
+}
+function Read-SavedKey {
+  if (-not (Test-Path -LiteralPath $script:KeyFile)) { return '' }
+  try { return (ConvertTo-PlainKey (ConvertTo-SecureString ((Get-Content -LiteralPath $script:KeyFile -Raw).Trim()))) }
+  catch { Write-Host 'The saved upload key could not be read (it was saved by a different Windows user or PC). Run again with -Key or -SaveKey.'; return '' }
+}
+function Get-UplinkToken {
+  if ($script:UploadKey) {
+    try {
+      $b = '{"key":"' + ($script:UploadKey -replace '[\\"]', '') + '"}'
+      $r = Invoke-RestMethod -Uri ($Base.TrimEnd('/') + '/api/v1/hs/live/exchange') -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 20
+      if ($r -and $r.token) { Write-Host ('Signed in with your upload key (' + $r.tags_linked + ' BattleTag(s) linked).'); return [string]$r.token }
+    } catch {
+      $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+      if ($code -eq 401 -or $code -eq 403) {
+        Write-Host 'Your upload key was rejected (revoked or not valid). Make a new one under Account settings on WOTAN. Signing in with your browser instead.'
+        $script:UploadKey = ''
+      } else { throw ('Could not reach WOTAN to exchange your upload key: ' + $_.Exception.Message) }
+    }
+  }
+  return Get-IamToken
+}
+if ($ForgetKey) {
+  Remove-Item -LiteralPath $script:KeyFile -Force -ErrorAction SilentlyContinue
+  Write-Host 'Stored upload key removed.'
+} elseif ($Key) {
+  $script:UploadKey = $Key.Trim()
+  if ($SaveKey) { try { Save-UploadKey $script:UploadKey; Write-Host "Upload key saved (encrypted for your Windows user) in $script:KeyFile" } catch { Write-Host "Could not save the key: $($_.Exception.Message)" } }
+} elseif ($SaveKey) {
+  $k = ConvertTo-PlainKey (Read-Host 'Paste your WOTAN upload key (input is hidden)' -AsSecureString)
+  if ($k) {
+    $script:UploadKey = $k.Trim()
+    try { Save-UploadKey $script:UploadKey; Write-Host "Upload key saved (encrypted for your Windows user) in $script:KeyFile" } catch { Write-Host "Could not save the key: $($_.Exception.Message)" }
+  }
+} else {
+  $script:UploadKey = Read-SavedKey
+}
+
 # Hearthstone stops writing Power.log at ~10,000 KiB per session (about 2-3 games), which silently freezes
 # every log-based tracker. client.config next to Hearthstone.exe takes FileSizeLimit.Int=-1 to lift it
 # (HDT and Firestone write the same key). Done once, only if missing, and reported.
@@ -1031,7 +1084,7 @@ $pat = '(?:GameState|PowerTaskList)\.DebugPrint(Power|Game)\(\) - '
 while ($true) {
   try {
     if ($script:authNeeded) {
-      try { $script:Token = Get-IamToken; $script:authNeeded = $false; $script:syncShown = $false }
+      try { $script:Token = Get-UplinkToken; $script:authNeeded = $false; $script:syncShown = $false }
       catch { Write-Host $_.Exception.Message; Start-Sleep -Seconds 30; continue }
     }
     if (-not $script:syncShown) { Show-SyncTarget; $script:syncShown = $true }

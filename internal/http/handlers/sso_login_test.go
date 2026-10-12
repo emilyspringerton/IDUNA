@@ -125,3 +125,22 @@ func TestSSOLogin_RemembersSessionAndOffersContinue(t *testing.T) {
 		}
 	}
 }
+
+func TestSSOLogin_BattlenetPrimaryAboveGoogle(t *testing.T) {
+	h := newTestSSOLoginHandler()
+	h.GoogleEnabled, h.BattlenetEnabled = true, true
+	req := httptest.NewRequest("GET", "/api/v1/auth/sso/login?redirect_uri=https%3A%2F%2Fwotan.okemily.com%2F", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	body := w.Body.String()
+	b, g := strings.Index(body, `id="bnet-btn"`), strings.Index(body, `id="google-btn"`)
+	if b < 0 || g < 0 || b > g {
+		t.Fatalf("Battle.net must render above Google (bnet=%d google=%d)", b, g)
+	}
+	h.BattlenetEnabled = false
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if strings.Contains(w.Body.String(), `id="bnet-btn"`) {
+		t.Fatalf("dead Battle.net button rendered while unconfigured")
+	}
+}

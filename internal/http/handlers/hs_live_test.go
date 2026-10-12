@@ -1264,3 +1264,22 @@ func TestHS_DeckPoolsAndDedup(t *testing.T) {
 		t.Fatalf("duplicate paste: %d %v", code, o)
 	}
 }
+
+// Structure-only check (no PowerShell runtime in CI): the uplink script offers the upload-key path
+// -- -Key/-SaveKey/-ForgetKey, exchange via /live/exchange, DPAPI-protected storage -- and never
+// echoes the key into its output.
+func TestHS_LiveUplinkScriptSupportsUploadKey(t *testing.T) {
+	e := newHSEnv(t)
+	req := httptest.NewRequest("GET", "/api/v1/hs/live/uplink.ps1", nil)
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("uplink script: %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"[string]$Key", "[switch]$SaveKey", "[switch]$ForgetKey", "/api/v1/hs/live/exchange", "ConvertFrom-SecureString", "upload-key.dat"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("uplink script missing %q", want)
+		}
+	}
+}
