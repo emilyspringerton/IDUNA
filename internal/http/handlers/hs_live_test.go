@@ -777,6 +777,117 @@ func TestHS_LiveLinesDoesNotWipeOnDuplicateCreateGameAcrossBatches(t *testing.T)
 	}
 }
 
+// Regression (2026-10-12, founder real-time, mid-session: "it seems like we reached the end of
+// our log or something again... it is still showing opponent but not me"). See trimPowerLines's
+// own comment in hs_live.go for the full mechanism; this proves it end to end. A real opening
+// burst (CREATE_GAME, both heroes, the local player's own deck entities declared DECK, two real
+// draws) must stay correctly counted in /live/state even after enough log volume pushes the
+// session's line buffer past its cap. testdata/real_live_trim_filler.log is a real excerpt of the
+// founder's own actual Power.log (a different real game than the hstracker fixtures, same
+// session, pulled live off their PC the same way) -- used here purely as realistic bulk, not for
+// its own game's content, standing in for "a long game logs a lot of text." Before the fix,
+// trimming kept only the newest lines and silently discarded the opening burst along with the
+// oldest filler, so drawn_total/left_total froze at 0/30 while the opponent panel (which needs no
+// early declarations -- their reveals are always freshly logged near "now") kept working: exactly
+// the reported symptom.
+//
+// The filler's own entity ids are real and low (whatever range its own real game happened to
+// assign), and it is NOT scrubbed of them -- confirmed by inspection it still contains a genuine
+// "shuffled back into deck" tag on entity id 13 (line 165), which would have falsely un-counted a
+// draw had this test reused liveGameLines's own ids 10-13 for its synthetic head. The head below
+// deliberately uses a high, out-of-range entity id block (90000s) instead, confirmed absent from
+// the filler. The head also declares both heroes (unlike liveGameLines) so resolveMe's class
+// cross-check deterministically pins `me`, independent of whatever known-plays/opening-count
+// noise the filler's own real turn-1 content would otherwise introduce into the bare heuristic.
+//
+// The head ends with a sentinel FULL_ENTITY (id 99999, confirmed absent from the filler) whose
+// only job is to re-point game_state.prn's `cur` (the entity an indented "tag=" continuation line
+// with no "Entity=" of its own gets attributed to) away from entity 90011 before the filler
+// starts. The filler is a cut excerpt of a real log, not a clean game start: its own first "tag="
+// continuation lines belong to a real header that fell before the cut, and without this sentinel
+// they get silently attributed to whatever entity game_state.prn last saw -- here, the test's own
+// last real draw -- the exact "stale leftover entity" hazard already documented in
+// game_state.prn's CHANGE_ENTITY comment, just reached from the test's own splice instead of a
+// real transform. Caught by this test itself: without the sentinel it reproducibly manufactured a
+// second, spurious draw for entity 90011 that the real game never logged.
+func TestHS_LiveDrawsSurviveLineBufferTrimOnALongGame(t *testing.T) {
+	e, tok, dbfs := liveTrackerEnv(t, "founder2")
+
+	const testMax, testHead = 500, 40
+	defer handlers.SetLiveTrimThresholdsForTest(testMax, testHead)()
+
+	d, err := hsdeck.Decode(liveTestCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oppClass := ""
+	for _, c := range hsdeck.Classes {
+		if c != d.Class {
+			oppClass = c
+			break
+		}
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (95000,'Me','0','HERO_TRIM1',?)`, d.Class); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (95001,'Opp','0','HERO_TRIM2',?)`, oppClass); err != nil {
+		t.Fatal(err)
+	}
+
+	clock := "12:00:00.0000000"
+	pw := func(s string) string { return "D " + clock + " GameState.DebugPrintPower() - " + s }
+	head := []string{
+		pw("CREATE_GAME"),
+		"D " + clock + " GameState.DebugPrintGame() - PlayerID=1, PlayerName=Founder#1",
+		"D " + clock + " GameState.DebugPrintGame() - PlayerID=2, PlayerName=UNKNOWN HUMAN PLAYER",
+		pw("    FULL_ENTITY - Creating ID=90001 CardID=HERO_TRIM1"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=1"),
+		pw("    FULL_ENTITY - Creating ID=90002 CardID=HERO_TRIM2"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=2"),
+	}
+	for id := 90010; id < 90014; id++ {
+		head = append(head, pw("    FULL_ENTITY - Creating ID="+strconv.Itoa(id)+" CardID="),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=1"))
+	}
+	head = append(head, pw("TAG_CHANGE Entity=GameEntity tag=TURN value=1 "))
+	for i := 0; i < 2; i++ {
+		id := strconv.Itoa(90010 + i)
+		head = append(head,
+			pw("    SHOW_ENTITY - Updating Entity="+id+" CardID=T_"+strconv.Itoa(dbfs[i])),
+			pw("TAG_CHANGE Entity=[entityName=x id="+id+" zone=DECK zonePos=1 cardId=T_"+strconv.Itoa(dbfs[i])+" player=1] tag=ZONE value=HAND "))
+	}
+	head = append(head, pw("    FULL_ENTITY - Creating ID=99999 CardID=")) // sentinel, see comment above
+
+	raw, err := os.ReadFile("testdata/real_live_trim_filler.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var filler []string
+	for _, ln := range strings.Split(string(raw), "\n") {
+		filler = append(filler, strings.TrimRight(ln, "\r"))
+	}
+	if ec := len(filler); ec < 1000 {
+		t.Fatalf("filler fixture looks too small to exercise the trim (%d lines) -- fixture changed?", ec)
+	}
+
+	decks := []string{
+		"I 11:59:30.0000000 Finding Game With Deck:", "I 11:59:30.0000000 ### Trim Test",
+		"I 11:59:30.0000000 # Deck ID: 55", "I 11:59:30.0000000 " + liveTestCode,
+	}
+	body := jstr(map[string]any{"reset": true, "decks": decks, "power": append(head, filler...)})
+	code, out := e.post(tok, "live/lines", body)
+	if code != 200 {
+		t.Fatalf("live/lines: %d %v", code, out)
+	}
+	if n, _ := out["power_lines"].(float64); n != float64(testMax) {
+		t.Fatalf("expected the trim to fire and settle at %d lines, got power_lines=%v", testMax, out["power_lines"])
+	}
+
+	st := e.must(200, "founder2", "GET", "live/state", "")
+	if st["drawn_total"] != float64(2) || st["left_total"] != float64(28) {
+		t.Fatalf("the opening burst's own draws were lost to the trim, same as the live symptom: want 28 left / 2 drawn, got %v / %v (note=%v)",
+			st["left_total"], st["drawn_total"], st["note"])
+	}
+}
+
 // After a server restart the session is gone; the uplink must be told to resend from the start.
 func TestHS_LiveAsksForResyncWithoutBase(t *testing.T) {
 	e, tok, dbfs := liveTrackerEnv(t, "frank")

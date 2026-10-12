@@ -33,9 +33,16 @@ const (
 	hsLiveTokenTTL    = 12 * time.Hour
 	hsLiveMaxBody     = 4 << 20
 	hsLiveMaxInflated = 16 << 20 // decompressed ceiling (bomb guard)
-	hsLiveMaxPower    = 120000   // lines kept for the current game
 	hsLiveMaxDecks    = 800
 	hsLiveMaxLineLen  = 4000
+)
+
+// hsLiveMaxPower/hsLiveHeadPower are vars, not consts, so a test can shrink them to exercise the
+// trim path against a real (but modest-sized) fixture instead of needing an actual 120,000-line
+// capture -- see trimPowerLines's own comment for why the head must never be trimmed away.
+var (
+	hsLiveMaxPower  = 120000 // lines kept for the current game
+	hsLiveHeadPower = 6000   // always-preserved prefix -- see trimPowerLines
 )
 
 var (
@@ -280,9 +287,7 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 			gameEnded = true
 		}
 	}
-	if len(s.power) > hsLiveMaxPower {
-		s.power = append([]string(nil), s.power[len(s.power)-hsLiveMaxPower:]...)
-	}
+	s.power = trimPowerLines(s.power, hsLiveMaxPower, hsLiveHeadPower)
 	if req.Client != nil {
 		s.client = liveClient{Known: true, CapFixed: req.Client.CapFixed, RestartNeeded: req.Client.RestartNeeded,
 			PowerBytes: req.Client.PowerBytes, FixError: req.Client.FixError}
@@ -301,6 +306,41 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	// After a server restart (every deploy wipes in-memory sessions) the uplink keeps sending only new
 	// lines; without a base the tracker cannot know the deck or the game. Ask it to resend from the start.
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "power_lines": len(s.power), "resync": !s.base})
+}
+
+// trimPowerLines bounds the current game's line buffer to max lines, but always keeps the first
+// head lines untouched rather than sliding the whole window forward.
+//
+// Regression (2026-10-12, founder real-time, mid-session: "it is still showing opponent but not
+// me" / "we reached the end of our log or something"): the old trim kept only the newest max
+// lines. Hearthstone declares every one of the local player's own deck cards (FULL_ENTITY + an
+// indented tag=ZONE value=DECK) and both players' heroes in ONE burst right after CREATE_GAME --
+// a one-time cost bounded by deck size (~30 cards), never repeated for the rest of the match: a
+// card drawn on turn 20 gets only a TAG_CHANGE ZONE on the entity id that opening burst already
+// gave a card id to, not a fresh FULL_ENTITY of its own. A single long or board-flood game (every
+// minion buff/combat trigger logs verbosely) can push the total line count past the cap purely
+// from mid-game text, and a tail-only trim silently discards that one-time opening burst along
+// with it -- permanently blinding entities-json (and resolveMe's classOfPlayer, which reads the
+// same early hero reveals) for the LOCAL player's own cards for the rest of the match, while the
+// OPPONENT's revealed cards keep working fine (each reveal is logged fresh, right when they play
+// it, always well within the trailing window -- never a one-time early burst). resolveMe still
+// recovers `me` via known-plays (a live, recent signal), so the live page never falls back to the
+// generic "waiting for your opening hand" note -- it looks fully alive, opponent panel correctly
+// populated, while the player's own deck/drawn counts freeze at the full deck: exactly the
+// symptom reported. The default head (hsLiveHeadPower) is ~7x the real opening burst's measured
+// size (real_duplicate_create_game.log's own CREATE_GAME-through-mulligan window is under 900
+// lines for a 30-card deck) and costs ~5% of the total cap.
+func trimPowerLines(lines []string, max, head int) []string {
+	if len(lines) <= max {
+		return lines
+	}
+	if head > max {
+		head = max
+	}
+	kept := make([]string, 0, max)
+	kept = append(kept, lines[:head]...)
+	kept = append(kept, lines[len(lines)-(max-head):]...)
+	return kept
 }
 
 // liveState returns the caller's own tracker state.
