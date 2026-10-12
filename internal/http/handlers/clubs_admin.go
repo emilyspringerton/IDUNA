@@ -242,19 +242,34 @@ func (h *ClubsHandler) adminAudit(w http.ResponseWriter, r *http.Request, v club
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (h *ClubsHandler) adminSuspend(w http.ResponseWriter, r *http.Request, v clubViewer, id, reason string, suspend bool) {
-	c, ok := h.adminClub(w, id)
-	if !ok {
+// clubOpErr is a refusal from one of the shared platform-action cores below. The JSON admin API maps it to
+// hsErr/clubErr; the server-rendered Back Office console (admin_clubs.go) shows msg to the operator.
+type clubOpErr struct {
+	status int
+	code   string // empty = plain {"error": msg} like the original hsErr responses
+	msg    string
+}
+
+func (e *clubOpErr) Error() string { return e.msg }
+
+func writeOpErr(w http.ResponseWriter, e *clubOpErr) {
+	if e.code == "" {
+		hsErr(w, e.status, e.msg)
 		return
 	}
+	clubErr(w, e.status, e.code, e.msg)
+}
+
+var errClubDB = &clubOpErr{status: 500, msg: "database error"}
+
+// adminSuspendCore suspends/unsuspends a club (platform_admin=1 audit row + unified event).
+func (h *ClubsHandler) adminSuspendCore(r *http.Request, actor string, c clubRow, reason string, suspend bool) *clubOpErr {
 	if c.Deleted {
-		clubErr(w, http.StatusConflict, "deleted", "club is deleted")
-		return
+		return &clubOpErr{http.StatusConflict, "deleted", "club is deleted"}
 	}
 	tx, err := h.begin(r)
 	if err != nil {
-		hsErr(w, 500, "database error")
-		return
+		return errClubDB
 	}
 	defer tx.rollback()
 	sv, action, why := 0, "admin.unsuspend", ""
@@ -262,15 +277,59 @@ func (h *ClubsHandler) adminSuspend(w http.ResponseWriter, r *http.Request, v cl
 		sv, action, why = 1, "admin.suspend", reason
 	}
 	if _, err := tx.tx.Exec(`UPDATE clubs SET suspended=?, suspended_reason=?, updated_at=? WHERE id=?`, sv, why, clubNow(), c.ID); err != nil {
-		hsErr(w, 500, "database error")
+		return errClubDB
+	}
+	tx.audit(c.ID, actor, action, "", map[string]any{"reason": reason}, true)
+	if err := tx.commit(); err != nil {
+		return errClubDB
+	}
+	return nil
+}
+
+func (h *ClubsHandler) adminSuspend(w http.ResponseWriter, r *http.Request, v clubViewer, id, reason string, suspend bool) {
+	c, ok := h.adminClub(w, id)
+	if !ok {
 		return
 	}
-	tx.audit(c.ID, v.sub, action, "", map[string]any{"reason": reason}, true)
-	if err := tx.commit(); err != nil {
-		hsErr(w, 500, "database error")
+	if e := h.adminSuspendCore(r, v.sub, c, reason, suspend); e != nil {
+		writeOpErr(w, e)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": c.ID, "suspended": suspend})
+}
+
+// adminTransferCore reassigns ownership to an existing member, promoting them to manager if needed.
+func (h *ClubsHandler) adminTransferCore(r *http.Request, actor string, c clubRow, toSub, reason string) (bool, *clubOpErr) {
+	if c.Deleted {
+		return false, &clubOpErr{http.StatusConflict, "deleted", "club is deleted"}
+	}
+	if toSub == "" {
+		return false, &clubOpErr{http.StatusBadRequest, "", "to_sub required"}
+	}
+	tx, err := h.begin(r)
+	if err != nil {
+		return false, errClubDB
+	}
+	defer tx.rollback()
+	role, member := h.memberRole(tx.tx, c.ID, toSub)
+	if !member {
+		return false, &clubOpErr{http.StatusNotFound, "", "that person is not a member of this club"}
+	}
+	promoted := false
+	if role != "manager" { // an operator reassigning a club may promote the new owner to keep the owner-is-manager invariant
+		if _, err := tx.tx.Exec(`UPDATE club_memberships SET role='manager' WHERE club_id=? AND sub=?`, c.ID, toSub); err != nil {
+			return false, errClubDB
+		}
+		promoted = true
+	}
+	if _, err := tx.tx.Exec(`UPDATE clubs SET owner_sub=?, updated_at=? WHERE id=?`, toSub, clubNow(), c.ID); err != nil {
+		return false, errClubDB
+	}
+	tx.audit(c.ID, actor, "admin.transfer", toSub, map[string]any{"reason": reason, "from": c.OwnerSub, "to": toSub, "promoted": promoted}, true)
+	if err := tx.commit(); err != nil {
+		return false, errClubDB
+	}
+	return promoted, nil
 }
 
 func (h *ClubsHandler) adminTransfer(w http.ResponseWriter, r *http.Request, v clubViewer, id, toSub, reason string) {
@@ -278,43 +337,30 @@ func (h *ClubsHandler) adminTransfer(w http.ResponseWriter, r *http.Request, v c
 	if !ok {
 		return
 	}
-	if c.Deleted {
-		clubErr(w, http.StatusConflict, "deleted", "club is deleted")
-		return
-	}
-	if toSub == "" {
-		hsErr(w, http.StatusBadRequest, "to_sub required")
-		return
-	}
-	tx, err := h.begin(r)
-	if err != nil {
-		hsErr(w, 500, "database error")
-		return
-	}
-	defer tx.rollback()
-	role, member := h.memberRole(tx.tx, c.ID, toSub)
-	if !member {
-		hsErr(w, http.StatusNotFound, "that person is not a member of this club")
-		return
-	}
-	promoted := false
-	if role != "manager" { // an operator reassigning a club may promote the new owner to keep the owner-is-manager invariant
-		if _, err := tx.tx.Exec(`UPDATE club_memberships SET role='manager' WHERE club_id=? AND sub=?`, c.ID, toSub); err != nil {
-			hsErr(w, 500, "database error")
-			return
-		}
-		promoted = true
-	}
-	if _, err := tx.tx.Exec(`UPDATE clubs SET owner_sub=?, updated_at=? WHERE id=?`, toSub, clubNow(), c.ID); err != nil {
-		hsErr(w, 500, "database error")
-		return
-	}
-	tx.audit(c.ID, v.sub, "admin.transfer", toSub, map[string]any{"reason": reason, "from": c.OwnerSub, "to": toSub, "promoted": promoted}, true)
-	if err := tx.commit(); err != nil {
-		hsErr(w, 500, "database error")
+	promoted, e := h.adminTransferCore(r, v.sub, c, toSub, reason)
+	if e != nil {
+		writeOpErr(w, e)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": c.ID, "owner_sub": toSub, "promoted": promoted})
+}
+
+// adminDeleteCore soft-deletes a club (pending invites and requests are killed, memberships kept).
+func (h *ClubsHandler) adminDeleteCore(r *http.Request, actor string, c clubRow, reason string) *clubOpErr {
+	if c.Deleted {
+		return &clubOpErr{http.StatusConflict, "deleted", "club is already deleted"}
+	}
+	tx, err := h.begin(r)
+	if err != nil {
+		return errClubDB
+	}
+	defer tx.rollback()
+	softDeleteClub(tx, c.ID)
+	tx.audit(c.ID, actor, "admin.delete", "", map[string]any{"reason": reason, "slug": c.Slug}, true)
+	if err := tx.commit(); err != nil {
+		return errClubDB
+	}
+	return nil
 }
 
 func (h *ClubsHandler) adminDelete(w http.ResponseWriter, r *http.Request, v clubViewer, id, reason string) {
@@ -322,20 +368,8 @@ func (h *ClubsHandler) adminDelete(w http.ResponseWriter, r *http.Request, v clu
 	if !ok {
 		return
 	}
-	if c.Deleted {
-		clubErr(w, http.StatusConflict, "deleted", "club is already deleted")
-		return
-	}
-	tx, err := h.begin(r)
-	if err != nil {
-		hsErr(w, 500, "database error")
-		return
-	}
-	defer tx.rollback()
-	softDeleteClub(tx, c.ID)
-	tx.audit(c.ID, v.sub, "admin.delete", "", map[string]any{"reason": reason, "slug": c.Slug}, true)
-	if err := tx.commit(); err != nil {
-		hsErr(w, 500, "database error")
+	if e := h.adminDeleteCore(r, v.sub, c, reason); e != nil {
+		writeOpErr(w, e)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
