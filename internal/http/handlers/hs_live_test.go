@@ -498,6 +498,91 @@ func TestHS_LiveMeCrossCheckSurvivesASecondGameSameSession(t *testing.T) {
 	checkGame("game 2", "12:31:00.0000000")
 }
 
+// Regression (2026-10-12, founder real-time: "can we set up unit tests for that it was paladin
+// vs paladin the game i just was in" -- a game the founder reported broken, with the same "see
+// the opponent draws but my draws not shown" shape, immediately after the line-buffer-trim fix
+// above had already shipped). A true mirror match -- both heroes HERO_04, Uther Lightbringer --
+// makes resolveMe's class cross-check permanently inert: classOfPlayer(1) and classOfPlayer(2)
+// both resolve to "Paladin", matching the queued deck's own class on BOTH sides, so neither of
+// resolveMe's two deterministic branches (mine && !theirs / theirs && !mine) can ever fire. Every
+// sibling cross-check test (TestHS_LiveMeCrossCheckedAgainstHeroClass and its neighbors)
+// deliberately gives the two sides DIFFERENT classes, since they exist to prove the cross-check
+// itself fires -- none of them cover the case where it structurally cannot, which is exactly a
+// same-class mirror. This test proves the bare me-of fallback still gets it right on its own in
+// that case, via the one real, deterministic asymmetry it was built around: the local client
+// sees its own entire deck (first-zone DECK, revealed turn <=1) from the start, while the
+// opponent's deck-origin cards stay hidden until drawn or played -- true regardless of matchup.
+// Uses the real Paladin hero id and two real Paladin cards (CS2_087 Blessing of Might, EX1_136
+// Redemption) rather than the synthetic HERO_P1/HERO_P2/OPP_n ids the cross-check tests use.
+func TestHS_LiveMeResolvesCorrectlyInARealClassMirror(t *testing.T) {
+	e, tok, _ := liveTrackerEnv(t, "mirror1")
+
+	// A real, minimal Paladin deck: HeroDBF 671 is Paladin in hsdeck's own heroClass table.
+	deck := &hsdeck.Deck{FormatID: hsdeck.FormatID("standard"), HeroDBF: 671, DBFCards: []hsdeck.Card{
+		{DBF: 70, Count: 2},  // CS2_087 Blessing of Might
+		{DBF: 140, Count: 2}, // EX1_136 Redemption
+	}}
+	code := hsdeck.Encode(deck)
+	for _, row := range []struct {
+		dbf      int
+		id, name string
+	}{
+		{70, "CS2_087", "Blessing of Might"},
+		{140, "EX1_136", "Redemption"},
+	} {
+		if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id) VALUES (?,?,1,?)`, row.dbf, row.name, row.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.db.Exec(`INSERT INTO hs_cards (dbf_id,name,cost,card_id,class) VALUES (90100,'Uther','0','HERO_04','Paladin')`); err != nil {
+		t.Fatal(err)
+	}
+
+	clock := "12:00:00.0000000"
+	pw := func(s string) string { return "D " + clock + " GameState.DebugPrintPower() - " + s }
+	power := []string{
+		pw("CREATE_GAME"),
+		"D " + clock + " GameState.DebugPrintGame() - PlayerID=1, PlayerName=Founder#1",
+		"D " + clock + " GameState.DebugPrintGame() - PlayerID=2, PlayerName=UNKNOWN HUMAN PLAYER",
+		// both heroes are the SAME real Paladin hero -- a genuine mirror, not a stand-in.
+		pw("    FULL_ENTITY - Creating ID=201 CardID=HERO_04"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=1"),
+		pw("    FULL_ENTITY - Creating ID=202 CardID=HERO_04"), pw("        tag=ZONE value=PLAY"), pw("        tag=CONTROLLER value=2"),
+	}
+	for id := 10; id < 12; id++ {
+		power = append(power, pw("    FULL_ENTITY - Creating ID="+strconv.Itoa(id)+" CardID="),
+			pw("        tag=ZONE value=DECK"), pw("        tag=CONTROLLER value=1"))
+	}
+	power = append(power, pw("TAG_CHANGE Entity=GameEntity tag=TURN value=1 "))
+	cardOf := map[int]string{70: "CS2_087", 140: "EX1_136"}
+	for i, dbf := range []int{70, 140} {
+		id := strconv.Itoa(10 + i)
+		power = append(power,
+			pw("    SHOW_ENTITY - Updating Entity="+id+" CardID="+cardOf[dbf]),
+			pw("TAG_CHANGE Entity=[entityName=x id="+id+" zone=DECK zonePos=1 cardId="+cardOf[dbf]+" player=1] tag=ZONE value=HAND "))
+	}
+	decks := []string{
+		"I 11:59:30.0000000 Finding Game With Deck:", "I 11:59:30.0000000 ### Mirror Test",
+		"I 11:59:30.0000000 # Deck ID: 71", "I 11:59:30.0000000 " + code,
+	}
+	body := jstr(map[string]any{"reset": true, "decks": decks, "power": power})
+	if sc, out := e.post(tok, "live/lines", body); sc != 200 {
+		t.Fatalf("live/lines: %d %v", sc, out)
+	}
+
+	st := e.must(200, "mirror1", "GET", "live/state", "")
+	if st["drawn_total"] != float64(2) || st["left_total"] != float64(2) {
+		t.Fatalf("resolveMe's class cross-check is inert in a true mirror and the bare heuristic got it wrong: want 2 left / 2 drawn, got %v / %v (note=%v)",
+			st["left_total"], st["drawn_total"], st["note"])
+	}
+	opp, _ := st["opponent"].(map[string]any)
+	for _, c := range opp["cards"].([]any) {
+		name := fmt.Sprint(c.(map[string]any)["name"])
+		if name == "Blessing of Might" || name == "Redemption" {
+			t.Fatalf("our own drawn card leaked into the opponent panel in a mirror matchup: %v", opp["cards"])
+		}
+	}
+}
+
 // The uplink posts about once a second for the whole game. It must never be starved by the 40/min
 // deck-write limiter (regression: batches were 429'd after ~1 minute and the tracker went stale).
 func TestHS_LiveLinesNotStarvedByWriteLimiter(t *testing.T) {
