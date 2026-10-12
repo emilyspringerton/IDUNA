@@ -144,7 +144,7 @@ func (h *SSOGoogleHandler) start(w http.ResponseWriter, r *http.Request) {
 		"client_id":     {h.GoogleClientID},
 		"redirect_uri":  {h.RedirectURI},
 		"response_type": {"code"},
-		"scope":         {"openid email profile"},
+		"scope":         {"openid email"},
 		"state":         {state},
 		"prompt":        {"select_account"},
 	}.Encode()
