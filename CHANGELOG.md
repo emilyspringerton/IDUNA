@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-12
+- fix(hs): duplicate CREATE_GAME (GameState + indented PowerTaskList copy, same instant) aborted every live game a few hundred lines in, hiding the player's own drawn cards for the rest of the match while the opponent's kept working; fold-text now trusts only GameState's own CREATE_GAME to abort, hs_live.go's liveLines hardened the same way (recognizes the real indented duplicate, dedupes by clock); Ginkgo/Gomega suite + real Power.log fixture added in internal/hstracker, new hs_live_test.go case (sess-20261009-1745-ee80b668)
 
 - HS-TRACKER-ME-04: tracker now reads PowerTaskList lines on equal footing with GameState (CREATE_GAME + nested sub-blocks were PowerTaskList-only on a real current client build, leaving the live page permanently 'waiting for the game to start'); added a CHANGE_ENTITY handler (card transforms in place were silently dropped, corrupting an unrelated stale entity's controller -- the real mechanism behind 'my card shows up under the opponent'). Apple #22235. (sess-20261009-1745-ee80b668)
 
