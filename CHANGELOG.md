@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-12
+- feat(sso): 'Sign in with Google' button on the hosted SSO login page (iam.okemily.com) — new SSOGoogleHandler (/api/v1/auth/sso/google/start|callback), allowlisted redirect_uri, state-cookie CSRF, verified-email-only account linking, disabled-account check, 6 new tests (sess-20261009-1745-ee80b668)
 - test(hs): add regression coverage for a true Paladin-vs-Paladin class mirror, where resolveMe's hero-class cross-check is permanently inert and must fall back to the bare heuristic (sess-20261009-1745-ee80b668)
 - fix(hs): live tracker's session line buffer silently discarded the opening CREATE_GAME/hero/deck-DECK burst on long games once line count exceeded the cap (tail-only trim) -- now preserves a fixed head region across the trim so the player's own entities never go blind mid-match (sess-20261009-1745-ee80b668)
 - fix(hs): duplicate STATE=COMPLETE logging spawned a phantom empty record right after every live game, hiding the real result and the player's own drawn cards (sess-20261009-1745-ee80b668)
