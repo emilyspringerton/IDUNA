@@ -21,6 +21,7 @@ pod itself: `kubectl exec -n emily deploy/iduna -- cat /app/var/agent-secrets.en
 |---|---|---|
 | POST | `/api/v1/auth/google` | Google OAuth callback → IDUNA JWT |
 | GET | `/api/v1/auth/sso/login` | IDUNA-as-SSO login page (`SSOLoginHandler`) — the one place a password is typed for email/password auth; `?redirect_uri=` (allowlisted via `SSO_ALLOWED_REDIRECT_HOSTS`) gets the JWT back as a URL fragment. Also served at the root of the dedicated `iam.okemily.com` domain (see `ops/nginx/iam-okemily.conf`) once its DNS/cert land. |
+| GET | `/api/v1/auth/sso/google/start` \| `/callback` | "Sign in with Google" for the SSO login page (`SSOGoogleHandler`, `internal/http/handlers/sso_google.go`) — same `redirect_uri` allowlist as the page, state cookie CSRF check, issues the same player JWT as email login, links to an existing email/password account only on a Google-*verified* email. Button only renders when `GOOGLE_CLIENT_ID`+`GOOGLE_CLIENT_SECRET` are set. **Needs `SSO_GOOGLE_REDIRECT_URI` (default `BASE_URL/api/v1/auth/sso/google/callback`, i.e. `https://iam.okemily.com/...` in prod) added to the OAuth client's Authorized redirect URIs in Google Cloud Console — human-only step; until then Google returns `redirect_uri_mismatch`.** |
 | POST | `/api/v1/auth/agent` | M2M agent auth (agent_name + agent_secret) → JWT |
 | GET | `/.well-known/jwks.json` | Public key set for JWT validation |
 | POST | `/api/v1/apples` | File a golden documentation Apple |
@@ -141,6 +142,7 @@ IDUNA_HEC_TOKEN       — bearer token for POST /services/collector (unified log
 EMILY_BACKLOG_PATH    — path to EMILY/BACKLOG.md for the kanban board's two-way sync (inbox read + new-card write-back); default /home/fatbaby/EMILY/BACKLOG.md
 NOCK_VIDEO_DIR        — on-disk root for NOCK video clips/proxies/renders; default /home/fatbaby/IDUNA/var/nock-videos
 NOCK_VIDEO_MAX_MB     — per-upload size cap for NOCK video uploads (phone + desktop); default 4096
+SSO_GOOGLE_REDIRECT_URI — OAuth callback for the SSO page's Google button; must be registered in Google Cloud Console; default BASE_URL + /api/v1/auth/sso/google/callback
 SSO_ALLOWED_REDIRECT_HOSTS — comma-separated hostnames /api/v1/auth/sso/login's redirect_uri is allowed to target; default "wotan.okemily.com,localhost,127.0.0.1"
 ```
 

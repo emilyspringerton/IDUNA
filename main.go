@@ -1354,10 +1354,25 @@ func main() {
 	// password into page on wotan iduna needs to become the SSO") — the one hosted login page
 	// a caller site redirects to instead of rendering its own email/password form; its JS just
 	// calls the two endpoints above. redirect_uri is allowlisted, not open.
+	ssoAllowedHosts := strings.Split(getenv("SSO_ALLOWED_REDIRECT_HOSTS", "wotan.okemily.com,localhost,127.0.0.1"), ",")
+	googleSSOEnabled := googleClientID != "" && os.Getenv("GOOGLE_CLIENT_SECRET") != ""
 	ssoLoginH := &handlers.SSOLoginHandler{
-		AllowedHosts: strings.Split(getenv("SSO_ALLOWED_REDIRECT_HOSTS", "wotan.okemily.com,localhost,127.0.0.1"), ","),
+		AllowedHosts:  ssoAllowedHosts,
+		GoogleEnabled: googleSSOEnabled,
 	}
 	mux.Handle("/api/v1/auth/sso/login", ssoLoginH)
+	// "Sign in with Google" for that same page. Needs SSO_GOOGLE_REDIRECT_URI registered as an
+	// authorized redirect URI on the Google OAuth client (human-only Cloud Console step).
+	ssoGoogleH := &handlers.SSOGoogleHandler{
+		GoogleClientID:     googleClientID,
+		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		RedirectURI:        getenv("SSO_GOOGLE_REDIRECT_URI", baseURL+"/api/v1/auth/sso/google/callback"),
+		AllowedHosts:       ssoAllowedHosts,
+		DB:                 db,
+		Players:            playerEmailAuthH,
+	}
+	mux.Handle("/api/v1/auth/sso/google/start", ssoGoogleH)
+	mux.Handle("/api/v1/auth/sso/google/callback", ssoGoogleH)
 
 	// SHANKPIT Google OAuth browser flow — public (no prior auth needed).
 	shankpitAuthH := &handlers.ShankpitAuthHandler{
