@@ -1376,12 +1376,34 @@ func main() {
 		BattlenetEnabled: os.Getenv("BNET_CLIENT_ID") != "" && os.Getenv("BNET_CLIENT_SECRET") != "",
 	}
 	mux.Handle("/api/v1/auth/sso/login", ssoLoginH)
-	// "Sign in with Google" for that same page. Needs SSO_GOOGLE_REDIRECT_URI registered as an
-	// authorized redirect URI on the Google OAuth client (human-only Cloud Console step).
+	// "Sign in with Google" for that same page. Every URL here must also be listed as an
+	// Authorized redirect URI on the Google OAuth client (human-only Cloud Console step).
+	// SSO_GOOGLE_REDIRECT_URIS is a comma-separated list of full callback URLs, one per host the
+	// login page can actually be reached at -- default covers both BASE_URL's own host and the
+	// dedicated iam.okemily.com login domain. See SSOGoogleHandler.redirectURIFor's own comment:
+	// a single fixed redirect_uri broke every real sign-in once iam.okemily.com went live, because
+	// the state/redirect cookies set there are host-scoped and a fixed okemily.com callback always
+	// landed on a different host than the one that set them.
+	googleRedirectURIs := map[string]string{}
+	googleDefaultHost := ""
+	for _, raw := range strings.Split(getenv("SSO_GOOGLE_REDIRECT_URIS",
+		baseURL+"/api/v1/auth/sso/google/callback,https://iam.okemily.com/api/v1/auth/sso/google/callback"), ",") {
+		raw = strings.TrimSpace(raw)
+		rest := strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
+		host := strings.ToLower(strings.SplitN(rest, "/", 2)[0])
+		if host == "" {
+			continue
+		}
+		googleRedirectURIs[host] = raw
+		if googleDefaultHost == "" {
+			googleDefaultHost = host
+		}
+	}
 	ssoGoogleH := &handlers.SSOGoogleHandler{
 		GoogleClientID:     googleClientID,
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		RedirectURI:        getenv("SSO_GOOGLE_REDIRECT_URI", baseURL+"/api/v1/auth/sso/google/callback"),
+		RedirectURIs:       googleRedirectURIs,
+		DefaultHost:        googleDefaultHost,
 		AllowedHosts:       ssoAllowedHosts,
 		DB:                 db,
 		Players:            playerEmailAuthH,

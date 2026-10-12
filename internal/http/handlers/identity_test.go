@@ -504,7 +504,8 @@ func TestIdentity_GoogleLinkAndCrossProviderResolution(t *testing.T) {
 	p := e.bnetLogin("c1", "bn-1", "Alice#1111")
 	claims := &googleverify.GoogleClaims{Sub: "g-77", Email: "alice@example.com", EmailVerified: true, Name: "Alice"}
 	gh := &handlers.SSOGoogleHandler{
-		GoogleClientID: "cid", GoogleClientSecret: "sec", RedirectURI: "https://iam.example/api/v1/auth/sso/google/callback",
+		GoogleClientID: "cid", GoogleClientSecret: "sec",
+		RedirectURIs: map[string]string{"example.com": "https://iam.example/api/v1/auth/sso/google/callback"}, DefaultHost: "example.com",
 		AllowedHosts: []string{"wotan.okemily.com"}, DB: e.db, Players: e.players,
 		ExchangeCode: func(context.Context, string, string) (string, error) { return "idtok", nil },
 		VerifyToken:  func(context.Context, string, string) (*googleverify.GoogleClaims, error) { return claims, nil },

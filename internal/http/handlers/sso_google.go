@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -42,20 +41,49 @@ import (
 // signing in); else a brand-new player with no game scope. An unverified Google email is never
 // used to link to an existing account.
 //
-// SSO_GOOGLE_REDIRECT_URI (default BASE_URL + /api/v1/auth/sso/google/callback) must be listed
-// under "Authorized redirect URIs" on the OAuth client in Google Cloud Console — a human-only
-// step; until it is, Google rejects the start redirect with redirect_uri_mismatch.
+// SSO_GOOGLE_REDIRECT_URIS (default BASE_URL + /api/v1/auth/sso/google/callback, plus
+// https://iam.okemily.com/api/v1/auth/sso/google/callback) must each be listed under "Authorized
+// redirect URIs" on the OAuth client in Google Cloud Console — a human-only step; until one is,
+// Google rejects the start redirect for that host with redirect_uri_mismatch.
+//
+// RedirectURIs holds every registered callback URL, keyed by the exact host it serves (lowercase,
+// no port/scheme). start() and callback() each independently pick the entry matching the current
+// request's own Host — found live, 2026-10-12: the login page is reached at the dedicated
+// iam.okemily.com domain, which sets its state/redirect cookies host-scoped to iam.okemily.com
+// (cookies carry no Domain attribute), but a single fixed okemily.com redirect_uri sent every
+// Google callback back to a DIFFERENT host than the one that set the cookie — the browser had
+// nothing to send, so every real sign-in failed "invalid state" before the code exchange ever
+// ran. Using the request's own host for both legs keeps the user on the same origin they started
+// on and keeps the two legs' redirect_uri identical (required for the token exchange to match the
+// authorize call). A host with no matching entry falls back to RedirectURIs[DefaultHost].
 type SSOGoogleHandler struct {
 	GoogleClientID     string
 	GoogleClientSecret string
-	RedirectURI        string
-	AllowedHosts       []string
-	DB                 *sql.DB
-	Players            *PlayerEmailAuthHandler // reused for JWT issuance so both paths mint identical claims
+	// RedirectURIs maps a lowercase host (no scheme/port) to its full, Google-registered callback
+	// URL. DefaultHost names which entry to fall back to for a request whose Host isn't a key here.
+	RedirectURIs map[string]string
+	DefaultHost  string
+	AllowedHosts []string
+	DB           *sql.DB
+	Players      *PlayerEmailAuthHandler // reused for JWT issuance so both paths mint identical claims
 
 	// Test seam: swap the two network calls. Nil means the real Google endpoints.
 	ExchangeCode func(ctx context.Context, code, redirectURI string) (idToken string, err error)
 	VerifyToken  func(ctx context.Context, idToken, clientID string) (*googleverify.GoogleClaims, error)
+}
+
+// redirectURIFor returns the registered callback URL for the host this request actually arrived
+// on, falling back to DefaultHost's entry when the request's own host isn't registered (e.g. a
+// port-forwarded localhost dev session).
+func (h *SSOGoogleHandler) redirectURIFor(r *http.Request) string {
+	host := strings.ToLower(r.Host)
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	if u, ok := h.RedirectURIs[host]; ok {
+		return u
+	}
+	return h.RedirectURIs[strings.ToLower(h.DefaultHost)]
 }
 
 var errSignInUnlinked = errors.New("sign-in method unlinked")
@@ -143,7 +171,7 @@ func (h *SSOGoogleHandler) start(w http.ResponseWriter, r *http.Request) {
 
 	authURL := "https://accounts.google.com/o/oauth2/v2/auth?" + url.Values{
 		"client_id":     {h.GoogleClientID},
-		"redirect_uri":  {h.RedirectURI},
+		"redirect_uri":  {h.redirectURIFor(r)},
 		"response_type": {"code"},
 		"scope":         {"openid email"},
 		"state":         {state},
@@ -162,20 +190,7 @@ func (h *SSOGoogleHandler) callback(w http.ResponseWriter, r *http.Request) {
 	linkPID := h.linkCookiePlayer(r)
 
 	stateCookie, err := r.Cookie(ssoGoogleStateCookie)
-	qState := url.QueryEscape(r.URL.Query().Get("state"))
-	if err != nil || stateCookie.Value == "" || qState != stateCookie.Value {
-		// TEMP DIAGNOSTIC (2026-10-12, remove once the real-world "invalid state" report is root-caused):
-		// no PII here, just whether/why the cookie<->query state match failed.
-		cookieNames := make([]string, 0, len(r.Cookies()))
-		for _, c := range r.Cookies() {
-			cookieNames = append(cookieNames, c.Name)
-		}
-		cookieLen := -1
-		if stateCookie != nil {
-			cookieLen = len(stateCookie.Value)
-		}
-		log.Printf("sso_google: state check failed — cookie_err=%v cookie_present=%v cookies_seen=%v qstate_len=%d cookie_len=%d ua=%q",
-			err, stateCookie != nil, cookieNames, len(qState), cookieLen, r.UserAgent())
+	if err != nil || stateCookie.Value == "" || url.QueryEscape(r.URL.Query().Get("state")) != stateCookie.Value {
 		http.Error(w, "invalid state — restart sign-in", http.StatusBadRequest)
 		return
 	}
@@ -208,7 +223,7 @@ func (h *SSOGoogleHandler) callback(w http.ResponseWriter, r *http.Request) {
 	if verify == nil {
 		verify = googleverify.Verify
 	}
-	idToken, err := exchange(r.Context(), code, h.RedirectURI)
+	idToken, err := exchange(r.Context(), code, h.redirectURIFor(r))
 	if err != nil {
 		http.Error(w, "token exchange failed", http.StatusBadGateway)
 		return

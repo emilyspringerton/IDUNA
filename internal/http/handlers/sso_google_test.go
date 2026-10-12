@@ -17,7 +17,11 @@ func newSSOGoogle(t *testing.T, claims *googleverify.GoogleClaims) (*handlers.SS
 	db := newTestEmailAuthDB(t)
 	h := &handlers.SSOGoogleHandler{
 		GoogleClientID: "cid", GoogleClientSecret: "sec",
-		RedirectURI:  "https://iam.example/api/v1/auth/sso/google/callback",
+		RedirectURIs: map[string]string{
+			"example.com": "https://example.com/api/v1/auth/sso/google/callback",
+			"iam.example": "https://iam.example/api/v1/auth/sso/google/callback",
+		},
+		DefaultHost:  "example.com",
 		AllowedHosts: []string{"wotan.okemily.com", "localhost"},
 		DB:           db,
 		Players:      &handlers.PlayerEmailAuthHandler{DB: db, Keys: newTestKeys(t), Issuer: "test"},
@@ -30,7 +34,18 @@ func newSSOGoogle(t *testing.T, claims *googleverify.GoogleClaims) (*handlers.SS
 // startFlow runs /start and returns the cookies + the state sent to Google.
 func startFlow(t *testing.T, h *handlers.SSOGoogleHandler, redirect string) ([]*http.Cookie, string) {
 	t.Helper()
+	cookies, state, _ := startFlowOnHost(t, h, "", redirect)
+	return cookies, state
+}
+
+// startFlowOnHost is startFlow with an explicit request Host (defaults to httptest's "example.com"
+// when host == ""), also returning the redirect_uri Google was actually sent.
+func startFlowOnHost(t *testing.T, h *handlers.SSOGoogleHandler, host, redirect string) ([]*http.Cookie, string, string) {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/google/start?redirect_uri="+url.QueryEscape(redirect), nil)
+	if host != "" {
+		req.Host = host
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusFound {
@@ -40,11 +55,18 @@ func startFlow(t *testing.T, h *handlers.SSOGoogleHandler, redirect string) ([]*
 	if loc.Host != "accounts.google.com" {
 		t.Fatalf("start redirected to %q", loc.Host)
 	}
-	return w.Result().Cookies(), loc.Query().Get("state")
+	return w.Result().Cookies(), loc.Query().Get("state"), loc.Query().Get("redirect_uri")
 }
 
 func callback(h *handlers.SSOGoogleHandler, cookies []*http.Cookie, state string) *httptest.ResponseRecorder {
+	return callbackOnHost(h, "", cookies, state)
+}
+
+func callbackOnHost(h *handlers.SSOGoogleHandler, host string, cookies []*http.Cookie, state string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/google/callback?code=abc&state="+url.QueryEscape(state), nil)
+	if host != "" {
+		req.Host = host
+	}
 	for _, c := range cookies {
 		req.AddCookie(c)
 	}
@@ -91,6 +113,39 @@ func TestSSOGoogle_HappyPathCreatesPlayerAndReturnsToken(t *testing.T) {
 	_ = h.DB.QueryRow(`SELECT COUNT(*) FROM players`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("second sign-in created a duplicate player (%d rows)", n)
+	}
+}
+
+// TestSSOGoogle_RedirectURIMatchesLoginHost regression-covers the 2026-10-12 live incident: the
+// login page is reachable on more than one registered host (e.g. the dedicated iam.okemily.com
+// domain), and a *fixed* redirect_uri sent every Google callback back to a different host than
+// the one that set the state/redirect cookies -- the cookies are host-scoped, so the browser had
+// nothing to send back, and every real sign-in failed "invalid state" before the code exchange
+// ever ran. The fix picks the registered redirect_uri matching the request's own Host, for both
+// legs, so the callback always lands on the same origin that started the flow.
+func TestSSOGoogle_RedirectURIMatchesLoginHost(t *testing.T) {
+	h, done := newSSOGoogle(t, &googleverify.GoogleClaims{Sub: "g-1", Email: "a@example.com", EmailVerified: true})
+	defer done()
+
+	cookies, state, redirectURI := startFlowOnHost(t, h, "iam.example", "https://wotan.okemily.com/")
+	if redirectURI != "https://iam.example/api/v1/auth/sso/google/callback" {
+		t.Fatalf("authorize redirect_uri = %q, want the iam.example entry", redirectURI)
+	}
+	// Google always calls back on the exact redirect_uri it was given above -- same host.
+	w := callbackOnHost(h, "iam.example", cookies, state)
+	if w.Code != http.StatusOK {
+		t.Fatalf("callback on the same host that started the flow: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// A second flow started on the OTHER registered host must get ITS OWN redirect_uri, not the
+	// first one's -- this is the exact bug: a single fixed value would have passed the first
+	// assertion above by coincidence and only broken here.
+	cookies2, state2, redirectURI2 := startFlowOnHost(t, h, "example.com", "https://wotan.okemily.com/")
+	if redirectURI2 != "https://example.com/api/v1/auth/sso/google/callback" {
+		t.Fatalf("authorize redirect_uri = %q, want the example.com entry", redirectURI2)
+	}
+	if w := callbackOnHost(h, "example.com", cookies2, state2); w.Code != http.StatusOK {
+		t.Fatalf("callback on example.com: status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
