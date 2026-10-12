@@ -35,7 +35,7 @@ func RequireAuth(keys *jwt.Keys) func(http.Handler) http.Handler {
 			}
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			claims, err := jwt.Verify(keys, token)
-			if err != nil || isClubContextToken(claims) {
+			if err != nil || isNonIdentityToken(claims) {
 				writeUnauthorized(w)
 				return
 			}
@@ -72,7 +72,7 @@ func RequireCookieAuth(keys *jwt.Keys, iamStore AgentStatusChecker, loginURL str
 				return
 			}
 			claims, err := jwt.Verify(keys, token)
-			if err != nil || isClubContextToken(claims) {
+			if err != nil || isNonIdentityToken(claims) {
 				redirectOrJSON(w, r, loginURL)
 				return
 			}
@@ -272,6 +272,27 @@ func writeForbidden(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write([]byte(`{"code":"FORBIDDEN","message":"insufficient permissions"}`))
+}
+
+// isNonIdentityToken reports claims that are a narrow, purpose-bound token and never a general IDUNA
+// identity: a WOTAN club-context token (aud "wotan-club"), a tracker upload token (aud "hs-live-upload",
+// minted from a sign-in or an upload key) or an OAuth flow-state cookie (aud "iduna-oauth-state").
+func isNonIdentityToken(claims map[string]any) bool {
+	return isClubContextToken(claims) || hasAud(claims, "hs-live-upload") || hasAud(claims, "iduna-oauth-state")
+}
+
+func hasAud(claims map[string]any, want string) bool {
+	switch a := claims["aud"].(type) {
+	case string:
+		return a == want
+	case []any:
+		for _, v := range a {
+			if s, _ := v.(string); s == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isClubContextToken reports whether claims are a WOTAN club-context token (aud "wotan-club",

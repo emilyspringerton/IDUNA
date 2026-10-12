@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	googleverify "iduna/internal/auth/google"
+	"iduna/internal/auth/jwt"
 
 	"github.com/google/uuid"
 )
@@ -55,9 +57,12 @@ type SSOGoogleHandler struct {
 	VerifyToken  func(ctx context.Context, idToken, clientID string) (*googleverify.GoogleClaims, error)
 }
 
+var errSignInUnlinked = errors.New("sign-in method unlinked")
+
 const (
 	ssoGoogleStateCookie    = "iduna_sso_google_state"
 	ssoGoogleRedirectCookie = "iduna_sso_google_redirect"
+	ssoGoogleLinkCookie     = "iduna_sso_google_link"
 	ssoGoogleCookiePath     = "/api/v1/auth/sso/google"
 )
 
@@ -97,10 +102,40 @@ func (h *SSOGoogleHandler) start(w http.ResponseWriter, r *http.Request) {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	state := base64.RawURLEncoding.EncodeToString(b)
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+
+	// Link mode (IDENTITY_NORTHSTAR section 2): attach this Google account to the ALREADY signed-in player
+	// instead of signing in. The session comes from Authorization: Bearer or, for a full-page navigation,
+	// ?access_token=; it is bound into a signed, short-lived cookie together with the state nonce, so the
+	// callback can only complete in the same browser, as that player (CSRF / link-hijack defence).
+	linkMode := r.URL.Query().Get("mode") == "link"
+	if linkMode {
+		var keys *jwt.Keys
+		if h.Players != nil {
+			keys = h.Players.Keys
+		}
+		pid := (&IdentityOAuthHandler{Keys: keys}).sessionSub(r)
+		if pid == "" || keys == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "sign in with IDUNA first", "code": "unauthenticated"})
+			return
+		}
+		now := time.Now().UTC()
+		lc, err := jwt.Sign(keys, map[string]any{
+			"aud": oauthStateAud, "iss": "iduna", "iat": now.Unix(), "exp": now.Add(oauthStateTTL).Unix(),
+			"prov": idProvGoogle, "mode": "link", "nonce": state, "pid": pid,
+		})
+		if err != nil {
+			http.Error(w, "could not start sign-in", http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: ssoGoogleLinkCookie, Value: lc, Path: ssoGoogleCookiePath,
+			MaxAge: 600, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
+	}
+
 	for name, val := range map[string]string{ssoGoogleStateCookie: state, ssoGoogleRedirectCookie: raw} {
 		http.SetCookie(w, &http.Cookie{
 			Name: name, Value: url.QueryEscape(val), Path: ssoGoogleCookiePath,
-			MaxAge: 600, HttpOnly: true, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+			MaxAge: 600, HttpOnly: true, Secure: secure,
 			SameSite: http.SameSiteLaxMode,
 		})
 	}
@@ -113,11 +148,17 @@ func (h *SSOGoogleHandler) start(w http.ResponseWriter, r *http.Request) {
 		"state":         {state},
 		"prompt":        {"select_account"},
 	}.Encode()
+	if linkMode && (r.Header.Get("Authorization") != "" || strings.Contains(r.Header.Get("Accept"), "application/json")) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"authorize_url": authURL, "mode": "link", "expires_in": 600})
+		return
+	}
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 func (h *SSOGoogleHandler) callback(w http.ResponseWriter, r *http.Request) {
 	clearSSOGoogleCookies(w)
+	linkPID := h.linkCookiePlayer(r)
 
 	stateCookie, err := r.Cookie(ssoGoogleStateCookie)
 	if err != nil || stateCookie.Value == "" || url.QueryEscape(r.URL.Query().Get("state")) != stateCookie.Value {
@@ -164,7 +205,16 @@ func (h *SSOGoogleHandler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if linkPID != "" {
+		h.finishLink(w, r, redirectURI, linkPID, claims)
+		return
+	}
+
 	playerID, displayName, game, disabled, err := h.resolvePlayer(r.Context(), claims)
+	if errors.Is(err, errSignInUnlinked) {
+		http.Error(w, "this sign-in method was unlinked from its account; sign in another way and link it again", http.StatusForbidden)
+		return
+	}
 	if err != nil {
 		http.Error(w, "could not resolve account", http.StatusInternalServerError)
 		return
@@ -189,8 +239,57 @@ func (h *SSOGoogleHandler) callback(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// linkCookiePlayer returns the player a link-mode flow was started for ("" = a normal sign-in). The cookie is
+// a signed JWT whose nonce must equal this callback's state.
+func (h *SSOGoogleHandler) linkCookiePlayer(r *http.Request) string {
+	ck, err := r.Cookie(ssoGoogleLinkCookie)
+	if err != nil || ck.Value == "" || h.Players == nil || h.Players.Keys == nil {
+		return ""
+	}
+	claims, err := jwt.Verify(h.Players.Keys, ck.Value)
+	if err != nil || claims["aud"] != oauthStateAud || claims["prov"] != idProvGoogle || claims["mode"] != "link" {
+		return ""
+	}
+	nonce, _ := claims["nonce"].(string)
+	if nonce == "" || nonce != r.URL.Query().Get("state") {
+		return ""
+	}
+	pid, _ := claims["pid"].(string)
+	return pid
+}
+
+// finishLink attaches the verified Google identity to the signed-in player the flow was started for.
+func (h *SSOGoogleHandler) finishLink(w http.ResponseWriter, r *http.Request, redirectURI, pid string, c *googleverify.GoogleClaims) {
+	if !c.EmailVerified {
+		fragmentRedirect(w, r, redirectURI, map[string]string{"link_error": "email_unverified", "provider": idProvGoogle})
+		return
+	}
+	disp := c.Email
+	if disp == "" {
+		disp = c.Name
+	}
+	id, out, err := linkIdentity(h.DB, pid, idProvGoogle, c.Sub, disp, "{}", true)
+	switch {
+	case errors.Is(err, errIdentityTaken):
+		var owner string
+		_ = h.DB.QueryRow(`SELECT player_id FROM player_identities WHERE provider='google' AND provider_sub=?`, c.Sub).Scan(&owner)
+		identityAudit(r.Context(), h.DB, nil, pid, pid, "link.identity_taken",
+			map[string]any{"provider": idProvGoogle, "identity_id": id, "owner_player_id": owner}, false)
+		fragmentRedirect(w, r, redirectURI, map[string]string{"link_error": "identity_taken", "provider": idProvGoogle})
+	case err != nil:
+		fragmentRedirect(w, r, redirectURI, map[string]string{"link_error": "server_error", "provider": idProvGoogle})
+	default:
+		act := "link"
+		if out == linkRefreshed {
+			act = "link.refresh"
+		}
+		identityAudit(r.Context(), h.DB, nil, pid, pid, act, map[string]any{"provider": idProvGoogle, "identity_id": id}, false)
+		fragmentRedirect(w, r, redirectURI, map[string]string{"linked": idProvGoogle, "identity_id": fmt.Sprint(id)})
+	}
+}
+
 func clearSSOGoogleCookies(w http.ResponseWriter) {
-	for _, n := range []string{ssoGoogleStateCookie, ssoGoogleRedirectCookie} {
+	for _, n := range []string{ssoGoogleStateCookie, ssoGoogleRedirectCookie, ssoGoogleLinkCookie} {
 		http.SetCookie(w, &http.Cookie{Name: n, Value: "", Path: ssoGoogleCookiePath, MaxAge: -1})
 	}
 }
@@ -205,11 +304,34 @@ func (h *SSOGoogleHandler) resolvePlayer(ctx context.Context, c *googleverify.Go
 		}
 	}
 
+	// 0. A Google identity linked to some WOTAN player (player_identities, IDENTITY_NORTHSTAR section 3):
+	// it resolves to that player whatever provider the player was created with.
+	err = h.DB.QueryRowContext(ctx,
+		`SELECT p.player_id, p.display_name, p.game, p.disabled_at
+		   FROM player_identities i JOIN players p ON p.player_id = i.player_id
+		  WHERE i.provider='google' AND i.provider_sub=? AND i.status='active'`, c.Sub,
+	).Scan(&id, &name, &gameCol, &disabledAt)
+	if err == nil {
+		_, _ = h.DB.ExecContext(ctx, `UPDATE player_identities SET last_login_at=? WHERE provider='google' AND provider_sub=?`, sqlNowUTC(), c.Sub)
+		return id, name, gameCol.String, disabledAt.Valid, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", "", "", false, err
+	}
+
+	// 0b. Unlinked on purpose (tombstone): the owner removed this door, so it must not silently re-open
+	// through the legacy players-row match below. Linking it again (from a signed-in session) revives it.
+	var tomb int
+	if h.DB.QueryRowContext(ctx, `SELECT 1 FROM player_identities WHERE provider='google' AND provider_sub=? AND status='revoked'`, c.Sub).Scan(&tomb) == nil {
+		return "", "", "", false, errSignInUnlinked
+	}
+
 	// 1. Already signed in with this Google account before.
 	err = h.DB.QueryRowContext(ctx,
 		`SELECT player_id, display_name, game, disabled_at FROM players WHERE provider='google' AND provider_sub=?`, c.Sub,
 	).Scan(&id, &name, &gameCol, &disabledAt)
 	if err == nil {
+		h.recordGoogleIdentity(ctx, id, c)
 		return id, name, gameCol.String, disabledAt.Valid, nil
 	}
 	if err != sql.ErrNoRows {
@@ -224,6 +346,7 @@ func (h *SSOGoogleHandler) resolvePlayer(ctx context.Context, c *googleverify.Go
 			  WHERE pc.email=?`, strings.ToLower(c.Email),
 		).Scan(&id, &name, &gameCol, &disabledAt)
 		if err == nil {
+			h.recordGoogleIdentity(ctx, id, c)
 			return id, name, gameCol.String, disabledAt.Valid, nil
 		}
 		if err != sql.ErrNoRows {
@@ -237,7 +360,21 @@ func (h *SSOGoogleHandler) resolvePlayer(ctx context.Context, c *googleverify.Go
 		`INSERT INTO players (player_id, display_name, provider, provider_sub, email) VALUES (?,?,?,?,?)`,
 		id, display, "google", c.Sub, c.Email,
 	)
+	if err == nil {
+		h.recordGoogleIdentity(ctx, id, c)
+	}
 	return id, display, "", false, err
+}
+
+// recordGoogleIdentity keeps player_identities in step with every Google login path (best effort: the login
+// itself never fails on it, and an identity already owned by another player is left alone).
+func (h *SSOGoogleHandler) recordGoogleIdentity(ctx context.Context, playerID string, c *googleverify.GoogleClaims) {
+	disp := c.Email
+	if disp == "" {
+		disp = c.Name
+	}
+	_, _ = h.DB.ExecContext(ctx, `INSERT OR IGNORE INTO player_identities (player_id, provider, provider_sub, display, verified, linked_at, last_login_at, status)
+		VALUES (?, 'google', ?, ?, ?, ?, ?, 'active')`, playerID, c.Sub, disp, boolInt(c.EmailVerified), sqlNowUTC(), sqlNowUTC())
 }
 
 func (h *SSOGoogleHandler) exchangeCode(ctx context.Context, code, redirectURI string) (string, error) {

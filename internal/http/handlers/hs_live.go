@@ -70,6 +70,9 @@ type liveSession struct {
 	state    liveState
 	updated  time.Time
 	synced   map[string]bool // deck-library syncs already done (deck id + code + game start)
+
+	keyID      int64     // upload key the current uplink exchanged (0 = a normal sign-in token)
+	keyTouched time.Time // last time keyID's last_used_at was written
 }
 
 // liveClient is what the uplink reports about the game's log-size limit (Hearthstone stops writing
@@ -163,17 +166,28 @@ func (h *HSHandler) liveToken(w http.ResponseWriter, v hsViewer) {
 		hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
 		return
 	}
-	now := time.Now().UTC()
-	tok, err := jwt.Sign(h.Keys, map[string]any{
-		"sub": v.sub, "aud": hsLiveUploadAud, "iss": "iduna",
-		"iat": now.Unix(), "exp": now.Add(hsLiveTokenTTL).Unix(),
-		"permissions": []string{"hs.live.upload"},
-	})
-	if err != nil {
+	tok, ok := h.mintUploadToken(v.sub, 0)
+	if !ok {
 		hsErr(w, http.StatusInternalServerError, "could not mint token")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expires_in": int(hsLiveTokenTTL.Seconds())})
+}
+
+// mintUploadToken signs the 12 h hs-live-upload JWT. keyID > 0 stamps the upload key it came from so ingest
+// can attribute counters to it and refuse it the moment that key is revoked.
+func (h *HSHandler) mintUploadToken(sub string, keyID int64) (string, bool) {
+	now := time.Now().UTC()
+	claims := map[string]any{
+		"sub": sub, "aud": hsLiveUploadAud, "iss": "iduna",
+		"iat": now.Unix(), "exp": now.Add(hsLiveTokenTTL).Unix(),
+		"permissions": []string{"hs.live.upload"},
+	}
+	if keyID > 0 {
+		claims["key_id"] = keyID
+	}
+	tok, err := jwt.Sign(h.Keys, claims)
+	return tok, err == nil
 }
 
 type liveLinesReq struct {
@@ -198,8 +212,15 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	}
 	claims, err := jwt.Verify(h.Keys, strings.TrimPrefix(ah, "Bearer "))
 	sub, _ := claims["sub"].(string)
-	if err != nil || sub == "" {
+	if aud, _ := claims["aud"].(string); err != nil || sub == "" || aud == clubTokenAud || aud == oauthStateAud {
 		hsErr(w, http.StatusUnauthorized, "invalid or expired upload token")
+		return
+	}
+	// A token minted from an upload key dies the instant that key is revoked, not at its 12 h expiry.
+	keyID, keyOK := h.liveKeyOK(claims, sub)
+	if !keyOK {
+		h.dropLiveSession(sub, keyID)
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "upload key revoked", "code": "key_revoked"})
 		return
 	}
 	// The uplink posts about once a second while a game is on, so it must not share the 40/min
@@ -245,6 +266,8 @@ func (h *HSHandler) liveLines(w http.ResponseWriter, r *http.Request) {
 	s := h.session(sub, true)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.keyID = keyID
+	h.touchKey(s)
 	gameEnded := false
 	if req.Reset {
 		s.power = s.power[:0]
@@ -531,7 +554,7 @@ func (h *HSHandler) computeLive(ctx context.Context, s *liveSession) liveState {
 			if id > 0 {
 				st.LibraryDeckID = id
 			}
-			h.storeLiveGame(s.sub, rec, id, me) // the game counts even if the deck was removed from the library
+			h.storeLiveGame(ctx, s.sub, rec, id, me, s.keyID) // the game counts even if the deck was removed from the library
 		}
 	}
 	if me != 1 && me != 2 {
@@ -1041,12 +1064,24 @@ while ($true) {
 // just the bare reveal-count heuristic (game_state.prn's me-of), and using it here would bake the
 // exact wrong-player mixup resolveMe exists to correct permanently into the saved game/deck stats,
 // even on a poll where the live page itself showed the corrected result.
-func (h *HSHandler) storeLiveGame(sub string, rec *hstracker.Record, deckID int64, me int) {
+func (h *HSHandler) storeLiveGame(ctx context.Context, sub string, rec *hstracker.Record, deckID int64, me int, keyID int64) {
 	if me != 1 && me != 2 {
 		return
 	}
 	resolved := *rec
 	resolved.Me = me
+	// Identity binding (IDENTITY_NORTHSTAR 4.3): the uploader's own PlayerName must be one of their linked
+	// BattleTags. An unlinked BattleTag-shaped name is dropped (and counted on the key); a generic or absent
+	// name is stored but forced private.
+	myName := rec.Player1
+	if me == 2 {
+		myName = rec.Player2
+	}
+	bind, drop := h.bindLiveGame(ctx, sub, myName)
+	if drop {
+		h.bumpRejected(keyID)
+		return
+	}
 	body, err := json.Marshal(&resolved)
 	if err != nil {
 		return
@@ -1055,5 +1090,7 @@ func (h *HSHandler) storeLiveGame(sub string, rec *hstracker.Record, deckID int6
 	if json.Unmarshal(body, &gr) != nil || len(gr.Timeline) == 0 {
 		return
 	}
-	_, _, _, _, _, _, _ = h.storeGame(sub, &gr, body, deckID)
+	if _, dup, _, _, _, _, err := h.storeGameBound(sub, &gr, body, deckID, bind); err == nil && !dup {
+		h.bumpUploadOK(keyID)
+	}
 }

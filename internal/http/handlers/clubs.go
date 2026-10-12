@@ -96,7 +96,7 @@ func (h *ClubsHandler) viewer(r *http.Request) clubViewer {
 		return clubViewer{}
 	}
 	// Upload tokens and club-context tokens are for external verifiers, never bearer identity here (R3).
-	if aud, _ := claims["aud"].(string); aud == hsLiveUploadAud || aud == clubTokenAud {
+	if aud, _ := claims["aud"].(string); aud == hsLiveUploadAud || aud == clubTokenAud || aud == oauthStateAud {
 		return clubViewer{}
 	}
 	sub, _ := claims["sub"].(string)
@@ -511,6 +511,13 @@ func (h *ClubsHandler) create(w http.ResponseWriter, r *http.Request, v clubView
 	// no role-based permissions); the handle is the public name everywhere.
 	if h.handleOf(h.DB, v.sub) == "" {
 		clubErr(w, http.StatusConflict, "handle_required", "claim a handle first")
+		return
+	}
+	// Identity gate (IDENTITY_NORTHSTAR section 5/7.1): a linked Battle.net identity, or the 30-day grace
+	// window, or wotan.identity.bypass. Clubs carry competitive claims.
+	if g := identityGate(h.DB, v.sub, v.perms); !g.Open() {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": "link a Battle.net account to create a club", "code": "battlenet_required", "gate": gateJSON(g)})
 		return
 	}
 	name, ok := hsText(in.Name, 3, 40)

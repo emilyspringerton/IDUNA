@@ -76,6 +76,9 @@ func (e *hsEnv) do(sub, method, path, body string) (int, map[string]any) {
 	if sub != "" {
 		tok := makePlayerToken(e.t, e.keys, sub)
 		req.Header.Set("Authorization", "Bearer "+tok)
+		// Existing-player fixture: inside the Battle.net-gate grace window, so pre-identity tests keep their
+		// original ingest behavior. Identity tests use the identity env, which does not do this.
+		_, _ = e.db.Exec(`INSERT OR IGNORE INTO player_identity_grace (player_id, grace_until, reason) VALUES (?, datetime('now','+30 days'), 'test fixture')`, sub)
 	}
 	w := httptest.NewRecorder()
 	e.h.ServeHTTP(w, req)

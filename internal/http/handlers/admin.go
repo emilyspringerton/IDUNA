@@ -65,6 +65,8 @@ func (h *AdminHandler) Init() {
 	h.mux.HandleFunc("/admin/gm/", h.gmAccountAction)
 	h.mux.HandleFunc("/admin/clubs", h.clubsIndex)
 	h.mux.HandleFunc("/admin/clubs/", h.clubsRouter)
+	h.mux.HandleFunc("/admin/identities", h.identitiesRouter)
+	h.mux.HandleFunc("/admin/identities/", h.identitiesRouter)
 	h.mux.HandleFunc("/admin/openexecutive", h.openExecutiveStatus)
 	h.mux.HandleFunc("/admin/openexecutive/provision", h.openExecutiveProvision)
 	h.mux.HandleFunc("/admin/promptoverse-queue", h.promptoverseQueue)
@@ -579,6 +581,7 @@ pre{background:#1a1a1a;color:#d4d0c8;padding:12px;font-size:11px;overflow-x:auto
   <a href="/admin/gfd-registration">GFD Registration</a>
   <a href="/admin/deadweight">DEADWEIGHT</a>
   <a href="/admin/clubs">WOTAN Clubs</a>
+  <a href="/admin/identities">WOTAN Identities</a>
   <a href="/admin/logout" class="signout">Sign out</a>
 </nav>
 <div class="container">
@@ -670,6 +673,7 @@ var adminOverviewTmpl = mustParseTmpl("overview", `
   <tr><td><a href="/admin/agents">Register a new agent</a></td><td class="meta">M2M credential, permission grants</td></tr>
   <tr><td><a href="/admin/apples">Apples ledger</a></td><td class="meta">golden documentation audit trail</td></tr>
   <tr><td><a href="/admin/clubs">WOTAN Clubs</a></td><td class="meta">search, suspend, transfer, audit; platform caps + permission catalog</td></tr>
+  <tr><td><a href="/admin/identities">WOTAN Identities</a></td><td class="meta">linked accounts, upload keys, force-unlink, operator-assisted merge</td></tr>
   </table>
 </div>
 

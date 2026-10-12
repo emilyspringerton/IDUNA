@@ -1275,6 +1275,7 @@ func main() {
 		Keys:         keys,
 		ReadLimiter:  middleware.NewIPRateLimiter(300),
 		WriteLimiter: middleware.NewIPRateLimiter(40),
+		EventLog:     unifiedLog,
 	}
 	mux.Handle("/api/v1/hs/", hsH)
 	// WOTAN Phase 2 Clubs (CLUBS_NORTHSTAR.md): clubs, roles, invites, feed, club-context token, platform admin API.
@@ -1386,6 +1387,28 @@ func main() {
 	}
 	mux.Handle("/api/v1/auth/sso/google/start", ssoGoogleH)
 	mux.Handle("/api/v1/auth/sso/google/callback", ssoGoogleH)
+	// WOTAN identity federation (IDENTITY_NORTHSTAR.md, chunk ID-A): Battle.net SSO (login + link) and the
+	// Twitch link-only callback. Both providers answer 404 provider_not_configured until their application
+	// credentials are set -- registering the Battle.net / Twitch apps is a human-only step (develop.battle.net,
+	// dev.twitch.tv); BNET_REDIRECT_URI / TWITCH_REDIRECT_URI must be registered there verbatim.
+	identityOAuthH := &handlers.IdentityOAuthHandler{
+		DB:                 db,
+		Keys:               keys,
+		Players:            playerEmailAuthH,
+		AllowedHosts:       ssoAllowedHosts,
+		EventLog:           unifiedLog,
+		BnetClientID:       os.Getenv("BNET_CLIENT_ID"),
+		BnetClientSecret:   os.Getenv("BNET_CLIENT_SECRET"),
+		BnetRedirectURI:    getenv("BNET_REDIRECT_URI", baseURL+"/api/v1/auth/sso/battlenet/callback"),
+		TwitchClientID:     os.Getenv("TWITCH_CLIENT_ID"),
+		TwitchClientSecret: os.Getenv("TWITCH_CLIENT_SECRET"),
+		TwitchRedirectURI:  getenv("TWITCH_REDIRECT_URI", baseURL+"/api/v1/auth/sso/twitch/callback"),
+	}
+	hsH.OAuth = identityOAuthH
+	mux.Handle("/api/v1/auth/sso/battlenet/start", identityOAuthH)
+	mux.Handle("/api/v1/auth/sso/battlenet/callback", identityOAuthH)
+	mux.Handle("/api/v1/auth/sso/twitch/start", identityOAuthH)
+	mux.Handle("/api/v1/auth/sso/twitch/callback", identityOAuthH)
 
 	// SHANKPIT Google OAuth browser flow — public (no prior auth needed).
 	shankpitAuthH := &handlers.ShankpitAuthHandler{

@@ -108,6 +108,16 @@ func (e *clubEnv) handle(sub, handle string) {
 	if _, err := e.db.Exec(`INSERT INTO hs_profiles (sub, handle) VALUES (?,?)`, sub, handle); err != nil {
 		e.t.Fatal(err)
 	}
+	// Existing-player fixture: inside the 30-day Battle.net-gate grace window (IDENTITY_NORTHSTAR section 5), so
+	// the pre-identity club tests keep exercising club behavior. Gate tests use subs that skip this helper.
+	e.grace(sub)
+}
+
+func (e *clubEnv) grace(sub string) {
+	e.t.Helper()
+	if _, err := e.db.Exec(`INSERT OR REPLACE INTO player_identity_grace (player_id, grace_until, reason) VALUES (?, datetime('now','+30 days'), 'test fixture')`, sub); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func (e *clubEnv) people(names ...string) {

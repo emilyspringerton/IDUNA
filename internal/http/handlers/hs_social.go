@@ -7,6 +7,7 @@ package handlers
 // All user text is stored raw and escaped by the clients; this file only bounds length and strips control chars.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"iduna/internal/hsdeck"
 	"iduna/internal/hstracker"
 	"iduna/internal/http/middleware"
+	"iduna/internal/userlog"
 )
 
 const hsPrefix = "/api/v1/hs/"
@@ -32,10 +34,17 @@ type HSHandler struct {
 	ReadLimiter  *middleware.IPRateLimiter // per IP, nil = unlimited (tests)
 	WriteLimiter *middleware.IPRateLimiter // per subject, nil = unlimited (tests)
 	Tracker      *hstracker.Runner         // live deck tracker (hs_live.go); nil = default runner
+	OAuth        *IdentityOAuthHandler     // Battle.net / Twitch link starts (identity_oauth.go); nil = not configured
+	EventLog     userlog.EventLog          // optional unified-log mirror of identity audit events
+	// TwitchLive is the first_streamed_live seam: is this Twitch user id live right now? nil = off (the
+	// default until a Twitch app access token is configured). Results are cached 60 s per user id.
+	TwitchLive func(ctx context.Context, twitchUserID string) (bool, error)
 
 	liveMu   sync.Mutex
 	liveSess map[string]*liveSession
 	liveLim  *middleware.IPRateLimiter // uplink batches (about 1/s while playing); separate from WriteLimiter
+
+	twitchCache map[string]twitchLiveEntry // guarded by liveMu
 }
 
 var hsHandleRe = regexp.MustCompile(`^[a-z0-9_]{3,20}$`)
@@ -57,8 +66,8 @@ func (h *HSHandler) viewer(r *http.Request) hsViewer {
 	}
 	if aud, _ := claims["aud"].(string); aud == hsLiveUploadAud {
 		return hsViewer{} // upload tokens are good for POST /live/lines only
-	} else if aud == clubTokenAud {
-		return hsViewer{} // club-context tokens (clubs.go) are for external verifiers, never WOTAN identity
+	} else if aud == clubTokenAud || aud == oauthStateAud {
+		return hsViewer{} // club-context tokens (clubs.go) and OAuth flow-state cookies are never WOTAN identity
 	}
 	sub, _ := claims["sub"].(string)
 	v := hsViewer{sub: sub}
@@ -70,6 +79,15 @@ func (h *HSHandler) viewer(r *http.Request) hsViewer {
 		}
 	}
 	return v
+}
+
+// requireSub runs fn only for a signed-in viewer (reads are not covered by the write-path 401).
+func (h *HSHandler) requireSub(w http.ResponseWriter, v hsViewer, fn func()) {
+	if v.sub == "" {
+		hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
+		return
+	}
+	fn()
 }
 
 func hsErr(w http.ResponseWriter, code int, msg string) {
@@ -119,7 +137,10 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isWrite := m != http.MethodGet && m != http.MethodHead
-	if isWrite && !(m == http.MethodPost && rest == "decks/parse") {
+	// decks/parse is anonymous; live/exchange is authenticated by the upload key itself; the link starts
+	// resolve the session themselves (a full-page navigation carries it as access_token=, not a header).
+	isLinkStart := len(p) == 4 && p[0] == "me" && p[1] == "identities" && p[3] == "start"
+	if isWrite && !isLinkStart && !(m == http.MethodPost && (rest == "decks/parse" || rest == "live/exchange")) {
 		if v.sub == "" {
 			hsErr(w, http.StatusUnauthorized, "sign in with IDUNA first")
 			return
@@ -195,6 +216,24 @@ func (h *HSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listComments(w, r, v, "hs_post_comments", "post_id", id(1))
 	case len(p) == 3 && p[0] == "wall" && p[2] == "comments" && m == http.MethodPost:
 		h.addComment(w, r, v, "hs_wall_posts", "hs_post_comments", "post_id", id(1))
+	case rest == "live/exchange" && m == http.MethodPost:
+		h.liveExchange(w, r)
+	case rest == "me/identities" && m == http.MethodGet:
+		h.requireSub(w, v, func() { h.listIdentities(w, v) })
+	case rest == "me/identities/prefs" && m == http.MethodGet:
+		h.requireSub(w, v, func() { h.getIdentityPrefs(w, v) })
+	case rest == "me/identities/prefs" && m == http.MethodPut:
+		h.putIdentityPrefs(w, r, v)
+	case isLinkStart && (p[2] == idProvBattlenet || p[2] == idProvTwitch) && (m == http.MethodGet || m == http.MethodPost):
+		h.identityLinkStart(w, r, v, p[2])
+	case len(p) == 3 && p[0] == "me" && p[1] == "identities" && m == http.MethodDelete:
+		h.unlinkIdentity(w, r, v, id(2))
+	case rest == "me/upload-keys" && m == http.MethodGet:
+		h.requireSub(w, v, func() { h.listUploadKeys(w, v) })
+	case rest == "me/upload-keys" && m == http.MethodPost:
+		h.createUploadKey(w, r, v)
+	case len(p) == 3 && p[0] == "me" && p[1] == "upload-keys" && m == http.MethodDelete:
+		h.revokeUploadKey(w, r, v, id(2))
 	case rest == "me/sync-target" && m == http.MethodGet:
 		h.getSyncTarget(w, v)
 	case rest == "me/sync-target" && m == http.MethodPut:

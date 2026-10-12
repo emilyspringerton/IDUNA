@@ -50,6 +50,14 @@ func newTestEmailAuthDB(t *testing.T) *sql.DB {
 	)`); err != nil {
 		t.Fatalf("create player_permissions: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE player_identities (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, player_id TEXT NOT NULL, provider TEXT NOT NULL, provider_sub TEXT NOT NULL,
+		display TEXT NOT NULL DEFAULT '', extra_json TEXT NOT NULL DEFAULT '{}', verified INTEGER NOT NULL DEFAULT 0,
+		linked_at TEXT NOT NULL DEFAULT (datetime('now')), last_login_at TEXT, last_refreshed_at TEXT,
+		status TEXT NOT NULL DEFAULT 'active', UNIQUE (provider, provider_sub)
+	)`); err != nil {
+		t.Fatalf("create player_identities: %v", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE characters (
 		character_id TEXT PRIMARY KEY,
 		player_id    TEXT NOT NULL,

@@ -187,6 +187,10 @@ func (h *HSHandler) liveSyncTarget(w http.ResponseWriter, r *http.Request) {
 		hsErr(w, http.StatusUnauthorized, "invalid or expired upload token")
 		return
 	}
+	if _, ok := h.liveKeyOK(claims, sub); !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "upload key revoked", "code": "key_revoked"})
+		return
+	}
 	t := h.syncTargetOf(sub)
 	out := map[string]any{"kind": t.Kind, "valid": t.Valid, "sync_target_invalid": !t.Valid, "label": t.Label()}
 	if t.Kind == "club" {
@@ -204,11 +208,17 @@ func (h *HSHandler) retargetGame(w http.ResponseWriter, r *http.Request, v hsVie
 		return
 	}
 	var owner string
-	if err := h.DB.QueryRow(`SELECT owner_sub FROM hs_games WHERE id=?`, id).Scan(&owner); err == sql.ErrNoRows || (err == nil && owner != v.sub) {
+	var unverified int
+	if err := h.DB.QueryRow(`SELECT owner_sub, unverified_tag FROM hs_games WHERE id=?`, id).Scan(&owner, &unverified); err == sql.ErrNoRows || (err == nil && owner != v.sub) {
 		hsErr(w, http.StatusNotFound, "not found")
 		return
 	} else if err != nil {
 		hsErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	if unverified == 1 && in.Kind != "none" {
+		// IDENTITY_NORTHSTAR section 7.4: a game with no linked BattleTag behind it can only be private.
+		clubErr(w, http.StatusConflict, "unverified_tag", "this game's player name is not a linked BattleTag, so it can only stay private")
 		return
 	}
 	if ok, _ := h.validTarget(w, v.sub, in); !ok {
