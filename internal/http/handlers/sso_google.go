@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -161,7 +162,20 @@ func (h *SSOGoogleHandler) callback(w http.ResponseWriter, r *http.Request) {
 	linkPID := h.linkCookiePlayer(r)
 
 	stateCookie, err := r.Cookie(ssoGoogleStateCookie)
-	if err != nil || stateCookie.Value == "" || url.QueryEscape(r.URL.Query().Get("state")) != stateCookie.Value {
+	qState := url.QueryEscape(r.URL.Query().Get("state"))
+	if err != nil || stateCookie.Value == "" || qState != stateCookie.Value {
+		// TEMP DIAGNOSTIC (2026-10-12, remove once the real-world "invalid state" report is root-caused):
+		// no PII here, just whether/why the cookie<->query state match failed.
+		cookieNames := make([]string, 0, len(r.Cookies()))
+		for _, c := range r.Cookies() {
+			cookieNames = append(cookieNames, c.Name)
+		}
+		cookieLen := -1
+		if stateCookie != nil {
+			cookieLen = len(stateCookie.Value)
+		}
+		log.Printf("sso_google: state check failed — cookie_err=%v cookie_present=%v cookies_seen=%v qstate_len=%d cookie_len=%d ua=%q",
+			err, stateCookie != nil, cookieNames, len(qState), cookieLen, r.UserAgent())
 		http.Error(w, "invalid state — restart sign-in", http.StatusBadRequest)
 		return
 	}
