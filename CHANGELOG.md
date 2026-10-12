@@ -1,5 +1,10 @@
 # IDUNA Changelog
 
+## 2026-10-12
+
+- HS-TRACKER-ME-04: tracker now reads PowerTaskList lines on equal footing with GameState (CREATE_GAME + nested sub-blocks were PowerTaskList-only on a real current client build, leaving the live page permanently 'waiting for the game to start'); added a CHANGE_ENTITY handler (card transforms in place were silently dropped, corrupting an unrelated stale entity's controller -- the real mechanism behind 'my card shows up under the opponent'). Apple #22235. (sess-20261009-1745-ee80b668)
+
+
 ## 2026-10-11
 
 - Fixed real bug (second follow-up to the me/opponent swap fix): founder reported the deck tracker
