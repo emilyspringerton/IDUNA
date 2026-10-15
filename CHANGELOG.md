@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-15
+- IDUNA login SDK (`sdk/README.md`, `sdk/c/iduna_login.h` native loopback + test, `sdk/web/iduna-login.js`): one SSO contract, two client profiles. Cards #630/#631. Web profile untested (no node).
 
 - feat(shankpit): live edit sessions carry the NOCK editor's UNSAVED working level -- `PUT /api/v1/shankpit-edit-sessions/{id}/level` (full draft, ≤4 MiB, announces a `level` event + `level_rev`) and `GET .../{id}/level` (native export shape; falls back to the saved level). `LevelStore.ExportLevel` exports an in-memory level. NOCK's `useLiveSession` pushes the draft (debounced 250 ms) while a session is open. Founder: "a shankpit player joining the live session needs to load into the edited level." Go tests pass; the NOCK `dist/` bundle was NOT rebuilt (no node on this box) -- rebuild before deploy.
 
