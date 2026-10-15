@@ -36,6 +36,9 @@ export function useLiveSession(opts: {
   levelName: string
   spawner: Vec3
   onSpawnerChange: (s: Vec3) => void
+  /** The editor's current working level in save-body shape (unsaved edits included). Pushed to the session
+   *  (debounced) so a SHANKPIT player joining loads the level as it is being edited, not as last saved. */
+  draft?: Record<string, unknown>
 }): LiveSession {
   const [id, setId] = useState<string | null>(null)
   const [status, setStatus] = useState('not connected')
@@ -115,6 +118,20 @@ export function useLiveSession(opts: {
       ctl.abort()
     }
   }, [id, apply])
+
+  // working level changed (or the session just opened) -> push the full draft. Last write wins, debounced.
+  const draftJson = opts.draft ? JSON.stringify(opts.draft) : null
+  useEffect(() => {
+    if (!id || draftJson === null) return
+    const t = setTimeout(() => {
+      void fetch(`${BASE}/${id}/level`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: draftJson,
+      }).catch(() => undefined)
+    }, 250)
+    return () => clearTimeout(t)
+  }, [id, draftJson])
 
   // our spawner moved -> tell SHANKPIT (debounced; remote-originated moves are not echoed)
   const sp = opts.spawner

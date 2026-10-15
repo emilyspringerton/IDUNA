@@ -2080,7 +2080,27 @@ export default function ShankpitLevelEditor() {
   // Viewport3D's own doc comment on the spawner mesh), so it isn't part of `draft`/persisted with
   // the level; it just resets to a sensible default on new/load.
   const [spawner, setSpawner] = useState(defaultSpawnerPos())
-  const live = useLiveSession({ levelId: activeId, levelName: draft.name, spawner, onSpawnerChange: setSpawner })
+  const live = useLiveSession({
+    levelId: activeId,
+    levelName: draft.name,
+    spawner,
+    onSpawnerChange: setSpawner,
+    draft: {
+      width: draft.width,
+      height: draft.height,
+      depth: draft.depth,
+      ground_plane_enabled: draft.groundPlaneEnabled,
+      ground_plane_squares: draft.groundPlaneSquares,
+      walls: draft.walls,
+      objects: draft.objects,
+      spawners: draft.spawners,
+      doors: draft.doors,
+      nav_nodes: draft.navNodes,
+      characters: draft.characters,
+      level_exits: draft.levelExits,
+      next_level_id: draft.nextLevelId,
+    },
+  })
 
   const applyFloorTint = async (next: ShankpitFloorTint | null) => {
     if (activeId === null) return

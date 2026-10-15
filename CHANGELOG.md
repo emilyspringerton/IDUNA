@@ -1,5 +1,9 @@
 # IDUNA Changelog
 
+## 2026-10-15
+
+- feat(shankpit): live edit sessions carry the NOCK editor's UNSAVED working level -- `PUT /api/v1/shankpit-edit-sessions/{id}/level` (full draft, ≤4 MiB, announces a `level` event + `level_rev`) and `GET .../{id}/level` (native export shape; falls back to the saved level). `LevelStore.ExportLevel` exports an in-memory level. NOCK's `useLiveSession` pushes the draft (debounced 250 ms) while a session is open. Founder: "a shankpit player joining the live session needs to load into the edited level." Go tests pass; the NOCK `dist/` bundle was NOT rebuilt (no node on this box) -- rebuild before deploy.
+
 ## 2026-10-12
 - feat(identity): Twitch is now a full SSO login provider (IDENT-06, IQ-2 resolved), not just link-only -- loginDoorProviders includes twitch, start()/callback() in identity_oauth.go treat it like Battle.net/Google (mints a session JWT via finishLogin), SSOLoginHandler gets a TwitchEnabled button on the hosted login page gated on TWITCH_CLIENT_ID/SECRET; still zero OAuth scopes either way (I8 unaffected); the HS link-only route (/api/v1/hs/me/identities/twitch/start) now explicitly requires an authenticated caller rather than relying on Twitch's old forced link-mode default (sess-20261009-1745-ee80b668)
 - fix(sso): SSOGoogleHandler now requests the minimal `openid email` scope instead of `openid email profile` for the IDUNA SSO Google button — email alone drives account mapping/transactional comms/hybrid login, and display-name already falls back to the email's local part (sess-20261009-1745-ee80b668)
