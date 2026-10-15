@@ -966,8 +966,17 @@ func (h *GameOnlineHandler) topUpTicketsIfDue(ctx context.Context, cfg games.Con
 	if err != nil || due == 0 {
 		return
 	}
-	if tickets < dailyCap {
-		tickets = dailyCap
+	// Founder real-time, 2026-10-15: a player who already holds a ticket still gets the new
+	// day's ticket ("if they log in 1 minute till midnight UTC and get their ticket for that
+	// day, and then it gets midnight they do get another ticket") -- the daily grant STACKS
+	// rather than topping up to the cap. Premium (founderDailyCap, effectively unlimited) keeps
+	// the raise-to-cap behaviour so a balance never runs away.
+	if dailyCap >= founderDailyCap {
+		if tickets < dailyCap {
+			tickets = dailyCap
+		}
+	} else {
+		tickets += dailyCap
 	}
 	_, _ = h.DB.ExecContext(ctx,
 		`UPDATE game_player_tickets SET tickets = ?, last_ticket_topup_at = CURRENT_TIMESTAMP WHERE player_id = ? AND game = ?`,

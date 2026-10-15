@@ -649,6 +649,10 @@ func TestRedeem_RefillCodeAddsToExistingBalance(t *testing.T) {
 func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *testing.T) {
 	e := newGameEnv(t)
 	pid, secret, _ := e.register(t, "deadweight", "Ada")
+	// Pin to a grandfathered (25/day) registration so the test does not depend on today's date vs
+	// grandfatherCutoff (register() itself grants only the Late Free cap once the cutoff passed).
+	e.db.Exec(`UPDATE players SET registered_at = '2020-01-01T00:00:00Z' WHERE player_id=?`, pid)
+	e.db.Exec(`UPDATE game_player_tickets SET tickets = 25 WHERE player_id=?`, pid)
 
 	var tickets int
 	var tier string
@@ -670,8 +674,9 @@ func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *te
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m2["tickets"].(float64) != 25 {
-		t.Fatalf("expected the daily top-up to raise a below-cap balance back to 25, got %v", m2)
+	// 2026-10-15: the daily grant STACKS (3 held + 25 new day's tickets), it no longer tops up to cap.
+	if m2["tickets"].(float64) != 28 {
+		t.Fatalf("expected the new day's grant to stack onto the 3 held tickets (28), got %v", m2)
 	}
 }
 
@@ -686,6 +691,10 @@ func TestDailyTopUp_GrantedOnRegisterToTierCapNotDoubledOnImmediateRelogin(t *te
 func TestDailyTopUp_FixedUTCMidnightNotRollingWindow(t *testing.T) {
 	e := newGameEnv(t)
 	pid, secret, _ := e.register(t, "deadweight", "Ada")
+	// Pin to a grandfathered (25/day) registration so the test does not depend on today's date vs
+	// grandfatherCutoff (register() itself grants only the Late Free cap once the cutoff passed).
+	e.db.Exec(`UPDATE players SET registered_at = '2020-01-01T00:00:00Z' WHERE player_id=?`, pid)
+	e.db.Exec(`UPDATE game_player_tickets SET tickets = 25 WHERE player_id=?`, pid)
 
 	// Still today (UTC) -- even "start of today" (the earliest timestamp that's still today's
 	// date) must not grant again.
@@ -703,8 +712,8 @@ func TestDailyTopUp_FixedUTCMidnightNotRollingWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m2["tickets"].(float64) != 25 {
-		t.Fatalf("a prior UTC calendar date should grant back to the cap: got %v", m2)
+	if m2["tickets"].(float64) != 28 {
+		t.Fatalf("a prior UTC calendar date should grant the day's tickets on top of the 3 held: got %v", m2)
 	}
 }
 
@@ -754,10 +763,14 @@ func TestDailyTopUp_ThreeTierRule(t *testing.T) {
 	}
 }
 
-func TestDailyTopUp_NeverLowersABalanceAboveTheCap(t *testing.T) {
+func TestDailyTopUp_StacksOntoABalanceAboveTheCap(t *testing.T) {
 	e := newGameEnv(t)
 	pid, secret, _ := e.register(t, "deadweight", "Ada")
 	seedClaimCode(t, e.db, "BIGWI-NFOUN-DXXXX-XVVVV-VVVVV", "deadweight", 50, 0)
+	// Pin to a grandfathered (25/day) registration so the test does not depend on today's date vs
+	// grandfatherCutoff (register() itself grants only the Late Free cap once the cutoff passed).
+	e.db.Exec(`UPDATE players SET registered_at = '2020-01-01T00:00:00Z' WHERE player_id=?`, pid)
+	e.db.Exec(`UPDATE game_player_tickets SET tickets = 25 WHERE player_id=?`, pid)
 	_, mlog, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
 	tok := mlog["token"].(string)
 	_, mr, raw := e.do("POST", "/api/v1/games/deadweight/redeem", tok, map[string]string{"code": "BIGWI-NFOUN-DXXXX-XVVVV-VVVVV"})
@@ -768,8 +781,8 @@ func TestDailyTopUp_NeverLowersABalanceAboveTheCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, m2, _ := e.do("POST", "/api/v1/games/deadweight/guest-login", "", map[string]string{"player_id": pid, "guest_secret": secret})
-	if m2["tickets"].(float64) != 75 {
-		t.Fatalf("daily top-up must never lower a balance already above the tier cap, got %v", m2)
+	if m2["tickets"].(float64) != 100 {
+		t.Fatalf("daily grant must stack on top of a balance already above the tier cap (75+25), got %v", m2)
 	}
 }
 
