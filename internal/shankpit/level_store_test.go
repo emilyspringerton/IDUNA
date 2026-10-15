@@ -3,6 +3,8 @@ package shankpit_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -1300,5 +1302,32 @@ func TestExport_LabStationsFromWidget(t *testing.T) {
 	}
 	if doc.LabStations[0].X < 24.99 || doc.LabStations[0].X > 25.01 {
 		t.Errorf("splice should land at x=25, got %+v", doc.LabStations[0])
+	}
+}
+
+// TestExport_CarriesWallRotationAndRamp pins the editor->native contract for the founder's
+// "rotated cube doesn't look rotated in SHANKPIT" report: a root wall's own rot_x/y/z and ramp
+// must reach the exported JSON verbatim (the native client reads them from there).
+func TestExport_CarriesWallRotationAndRamp(t *testing.T) {
+	s := newTestStore(t)
+	w := aCube()
+	w.RotX, w.RotY, w.RotZ, w.Ramp = 10, 45, -20, true
+	lvl, err := s.CreateLevel(context.Background(), "Rot", 100, 50, 100, true, 2, []shankpit.Wall{w}, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), lvl.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	b, _ := json.Marshal(doc.Walls[0])
+	got := doc.Walls[0]
+	if got.RotX != 10 || got.RotY != 45 || got.RotZ != -20 || !got.Ramp {
+		t.Fatalf("rotation lost in export: %s", b)
+	}
+	for _, k := range []string{`"rot_x":10`, `"rot_y":45`, `"rot_z":-20`, `"ramp":true`} {
+		if !strings.Contains(string(b), k) {
+			t.Fatalf("exported JSON missing %s: %s", k, b)
+		}
 	}
 }
