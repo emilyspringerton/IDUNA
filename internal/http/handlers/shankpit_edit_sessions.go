@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"iduna/internal/http/middleware"
+	"iduna/internal/shankpit"
 )
 
 const (
@@ -36,6 +37,7 @@ const (
 	editSessionMaxEvents  = 2000
 	editSessionMaxBody    = 8 * 1024
 	editSessionMaxWaitSec = 25
+	editSessionMaxDraft   = 4 << 20 // an unsaved level draft (walls/objects/...), far larger than an event
 )
 
 // editEventKinds are the events a session carries. Anything else is rejected so a room cannot be used as a
@@ -50,9 +52,14 @@ const (
 //	box_size    {id,sx,sy,sz}          a wall box was resized
 //	box_del     {id}                   a wall box was deleted
 //	hello       {client:"nock"|"shankpit"}  presence
+//	level       {rev}                  the NOCK editor's working (possibly unsaved) level changed; fetch GET {id}/level
+//
+// The working level itself travels out-of-band: PUT {id}/level (NOCK, full draft) and GET {id}/level (SHANKPIT,
+// the native export shape of that draft). Falls back to the saved level when no draft has been pushed.
 var editEventKinds = map[string]bool{
 	"spawner": true, "avatar": true, "spawn_mode": true, "teleport": true,
 	"box_add": true, "box_move": true, "box_size": true, "box_del": true, "hello": true,
+	"level": true,
 }
 
 type editEvent struct {
@@ -75,6 +82,9 @@ type editSession struct {
 	spawner   json.RawMessage
 	avatar    json.RawMessage
 	spawnMode string
+	// draft is the NOCK editor's latest working level (unsaved edits included), raw updateShankpitLevelReq-shaped JSON.
+	draft    json.RawMessage
+	draftRev int
 	// wake is closed and replaced whenever an event lands, so long-pollers wake without busy-waiting.
 	wake chan struct{}
 }
@@ -83,6 +93,8 @@ type editSession struct {
 type ShankpitEditSessionsHandler struct {
 	// CreateLimiter rate-limits session creation per client IP; nil disables the limit (tests).
 	CreateLimiter *middleware.IPRateLimiter
+	// Store builds the native export of a draft / the saved level for GET {id}/level; nil disables that route.
+	Store *shankpit.LevelStore
 	Now           func() time.Time
 
 	mu       sync.Mutex
@@ -114,6 +126,10 @@ func (h *ShankpitEditSessionsHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		h.poll(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "events" && r.Method == http.MethodPost:
 		h.post(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "level" && r.Method == http.MethodPut:
+		h.putLevel(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "level" && r.Method == http.MethodGet:
+		h.getLevel(w, r, parts[0])
 	default:
 		mmoWriteError(w, http.StatusMethodNotAllowed, "POST /shankpit-edit-sessions, GET /shankpit-edit-sessions/{id}?since=N, POST /shankpit-edit-sessions/{id}/events")
 	}
@@ -191,7 +207,7 @@ func (s *editSession) snapshotLocked(since int) map[string]any {
 	}
 	return map[string]any{
 		"id": s.id, "level_id": s.levelID, "level_name": s.levelName,
-		"seq": s.nextSeq - 1, "events": out,
+		"seq": s.nextSeq - 1, "events": out, "level_rev": s.draftRev,
 		"state": map[string]any{"spawner": s.spawner, "avatar": s.avatar, "spawn_mode": s.spawnMode},
 	}
 }
@@ -313,4 +329,90 @@ func (h *ShankpitEditSessionsHandler) post(w http.ResponseWriter, r *http.Reques
 	s.wake = make(chan struct{})
 	h.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]any{"seq": ev.Seq})
+}
+
+// putLevel stores the editor's current working level and announces it with a "level" event. Full-draft PUT (the
+// same body the editor's save sends), debounced client-side; last write wins.
+func (h *ShankpitEditSessionsHandler) putLevel(w http.ResponseWriter, r *http.Request, id string) {
+	r.Body = http.MaxBytesReader(w, r.Body, editSessionMaxDraft)
+	var raw json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "invalid JSON (or draft over 4 MiB)")
+		return
+	}
+	var probe updateShankpitLevelReq
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		mmoWriteError(w, http.StatusBadRequest, "draft must be a level body: "+err.Error())
+		return
+	}
+	h.mu.Lock()
+	s := h.sessions[id]
+	if s == nil || h.now().Sub(s.touched) > editSessionTTL {
+		h.mu.Unlock()
+		mmoWriteError(w, http.StatusNotFound, "no such edit session")
+		return
+	}
+	now := h.now()
+	s.touched = now
+	s.draft = raw
+	s.draftRev++
+	data, _ := json.Marshal(map[string]int{"rev": s.draftRev})
+	kept := s.events[:0]
+	for _, old := range s.events { // only the newest "level" notice matters
+		if old.Kind != "level" {
+			kept = append(kept, old)
+		}
+	}
+	s.events = append(kept, editEvent{Seq: s.nextSeq, Source: "nock", Kind: "level", Data: data, At: now})
+	s.nextSeq++
+	rev := s.draftRev
+	close(s.wake)
+	s.wake = make(chan struct{})
+	h.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"rev": rev})
+}
+
+// getLevel returns the native export (ExportDoc shape, what the SHANKPIT loader parses) of the session's working
+// level: the pushed draft if any, else the saved level the session was created for.
+func (h *ShankpitEditSessionsHandler) getLevel(w http.ResponseWriter, r *http.Request, id string) {
+	if h.Store == nil {
+		mmoWriteError(w, http.StatusNotImplemented, "level export not configured")
+		return
+	}
+	s := h.lookup(id)
+	if s == nil {
+		mmoWriteError(w, http.StatusNotFound, "no such edit session")
+		return
+	}
+	h.mu.Lock()
+	draft, rev, levelID, name := s.draft, s.draftRev, s.levelID, s.levelName
+	h.mu.Unlock()
+	var doc *shankpit.ExportDoc
+	var err error
+	if len(draft) > 0 {
+		var req updateShankpitLevelReq
+		if err = json.Unmarshal(draft, &req); err == nil {
+			lvl := &shankpit.Level{ID: levelID, Name: name, Width: req.Width, Height: req.Height, Depth: req.Depth,
+				GroundPlaneEnabled: req.GroundPlaneEnabled, GroundPlaneSquares: req.GroundPlaneSquares,
+				Walls: req.Walls, Objects: req.Objects, Spawners: req.Spawners, Doors: req.Doors,
+				NavNodes: req.NavNodes, Characters: req.Characters, LevelExits: req.LevelExits, NextLevelID: req.NextLevelID}
+			if levelID > 0 { // carry the saved level's own non-draft fields (enclosed, floor tint, ...)
+				if saved, gerr := h.Store.GetLevel(r.Context(), levelID); gerr == nil {
+					lvl.Enclosed, lvl.FloorTint, lvl.BrickDamage = saved.Enclosed, saved.FloorTint, saved.BrickDamage
+				}
+			}
+			doc, err = h.Store.ExportLevel(r.Context(), lvl)
+		}
+	} else if levelID > 0 {
+		doc, err = h.Store.Export(r.Context(), levelID)
+	} else {
+		mmoWriteError(w, http.StatusNotFound, "session has no level yet")
+		return
+	}
+	if err != nil {
+		mmoWriteError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	w.Header().Set("X-Level-Rev", strconv.Itoa(rev))
+	writeJSON(w, http.StatusOK, doc)
 }

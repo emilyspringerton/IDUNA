@@ -866,7 +866,7 @@ func main() {
 	mux.Handle("/api/v1/shankpit-levels", shankpitLevelsPublicH)
 	mux.Handle("/api/v1/shankpit-levels/", shankpitLevelsPublicH)
 	// Live map-editing rooms shared by NOCK and the native SHANKPIT client (kanban #518-#520).
-	shankpitEditSessionsH := &handlers.ShankpitEditSessionsHandler{CreateLimiter: middleware.NewIPRateLimiter(30)}
+	shankpitEditSessionsH := &handlers.ShankpitEditSessionsHandler{CreateLimiter: middleware.NewIPRateLimiter(30), Store: shankpitLevelStore}
 	mux.Handle("/api/v1/shankpit-edit-sessions", shankpitEditSessionsH)
 	mux.Handle("/api/v1/shankpit-edit-sessions/", shankpitEditSessionsH)
 

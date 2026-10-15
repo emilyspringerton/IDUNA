@@ -1443,6 +1443,14 @@ func (s *LevelStore) Export(ctx context.Context, id int64) (*ExportDoc, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.ExportLevel(ctx, lvl)
+}
+
+// ExportLevel builds the native-loader export for an in-memory level -- the saved row (Export) or an
+// unsaved NOCK editor draft (live edit sessions: a player joining a session must see what the editor
+// sees, not what was last saved). lvl.ID is only used as the cycle-guard seed.
+func (s *LevelStore) ExportLevel(ctx context.Context, lvl *Level) (*ExportDoc, error) {
+	id := lvl.ID
 	walls := append([]Wall{}, lvl.Walls...)
 	var composedDoors []composedDoorRef
 	if len(lvl.Objects) > 0 {
