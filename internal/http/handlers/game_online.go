@@ -528,6 +528,24 @@ func (h *GameOnlineHandler) claimGamePlayer(ctx context.Context, pid string, cfg
 	return name, nil
 }
 
+// ssoGamePlayer maps a generic IDUNA SSO identity (the JWT subject WOTAN holds) to the player row it
+// plays cfg's game as: the guest account it was linked to via guest-link-sso if there is one
+// (game_sso_links), otherwise the identity's own players row, claimed for this game on first use
+// (claimGamePlayer). The ONE place that rule lives -- sso-exchange (signing in) and the account-level
+// redeem/entitlements routes (account_redeem.go) both call it, so a code redeemed on WOTAN always
+// lands on the exact player the game client signs in as.
+func (h *GameOnlineHandler) ssoGamePlayer(ctx context.Context, ssoSub string, cfg games.Config) (pid, name string, err error) {
+	pid = ssoSub
+	// A guest upgraded via guest-link-sso: the SSO identity resolves to that guest's player row.
+	var linked string
+	if e := h.DB.QueryRowContext(ctx,
+		`SELECT player_id FROM game_sso_links WHERE sso_player_id = ? AND game = ?`, ssoSub, cfg.Slug).Scan(&linked); e == nil && linked != "" {
+		pid = linked
+	}
+	name, err = h.claimGamePlayer(ctx, pid, cfg)
+	return pid, name, err
+}
+
 // emailLogin is the returning half of guestUpgrade -- same game-scoped player-token shape every
 // other login path here issues (permissions/game/player_id claims), unlike the generic
 // PlayerEmailAuthHandler's own token shape (see guestUpgrade's doc comment). Looks up by email
@@ -609,13 +627,7 @@ func (h *GameOnlineHandler) ssoExchange(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	ctx := r.Context()
-	// A guest upgraded via guest-link-sso: the SSO identity resolves to that guest's player row.
-	var linked string
-	if err := h.DB.QueryRowContext(ctx,
-		`SELECT player_id FROM game_sso_links WHERE sso_player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&linked); err == nil && linked != "" {
-		pid = linked
-	}
-	name, err := h.claimGamePlayer(ctx, pid, cfg)
+	pid, name, err := h.ssoGamePlayer(ctx, pid, cfg)
 	if err == errPlayerScopedToOtherGame {
 		mmoWriteError(w, http.StatusForbidden, "this IDUNA identity is already linked to a different game")
 		return
@@ -1073,9 +1085,14 @@ func (h *GameOnlineHandler) ticketsRead(w http.ResponseWriter, r *http.Request, 
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// The cosmetic Founder flag rides along so a client can show its badge without a second call. It
+	// reveals nothing new -- a founder's 9999 balance is already public on this very endpoint.
+	var isFounder int
+	_ = h.DB.QueryRowContext(r.Context(),
+		`SELECT is_founder FROM players WHERE player_id = ? AND game = ?`, playerID, cfg.Slug).Scan(&isFounder)
 	// A player with no row yet (never granted/spent any) legitimately has 0, not a 404 -- same
 	// COALESCE-to-default convention game_player_stats' own stats() handler already uses.
-	writeJSON(w, http.StatusOK, map[string]any{"player_id": playerID, "tickets": tickets})
+	writeJSON(w, http.StatusOK, map[string]any{"player_id": playerID, "tickets": tickets, "founder": isFounder != 0})
 }
 
 func (h *GameOnlineHandler) ticketsConsume(w http.ResponseWriter, r *http.Request, cfg games.Config) {
@@ -1136,11 +1153,163 @@ func (h *GameOnlineHandler) ticketsConsume(w http.ResponseWriter, r *http.Reques
 // generated format exactly.
 var claimCodeRe = regexp.MustCompile(`^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$`)
 
+// normalizeClaimCode applies the paste tolerance every redeem route shares: strips ALL whitespace
+// (not just leading/trailing -- a paste from a chat client or store page can carry stray
+// spaces/newlines around or inside the code), upper-cases it, and re-groups a code pasted without
+// its dashes (25 bare chars) -- the dashes are a readability aid, not part of the code's actual
+// identity. ok is false when the result still isn't the 5x5 claim-code shape.
+func normalizeClaimCode(raw string) (code string, ok bool) {
+	code = strings.ToUpper(strings.Join(strings.Fields(raw), ""))
+	if len(code) == 25 {
+		var b strings.Builder
+		for i, c := range code {
+			if i > 0 && i%5 == 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(c)
+		}
+		code = b.String()
+	}
+	return code, claimCodeRe.MatchString(code)
+}
+
+// claimOutcome is what applying one claim code did, as plain facts. The wording ("Founder unlocked",
+// "+10 tickets") belongs to each client; the server only reports what changed, so the C client, the
+// browser client and WOTAN's Redeem page can each say the same true thing.
+type claimOutcome struct {
+	Game           string
+	Code           string
+	TicketsGranted int    // tickets the code itself carried (0 for a founder-only code)
+	Founder        bool   // the code carried the founder flag
+	WasFounder     bool   // the player was already a founder before this code
+	Tier           string // account tier the code set ("" = none)
+	TicketsBefore  int    // balance before this code
+	Tickets        int    // balance after it (a founder code lifts it to founderDailyCap)
+}
+
+// response is the JSON every redeem route answers with. The first five keys are the original
+// per-game contract (the C client reads tickets_granted/founder/tickets); the rest are additive.
+func (o *claimOutcome) response() map[string]any {
+	return map[string]any{
+		"ok": true, "tickets_granted": o.TicketsGranted, "founder": o.Founder, "tickets": o.Tickets, "tier": o.Tier,
+		"game": o.Game, "code": o.Code, "was_founder": o.WasFounder, "tickets_before": o.TicketsBefore,
+	}
+}
+
+// errClaimCodeUnavailable: the code never existed for this game, or somebody already used it.
+// Deliberately ONE error for both -- don't help an attacker tell "wrong guess" from "somebody else
+// got there first."
+var errClaimCodeUnavailable = errors.New("claim code unavailable")
+
+// applyClaimCode spends one claim code for player pid in cfg's game: marks it used, adds its tickets,
+// sets the founder flag (and lifts the balance to the Premium cap) and any tier it carries, all in
+// one transaction. Atomic on the claim itself (single UPDATE ... WHERE used_by_player_id IS NULL,
+// RowsAffected check), same discipline ticketsConsume already established for real spendable state --
+// two concurrent attempts on the same code can never both succeed. Shared by the per-game redeem
+// route (the native client's player token) and the account-level one (WOTAN's SSO token), so a code
+// does exactly the same thing whichever door it comes through. code must already be normalized.
+func (h *GameOnlineHandler) applyClaimCode(ctx context.Context, cfg games.Config, pid, code string) (*claimOutcome, error) {
+	tx, err := h.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE game_claim_codes SET used_by_player_id = ?, used_at = CURRENT_TIMESTAMP
+		 WHERE code = ? AND game = ? AND used_by_player_id IS NULL`, pid, code, cfg.Slug)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, errClaimCodeUnavailable
+	}
+	out := &claimOutcome{Game: cfg.Slug, Code: code}
+	var founderFlag int
+	var tierGrant sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT tickets, founder_flag, tier FROM game_claim_codes WHERE code = ? AND game = ?`, code, cfg.Slug).
+		Scan(&out.TicketsGranted, &founderFlag, &tierGrant); err != nil {
+		return nil, err
+	}
+	out.Founder = founderFlag != 0
+	out.Tier = tierGrant.String // "" when the column is NULL
+
+	// "Before" snapshot, so a client can say what this code actually changed (a second founder code on
+	// an account that already is one changes nothing, and the page should say so, not shout "Founder!").
+	var wasFounder int
+	if err := tx.QueryRowContext(ctx, `SELECT is_founder FROM players WHERE player_id = ?`, pid).Scan(&wasFounder); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	out.WasFounder = wasFounder != 0
+	if err := tx.QueryRowContext(ctx,
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&out.TicketsBefore); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	if out.TicketsGranted > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tickets) VALUES (?, ?, ?)
+			 ON CONFLICT(player_id, game) DO UPDATE SET tickets = tickets + excluded.tickets`,
+			pid, cfg.Slug, out.TicketsGranted); err != nil {
+			return nil, err
+		}
+	}
+	if out.Founder {
+		if _, err := tx.ExecContext(ctx, `UPDATE players SET is_founder = 1 WHERE player_id = ?`, pid); err != nil {
+			return nil, err
+		}
+		// S516: "Upon successful redemption, instantly trigger the refresh logic so their UI
+		// updates to Unlimited without requiring a game restart" -- rather than a separate
+		// refresh call, the response's own "tickets" field (read below, after this bump) already
+		// carries the final Unlimited balance back to the client in the same round-trip. GREATEST
+		// semantics (never lowers), same as the daily top-up itself, and idempotent on a re-run.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tickets, last_ticket_topup_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+			 ON CONFLICT(player_id, game) DO UPDATE SET
+			   tickets = MAX(tickets, excluded.tickets), last_ticket_topup_at = excluded.last_ticket_topup_at`,
+			pid, cfg.Slug, founderDailyCap); err != nil {
+			return nil, err
+		}
+	}
+	if out.Tier != "" {
+		// A tier grant (e.g. a Founder pack bumping tier_free -> tier_premium) needs a real
+		// tickets row to update the tier column on -- upsert the same way the tickets branch
+		// above does, so a code that ONLY grants a tier (0 tickets) still works for a
+		// brand-new player with no row yet.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO game_player_tickets (player_id, game, tier) VALUES (?, ?, ?)
+			 ON CONFLICT(player_id, game) DO UPDATE SET tier = excluded.tier`,
+			pid, cfg.Slug, out.Tier); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&out.Tickets); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// emitRedeemEvent records a spent code in the unified log (who, which game, what it did -- only the
+// code's last block, never the whole thing). Fire-and-forget like every other emission here.
+func (h *GameOnlineHandler) emitRedeemEvent(ctx context.Context, pid string, o *claimOutcome) {
+	tail := o.Code
+	if i := strings.LastIndexByte(tail, '-'); i >= 0 {
+		tail = tail[i+1:]
+	}
+	emitAuthEvent(ctx, h.EventLog, "iduna:games.redeem", "iduna-games", map[string]any{
+		"game": o.Game, "player_id": pid, "code_tail": tail,
+		"tickets_granted": o.TicketsGranted, "founder": o.Founder, "was_founder": o.WasFounder, "tickets": o.Tickets,
+	})
+}
+
 // redeem is the Itch.io "Redeem Code" box's own endpoint (S508) -- a real player token (guest or
 // steam, cfg.PlayPerm), not an agent, since only the player themselves can spend their own code.
-// Atomic on the claim itself (single UPDATE ... WHERE used_by_player_id IS NULL, RowsAffected
-// check), same discipline ticketsConsume already established for real spendable state -- two
-// concurrent redeem attempts on the same code can never both succeed.
+// The native client calls this one with its own game token; WOTAN's account-level redeem
+// (POST /api/v1/redeem, account_redeem.go) does the same job from the generic SSO token.
 func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg games.Config) {
 	claims := h.bearerClaims(w, r)
 	if claims == nil {
@@ -1162,108 +1331,22 @@ func (h *GameOnlineHandler) redeem(w http.ResponseWriter, r *http.Request, cfg g
 		mmoWriteError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	// Paste-tolerant: strips ALL whitespace (not just leading/trailing -- a paste from a chat
-	// client or store page can carry stray spaces/newlines around or inside the code).
-	code := strings.ToUpper(strings.Join(strings.Fields(req.Code), ""))
-	if len(code) == 25 {
-		// A pasted code missing its dashes (25 bare chars) is re-grouped rather than rejected --
-		// the dashes are a readability aid, not part of the code's actual identity.
-		var b strings.Builder
-		for i, c := range code {
-			if i > 0 && i%5 == 0 {
-				b.WriteByte('-')
-			}
-			b.WriteRune(c)
-		}
-		code = b.String()
-	}
-	if !claimCodeRe.MatchString(code) {
+	code, ok := normalizeClaimCode(req.Code)
+	if !ok {
 		mmoWriteError(w, http.StatusBadRequest, "invalid code format")
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.DB.BeginTx(ctx, nil)
-	if err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx,
-		`UPDATE game_claim_codes SET used_by_player_id = ?, used_at = CURRENT_TIMESTAMP
-		 WHERE code = ? AND game = ? AND used_by_player_id IS NULL`, pid, code, cfg.Slug)
-	if err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		// Same response whether the code never existed or was already claimed -- don't help an
-		// attacker distinguish "wrong guess" from "somebody else got there first."
+	out, err := h.applyClaimCode(r.Context(), cfg, pid, code)
+	if err == errClaimCodeUnavailable {
 		mmoWriteError(w, http.StatusBadRequest, "invalid or already-used code")
 		return
 	}
-	var ticketsGranted, founderFlag int
-	var tierGrant sql.NullString
-	if err := tx.QueryRowContext(ctx,
-		`SELECT tickets, founder_flag, tier FROM game_claim_codes WHERE code = ? AND game = ?`, code, cfg.Slug).
-		Scan(&ticketsGranted, &founderFlag, &tierGrant); err != nil {
+	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if ticketsGranted > 0 {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO game_player_tickets (player_id, game, tickets) VALUES (?, ?, ?)
-			 ON CONFLICT(player_id, game) DO UPDATE SET tickets = tickets + excluded.tickets`,
-			pid, cfg.Slug, ticketsGranted); err != nil {
-			mmoWriteError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-	}
-	if founderFlag != 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE players SET is_founder = 1 WHERE player_id = ?`, pid); err != nil {
-			mmoWriteError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		// S516: "Upon successful redemption, instantly trigger the refresh logic so their UI
-		// updates to Unlimited without requiring a game restart" -- rather than a separate
-		// refresh call, this response's own "tickets" field (read below, after this bump) already
-		// carries the final Unlimited balance back to the client in the same round-trip. GREATEST
-		// semantics (never lowers), same as the daily top-up itself, and idempotent on a re-run.
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO game_player_tickets (player_id, game, tickets, last_ticket_topup_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-			 ON CONFLICT(player_id, game) DO UPDATE SET
-			   tickets = MAX(tickets, excluded.tickets), last_ticket_topup_at = excluded.last_ticket_topup_at`,
-			pid, cfg.Slug, founderDailyCap); err != nil {
-			mmoWriteError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-	}
-	if tierGrant.Valid && tierGrant.String != "" {
-		// A tier grant (e.g. a Founder pack bumping tier_free -> tier_premium) needs a real
-		// tickets row to update the tier column on -- upsert the same way the tickets branch
-		// above does, so a code that ONLY grants a tier (0 tickets) still works for a
-		// brand-new player with no row yet.
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO game_player_tickets (player_id, game, tier) VALUES (?, ?, ?)
-			 ON CONFLICT(player_id, game) DO UPDATE SET tier = excluded.tier`,
-			pid, cfg.Slug, tierGrant.String); err != nil {
-			mmoWriteError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-	}
-	var balance int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT tickets FROM game_player_tickets WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&balance); err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "tickets_granted": ticketsGranted, "founder": founderFlag != 0, "tickets": balance,
-		"tier": tierGrant.String,
-	})
+	h.emitRedeemEvent(r.Context(), pid, out)
+	writeJSON(w, http.StatusOK, out.response())
 }
 
 func hasPerm(claims map[string]any, perm string) bool {

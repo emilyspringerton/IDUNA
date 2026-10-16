@@ -1315,6 +1315,11 @@ func main() {
 	// changes and stuff ... add it to the iduna unified logging we never started using that").
 	gameOnlineH := &handlers.GameOnlineHandler{DB: db, Keys: keys, Limiter: middleware.NewIPRateLimiter(30), EventLog: unifiedLog}
 	mux.Handle("/api/v1/games/", gameOnlineH)
+	// WOTAN's "Redeem a code" page and account overview (founder real-time 2026-10-16): the same claim-code
+	// logic as /api/v1/games/{game}/redeem, but reachable with the generic SSO token a signed-in WOTAN
+	// visitor holds, and it works out which game the code is for. See handlers/account_redeem.go.
+	mux.HandleFunc("/api/v1/redeem", gameOnlineH.ServeAccount)
+	mux.HandleFunc("/api/v1/me/entitlements", gameOnlineH.ServeAccount)
 
 	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
 	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:
