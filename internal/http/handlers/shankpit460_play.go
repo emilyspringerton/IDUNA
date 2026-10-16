@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,7 +42,7 @@ type Shankpit460Play struct {
 // NewShankpit460Play builds the matchmaker around the games handler's database and signing keys.
 func NewShankpit460Play(g *GameOnlineHandler) (*Shankpit460Play, error) {
 	p := &Shankpit460Play{game: g}
-	hub, err := shankpit460.NewHub(shankpit460.DefaultConfig(), p.resolve)
+	hub, err := shankpit460.NewHub(shankpit460ConfigFromEnv(), p.resolve)
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +53,23 @@ func NewShankpit460Play(g *GameOnlineHandler) (*Shankpit460Play, error) {
 		Handler:   p.serveConn,
 	}
 	return p, nil
+}
+
+// shankpit460ConfigFromEnv is the human-match format, 16 kills / six minutes, with test and ops knobs:
+// SHANKPIT460_KILL_LIMIT, SHANKPIT460_MATCH_SECONDS, SHANKPIT460_COUNTDOWN_SECONDS. A bad value is ignored.
+func shankpit460ConfigFromEnv() shankpit460.Config {
+	cfg := shankpit460.DefaultConfig()
+	if n, err := strconv.Atoi(os.Getenv("SHANKPIT460_KILL_LIMIT")); err == nil && n >= 1 && n <= 255 {
+		cfg.KillLimit = n
+	}
+	if n, err := strconv.Atoi(os.Getenv("SHANKPIT460_MATCH_SECONDS")); err == nil && n >= 10 && n <= 3600 {
+		cfg.Duration = time.Duration(n) * time.Second
+		cfg.LateJoinCutoff = cfg.Duration * 3 / 4
+	}
+	if n, err := strconv.Atoi(os.Getenv("SHANKPIT460_COUNTDOWN_SECONDS")); err == nil && n >= 1 && n <= 60 {
+		cfg.Countdown = time.Duration(n) * time.Second
+	}
+	return cfg
 }
 
 // resolve is the Hub's Resolver: bearer token -> the shankpit460 player it plays as.
