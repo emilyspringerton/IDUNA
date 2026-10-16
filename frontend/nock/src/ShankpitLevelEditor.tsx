@@ -2080,7 +2080,29 @@ export default function ShankpitLevelEditor() {
   // Viewport3D's own doc comment on the spawner mesh), so it isn't part of `draft`/persisted with
   // the level; it just resets to a sensible default on new/load.
   const [spawner, setSpawner] = useState(defaultSpawnerPos())
+  const saveRef = useRef<() => void>(() => undefined)
   const live = useLiveSession({
+    onBoxDel: (g) => {
+      // SHANKPIT's X: drop the root wall at that spot (the game sees the flattened export, so match by geometry)
+      setDraft((d) => {
+        let best = -1
+        let bestErr = 0.1
+        d.walls.forEach((w, i) => {
+          const err = Math.abs(w.x - g.x) + Math.abs(w.y - g.y) + Math.abs(w.z - g.z) + Math.abs(w.sx - g.sx) + Math.abs(w.sy - g.sy) + Math.abs(w.sz - g.sz)
+          if (err < bestErr) { bestErr = err; best = i }
+        })
+        if (best < 0) return d
+        const gone = d.walls[best].id
+        return { ...d, walls: d.walls.filter((_, i) => i !== best), doors: d.doors.filter((dr) => dr.wall_id !== gone) }
+      })
+      setSelected(null)
+      setDirty(true)
+    },
+    onBoxAdd: (g) => {
+      setDraft((d) => ({ ...d, walls: [...d.walls, { ...aDefaultWall(nextWallId(d.walls), g), sx: g.sx, sy: g.sy, sz: g.sz }] }))
+      setDirty(true)
+    },
+    onSaveRequest: () => saveRef.current(),
     levelId: activeId,
     levelName: draft.name,
     spawner,
@@ -2523,6 +2545,8 @@ export default function ShankpitLevelEditor() {
       setError(String(err))
     }
   }
+
+  saveRef.current = () => void save()
 
   const doClone = async () => {
     if (activeId === null || !newName) return

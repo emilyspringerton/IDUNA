@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const BASE = '/api/v1/shankpit-edit-sessions'
 
 export type Vec3 = { x: number; y: number; z: number }
+export type BoxGeom = { x: number; y: number; z: number; sx: number; sy: number; sz: number }
 export type SpawnMode = 'spawner' | 'crosshair'
 type EditEvent = { seq: number; source: string; kind: string; data?: Record<string, number | string> }
 type PollResponse = {
@@ -39,6 +40,12 @@ export function useLiveSession(opts: {
   /** The editor's current working level in save-body shape (unsaved edits included). Pushed to the session
    *  (debounced) so a SHANKPIT player joining loads the level as it is being edited, not as last saved. */
   draft?: Record<string, unknown>
+  /** SHANKPIT deleted / placed a box in the live editor (X / B). Geometry, not an id: the game's boxes are the
+   *  flattened export, so the editor matches them against its own walls by position and size. */
+  onBoxDel?: (g: BoxGeom) => void
+  onBoxAdd?: (g: BoxGeom) => void
+  /** SHANKPIT pressed F5: persist the working level (the same as this editor's own Save). */
+  onSaveRequest?: () => void
 }): LiveSession {
   const [id, setId] = useState<string | null>(null)
   const [status, setStatus] = useState('not connected')
@@ -59,11 +66,20 @@ export function useLiveSession(opts: {
     }).catch(() => undefined)
   }, [])
 
-  const apply = useCallback((state: PollResponse['state'], events: EditEvent[]) => {
+  const apply = useCallback((state: PollResponse['state'], events: EditEvent[], replay = false) => {
     if (state?.spawn_mode) setSpawnModeState(state.spawn_mode)
     const stream: EditEvent[] = events.filter((e) => e.source === 'shankpit')
     let av = state?.avatar
     for (const e of stream) {
+      // edits already in the log when we joined are history (our draft is the authority for those); only live ones apply
+      if (!replay && e.data && (e.kind === 'box_del' || e.kind === 'box_add')) {
+        const d = e.data as unknown as BoxGeom
+        if (typeof d.x === 'number' && typeof d.sx === 'number') {
+          if (e.kind === 'box_del') optsRef.current.onBoxDel?.(d)
+          else optsRef.current.onBoxAdd?.(d)
+        }
+      }
+      if (!replay && e.kind === 'save') optsRef.current.onSaveRequest?.()
       if (e.kind === 'avatar' && e.data) av = e.data as unknown as Vec3 & { yaw?: number }
       if (e.kind === 'spawn_mode' && e.data) setSpawnModeState(e.data.mode as SpawnMode)
     }
@@ -98,7 +114,7 @@ export function useLiveSession(opts: {
           if (!r.ok) throw new Error(String(r.status))
           const body = (await r.json()) as PollResponse
           if (since === 0) apply(body.state, [])
-          apply(undefined, body.events)
+          apply(undefined, body.events, since === 0)
           since = body.seq
           fails = 0
           setStatus('live')

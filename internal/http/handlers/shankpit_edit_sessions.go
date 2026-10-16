@@ -51,6 +51,7 @@ const (
 //	box_move    {id,x,y,z}             a wall box moved
 //	box_size    {id,sx,sy,sz}          a wall box was resized
 //	box_del     {id}                   a wall box was deleted
+//	save        {}                     SHANKPIT asked for the working level to be saved (NOCK performs the save)
 //	hello       {client:"nock"|"shankpit"}  presence
 //	level       {rev}                  the NOCK editor's working (possibly unsaved) level changed; fetch GET {id}/level
 //
@@ -59,7 +60,7 @@ const (
 var editEventKinds = map[string]bool{
 	"spawner": true, "avatar": true, "spawn_mode": true, "teleport": true,
 	"box_add": true, "box_move": true, "box_size": true, "box_del": true, "hello": true,
-	"level": true,
+	"level": true, "save": true,
 }
 
 type editEvent struct {

@@ -1,6 +1,9 @@
 # IDUNA Changelog
 
 ## 2026-10-16
+- feat(nock): live edit sessions now sync SHANKPIT -> NOCK. A box deleted (X) or placed (B) in the native live editor is applied to the NOCK draft (matched by geometry, since the game sees the flattened export), and F5 in the game asks NOCK to save via a new `save` session event. Handler test covers the new events; the browser path is type-checked, not driven.
+
+## 2026-10-16
 
 - feat(nock): **per-material mass density** (`shankpit_materials.density`, kg/m^3, migration `202610160005_shankpit_materials_density.sql`, seeded brick 1900 / concrete 2400 / wood 600 / glass 2500 / metal 7800; 0 = unset, the game uses its own default). Store/API/level export carry it (`MaterialExport.density`, omitted when 0); `PUT` with `density` omitted keeps the stored value; validated to [0, 30000]. NOCK Materials screen has a Density column + field (dist rebuilt). Founder real-time: "calculate mass of the different materials, have it configurable on the NOCK material". 2 new tests. Consumed by SHANKPIT's destructible-brick rigid bodies.
 - feat(chat): `/api/v1/chat/messages` accepts channel `shankpit` + sender_source `shankpit_client` so SHANKPIT clients post directly under their own player login (founder real-time: SHANKPIT GFD phone <-> GFD MUD global chat). 1 new test.

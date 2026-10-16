@@ -36,13 +36,15 @@ func TestEditSessions_CreatePostPoll(t *testing.T) {
 		`{"source":"shankpit","kind":"avatar","data":{"x":4,"y":5,"z":6,"yaw":0,"pitch":0}}`,
 		`{"source":"nock","kind":"spawn_mode","data":{"mode":"crosshair"}}`,
 		`{"source":"shankpit","kind":"box_add","data":{"id":9,"x":0,"y":0,"z":0,"sx":2,"sy":2,"sz":2}}`,
+		`{"source":"shankpit","kind":"box_del","data":{"id":-1,"index":3,"x":0,"y":0,"z":0,"sx":2,"sy":2,"sz":2}}`,
+		`{"source":"shankpit","kind":"save","data":{}}`,
 	} {
 		if code, _ := editReq(t, h, http.MethodPost, base+"/events", ev); code != http.StatusCreated {
 			t.Fatalf("post %s: %d", ev, code)
 		}
 	}
 	code, snap := editReq(t, h, http.MethodGet, base+"?since=0", "")
-	if code != 200 || int(snap["seq"].(float64)) != 4 || len(snap["events"].([]any)) != 4 {
+	if code != 200 || int(snap["seq"].(float64)) != 6 || len(snap["events"].([]any)) != 6 {
 		t.Fatalf("poll since=0: %d %v", code, snap)
 	}
 	st := snap["state"].(map[string]any)
@@ -52,8 +54,8 @@ func TestEditSessions_CreatePostPoll(t *testing.T) {
 	// a late poller only sees what is new
 	_, snap = editReq(t, h, http.MethodGet, base+"?since=3", "")
 	evs := snap["events"].([]any)
-	if len(evs) != 1 || evs[0].(map[string]any)["kind"] != "box_add" {
-		t.Fatalf("since=3 should return only the box_add: %v", evs)
+	if len(evs) != 3 || evs[0].(map[string]any)["kind"] != "box_add" {
+		t.Fatalf("since=3 should return box_add, box_del, save: %v", evs)
 	}
 }
 
