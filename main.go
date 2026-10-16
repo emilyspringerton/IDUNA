@@ -1320,6 +1320,15 @@ func main() {
 	// visitor holds, and it works out which game the code is for. See handlers/account_redeem.go.
 	mux.HandleFunc("/api/v1/redeem", gameOnlineH.ServeAccount)
 	mux.HandleFunc("/api/v1/me/entitlements", gameOnlineH.ServeAccount)
+	// shankpit-460 web (WOTAN/shankpit-460/, founder real-time 2026-10-16): the human lobby. The browser plays a bot match
+	// locally and keeps one WebSocket here, asking to be paired with another human into a first-to-16 free-for-all.
+	// Identity comes through the games handler (ssoGamePlayer); see handlers/shankpit460_play.go and internal/shankpit460.
+	shankpit460Play, err := handlers.NewShankpit460Play(gameOnlineH)
+	if err != nil {
+		log.Fatalf("shankpit-460 matchmaker: %v", err)
+	}
+	mux.Handle("/api/v1/shankpit460/play", shankpit460Play)
+	mux.Handle("/api/v1/shankpit460/status", shankpit460Play)
 
 	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
 	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:

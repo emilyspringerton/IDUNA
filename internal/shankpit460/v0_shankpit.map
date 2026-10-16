@@ -1,0 +1,73 @@
+# v0_shankpit.map — SHANKPIT-460 launch deathmatch map (v0)
+#
+# First map authored in the external map format (packages/common/map_loader.h).
+# Brief (founder, 2026-07-19): a base at each end, a base in the middle with
+# the rocket launcher spawn on top, roughly-but-NOT-perfectly symmetrical
+# (asymmetry is intentional), rocks scattered at the sides and ends.
+# Ships as deathmatch-only, but the geometry is deliberately CTF-plausible:
+# the end-base pedestals are future flag stands, the mid tower is the
+# contested power position.
+#
+# Served under SCENE_STADIUM: envelope is |x|,|z| <= 420, kill plane y=-80.
+# Units: engine units (player is ~6.5 tall, tap-jump clears ~6, held ~18).
+# NOTE: the stadium center portal (use-key, radius 16 at 0,0) overlaps the
+# mid tower footprint — it only fires on an explicit USE press, so it stays.
+
+# --- floor + perimeter (index 0 MUST be the floor slab; consumers skip it) ---
+box 0 -2 0 800 4 800
+box 400 100 0 10 200 800
+box -400 100 0 10 200 800
+box 0 100 400 800 200 10
+box 0 100 -400 800 200 10
+
+# --- north base (z negative) ---
+box 0 3 -330 64 6 44          # main platform, top y=6
+box 0 1.5 -300 24 3 16        # entry step
+box 0 11 -356 44 10 8         # back wall / rear cover
+box 0 7 -338 10 2 10          # pedestal — future CTF flag stand
+box -40 8 -340 12 16 12       # west corner tower
+box 40 8 -340 12 16 12        # east corner tower
+
+# --- south base (z positive) — similar, deliberately not identical ---
+box 6 3 332 60 6 48           # main platform, top y=6
+box 4 1.5 300 28 3 14         # entry step
+box 6 11 358 48 10 8          # back wall / rear cover
+box 6 7 340 10 2 10           # pedestal — future CTF flag stand
+box -36 8 342 12 16 12        # west corner tower
+box 46 9 344 14 18 10         # east corner tower (taller + offset: asymmetry)
+
+# --- mid base: tiered tower, rocket launcher on the crown ---
+box 2 2 -4 48 4 48            # base slab, top y=4
+box -2 6.5 0 32 5 32          # mid tier, top y=9
+box 2 11.5 -4 18 3 18         # crown, top y=13
+box 30 2.5 -4 10 5 10         # corner step / cover
+box -28 2.5 10 10 5 10        # corner step / cover (offset: asymmetry)
+poi rocket_launcher 2 13 -4   # ON TOP of the mid base. No pickup system
+                              # exists in the live game yet — this marks the
+                              # spot for when one does.
+
+# --- rocks: sides and ends, cover / sightline breakers, asymmetric ---
+box -180 4 -120 16 8 14
+box -240 5 40 18 10 16
+box -150 3 150 12 6 12
+box -300 6 -220 20 12 18
+box -90 4 60 14 8 12
+box 170 5 -90 18 10 15
+box 250 4 120 16 8 14
+box 140 3 -190 12 6 10
+box 310 6 210 20 12 16
+box 100 4 -40 13 7 12
+box -140 5 -310 16 10 14
+box 150 4 -290 14 8 12
+box -160 4 300 15 8 13
+box 120 5 320 17 10 15
+
+# --- spawns (round-robin by slot; DM only — team spawn zones are future work) ---
+spawn 0 6.5 -330
+spawn -20 6.5 -324
+spawn 20 6.5 -324
+spawn 6 6.5 332
+spawn -14 6.5 326
+spawn 26 6.5 326
+spawn -260 0.5 -40
+spawn 270 0.5 60

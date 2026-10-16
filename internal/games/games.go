@@ -73,6 +73,14 @@ var Registry = map[string]Config{
 		Slug:     "brawlpit",
 		PlayPerm: "brawlpit.play",
 	},
+	// shankpit-460 web (WOTAN/shankpit-460, 2026-10-16): the browser build of the SHANKPIT-460 deathmatch. PlayPerm
+	// only, same narrow cut as big_o/brawlpit: the human lobby (internal/shankpit460, GET /api/v1/shankpit460/play)
+	// identifies players through the generic account path (ssoGamePlayer), so this row exists for the per-game
+	// player row, guest accounts and, in the stats pass, match results -- not for a game server of its own.
+	"shankpit460": {
+		Slug:     "shankpit460",
+		PlayPerm: "shankpit460.play",
+	},
 	// D2/NORTHSTAR.md ("server-authoritative 1v1"): its own M2M agent identity, never reusing
 	// DEADWEIGHT's or ECOWAR's (ECOWAR-BOTS's own precedent) -- dw2_server reports results as
 	// D2-SERVER. Renamed from "deadweight_2" (founder real-time: "just call it D2, disambiguate
