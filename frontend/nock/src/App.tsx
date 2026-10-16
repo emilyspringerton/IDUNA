@@ -1294,6 +1294,69 @@ function Animations() {
   )
 }
 
+
+// Backup / export (founder real-time, 2026-10-16: "an exporter that exports to a single archive with
+// check boxes for the different data sources"). Lists the sources from the server, downloads one zip.
+function BackupDialog({ onClose }: { onClose: () => void }) {
+  const [sources, setSources] = useState<{ id: string; label: string; group: string; rows: number }[] | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    fetch('/admin/nock/api/backup?list=1', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
+      .then((l: { id: string; label: string; group: string; rows: number }[]) => {
+        setSources(l)
+        setPicked(new Set(l.map((x) => x.id)))
+      })
+      .catch((e) => setErr(String(e)))
+  }, [])
+  const toggle = (id: string) =>
+    setPicked((p) => {
+      const n = new Set(p)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  const groups = [...new Set((sources ?? []).map((s) => s.group))]
+  return (
+    <div className="backup-overlay" onClick={onClose}>
+      <div className="backup-dialog" onClick={(e) => e.stopPropagation()}>
+        <h2>Export / backup</h2>
+        <p className="hint">Downloads one .zip. The database snapshot is a complete copy you can restore; the table files are readable JSON.</p>
+        {err && <p className="error">{err}</p>}
+        {sources === null && !err && <p>Loading…</p>}
+        {sources && sources.length === 0 && <p>Nothing to export (the server is not running on SQLite).</p>}
+        {groups.map((g) => (
+          <fieldset key={g}>
+            <legend>{g}</legend>
+            {sources!.filter((s) => s.group === g).map((s) => (
+              <label key={s.id} style={{ display: 'block' }}>
+                <input type="checkbox" checked={picked.has(s.id)} onChange={() => toggle(s.id)} /> {s.label}
+                {s.rows >= 0 && <span className="hint"> ({s.rows})</span>}
+              </label>
+            ))}
+          </fieldset>
+        ))}
+        <div className="backup-actions">
+          <button type="button" onClick={() => setPicked(new Set((sources ?? []).map((s) => s.id)))}>All</button>
+          <button type="button" onClick={() => setPicked(new Set())}>None</button>
+          <button
+            type="button"
+            className="primary"
+            disabled={picked.size === 0}
+            onClick={() => {
+              window.location.href = `/admin/nock/api/backup?sources=${encodeURIComponent([...picked].join(','))}`
+            }}
+          >
+            Download .zip
+          </button>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 type Tab = 'projects' | 'textures' | 'animations' | 'robots' | 'door-scripts' | 'brawlpit' | 'ai-opponents' | 'shankpit' | 'shankpit-ai-opponents' | 'shankpit-materials' | 'shankpit-widgets' | 'deadweight-ai-opponents' | 'sprays' | 'video' | 'sounds' | 'booth' | 'generators' | 'code'
 const VALID_TABS: Tab[] = ['projects', 'textures', 'animations', 'robots', 'door-scripts', 'brawlpit', 'ai-opponents', 'shankpit', 'shankpit-ai-opponents', 'shankpit-materials', 'shankpit-widgets', 'deadweight-ai-opponents', 'sprays', 'video', 'sounds', 'booth', 'generators', 'code']
 
@@ -1373,6 +1436,7 @@ export default function App() {
   const { projects, refresh } = useProjects()
   const [active, setActive] = useState<string | null>(null)
   const [tab, setTabState] = useState<Tab>(tabFromHash)
+  const [backupOpen, setBackupOpen] = useState(false)
   const { theme, toggle: toggleTheme } = useTheme()
   const lightTheme = useLightTheme()
 
@@ -1400,6 +1464,9 @@ export default function App() {
               <p className="nkh__sub">Texture generator &amp; manager — SHANKPIT texture tools, built on ImageMagick + PARENA</p>
             </div>
           </div>
+          <button type="button" className="nkh__theme theme-toggle" onClick={() => setBackupOpen(true)} title="Download a zip backup of NOCK data and the IDUNA database">
+            Export / backup
+          </button>
           <button type="button" className="nkh__theme theme-toggle" onClick={toggleTheme} title="Toggle light/dark theme">
             {theme === 'dracula' ? 'Light mode' : theme === 'cupcake' ? 'Dark mode' : 'Toggle theme'}
           </button>
@@ -1427,6 +1494,7 @@ export default function App() {
         </nav>
       </header>
 
+      {backupOpen && <BackupDialog onClose={() => setBackupOpen(false)} />}
       <TabErrorBoundary key={tab}>
       {tab === 'generators' ? (
         <div className="layout-single">

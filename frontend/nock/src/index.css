@@ -69,3 +69,8 @@ textarea {
 .error {
   @apply text-sm text-error;
 }
+
+.backup-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.backup-dialog{background:var(--bg,#1b1f27);color:inherit;border:1px solid rgba(128,128,128,.4);border-radius:10px;padding:16px 20px;max-width:560px;width:100%;max-height:85vh;overflow:auto}
+.backup-dialog fieldset{margin:10px 0;border:1px solid rgba(128,128,128,.3);border-radius:6px}
+.backup-actions{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}

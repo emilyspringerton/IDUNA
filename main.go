@@ -878,6 +878,10 @@ func main() {
 	mux.Handle("/admin/nock/api/shankpit-materials", shankpitMaterialsProtected)
 	mux.Handle("/admin/nock/api/shankpit-materials/", shankpitMaterialsProtected)
 
+	// Full NOCK/IDUNA backup download (zip: SQLite snapshot + per-table JSON), admin only.
+	nockBackupH := &handlers.NockBackupHandler{DB: db, SQLite: dsn == ""}
+	mux.Handle("/admin/nock/api/backup", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(nockBackupH)))
+
 	shankpitStylesH := &handlers.ShankpitStylesHandler{Store: &shankpit.StyleStore{DB: db}}
 	shankpitStylesProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitStylesH))
 	mux.Handle("/admin/nock/api/shankpit-styles", shankpitStylesProtected)
