@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-16
+- feat(nock): **cube styles** (InDesign-style). A style bundles material + colour + friction; set one on a cube (inspector "Style" dropdown), edit it ("Update style" pushes the cube's look into the style) and every cube using it updates. A style is local to its level or, with the "Global style" checkbox, shared by every level. Clone → local / Clone → global, and "Fork for this level" moves every cube using a global style onto a local copy. Server: `shankpit_cube_styles` table (migration `202610160006`), `/admin/nock/api/shankpit-styles` CRUD, `Wall.style_id`; `LevelStore.GetLevel` overlays the current style onto styled cubes so global edits reach other levels and the game export with no re-save. Go test covers overlay/propagation/scopes. Browser UI type-checked only. Also rebuilt `frontend/nock/dist`, which the previous commit (alt-drag copy for embedded levels, Tab cycling, cube Rotate 90) had left stale.
 - feat(nock): level editor — embedded levels/widgets can now be dragged in Object mode (respects Constrain Y); Shift while dragging locks movement to one of the block's own axes, and Shift+Alt-drag copy also snaps to whole block-lengths so copies sit flush (square layouts). tsc + build only, not driven in a browser.
 
 - feat(nock): app header redesigned to match the design export (brand mark, theme toggle, TOOLS row, GAMES row with BRAWLPIT/SHANKPIT/DEADWEIGHT tab groups); same tabs and routes. tsc + build only, not seen in a browser.

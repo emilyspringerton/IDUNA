@@ -878,6 +878,11 @@ func main() {
 	mux.Handle("/admin/nock/api/shankpit-materials", shankpitMaterialsProtected)
 	mux.Handle("/admin/nock/api/shankpit-materials/", shankpitMaterialsProtected)
 
+	shankpitStylesH := &handlers.ShankpitStylesHandler{Store: &shankpit.StyleStore{DB: db}}
+	shankpitStylesProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(shankpitStylesH))
+	mux.Handle("/admin/nock/api/shankpit-styles", shankpitStylesProtected)
+	mux.Handle("/admin/nock/api/shankpit-styles/", shankpitStylesProtected)
+
 	shankpitMaterialsPublicH := &handlers.ShankpitMaterialsPublicHandler{Store: shankpitMaterialStore}
 	mux.Handle("/api/v1/shankpit-materials", shankpitMaterialsPublicH)
 

@@ -71,6 +71,9 @@ type Wall struct {
 	// as a wedge whose slope rises toward the cube's local +Z (aim it with rot_y). Walls with Ramp or a
 	// non-zero rotation take the native client's oriented-box path (packages/common/obb.h).
 	Ramp bool `json:"ramp,omitempty"`
+	// StyleID -- the cube style (style_store.go) this cube follows; 0 = none. GetLevel overlays the
+	// style's current material/colour/friction, so editing a style restyles every cube using it.
+	StyleID int64 `json:"style_id,omitempty"`
 }
 
 // eulerMat builds the 3x3 rotation matrix for three.js 'XYZ' Euler degrees (R = Rx*Ry*Rz) and
@@ -863,7 +866,12 @@ func (s *LevelStore) GetLevel(ctx context.Context, id int64) (*Level, error) {
 	row := s.DB.QueryRowContext(ctx,
 		`SELECT id, name, width, height, depth, ground_plane_enabled, ground_plane_squares, enclosed, floor_tint_json, brick_damage_json, walls_json, objects_json, spawners_json, doors_json, nav_nodes_json, characters_json, level_exits_json, next_level_id, is_story_start, is_default_queue, collection, is_zombie_default, created_at, updated_at
 		 FROM shankpit_levels WHERE id = ?`, id)
-	return scanLevel(row)
+	l, err := scanLevel(row)
+	if err != nil {
+		return nil, err
+	}
+	s.applyStyles(ctx, l)
+	return l, nil
 }
 
 func scanLevel(row *sql.Row) (*Level, error) {

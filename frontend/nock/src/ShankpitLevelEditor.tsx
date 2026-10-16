@@ -14,6 +14,8 @@ import {
   buggySpawnTile,
   shankpitLevels,
   shankpitMaterials,
+  shankpitStyles,
+  type ShankpitCubeStyle,
   shankpitWidgets,
   textures,
   type DoorScriptSummary,
@@ -1655,6 +1657,130 @@ function Viewport3D({
   return <div ref={containerRef} className="shankpit-viewport" />
 }
 
+// ---- Cube styles (founder real-time, 2026-10-16: "cube styles like indesign ... set the style on a
+// cube, update the style and all the cubes update ... a checkbox to turn it into a global style ...
+// clone styles so you can fork them into local styles or new global styles"). A style bundles
+// material + colour + friction. The server overlays a style's current values onto every cube that
+// points at it (style_id), so a global style edit also reaches other levels the next time they load.
+const STYLE_EPS = 1e-6
+function styleMatches(w: ShankpitWall, st: ShankpitCubeStyle): boolean {
+  return (
+    (w.material || 'brick') === st.material &&
+    Math.abs(w.r - st.r) < STYLE_EPS && Math.abs(w.g - st.g) < STYLE_EPS && Math.abs(w.b - st.b) < STYLE_EPS &&
+    Math.abs(w.friction - st.friction) < STYLE_EPS
+  )
+}
+function applyStyleTo(w: ShankpitWall, st: ShankpitCubeStyle): ShankpitWall {
+  return { ...w, material: st.material, r: st.r, g: st.g, b: st.b, friction: st.friction, style_id: st.id }
+}
+
+export interface StylePanelActions {
+  styles: ShankpitCubeStyle[]
+  levelSaved: boolean
+  onApply: (styleId: number | null) => void
+  onNewFromCube: (name: string, global: boolean) => void
+  onUpdateFromCube: (st: ShankpitCubeStyle) => void
+  onReset: (st: ShankpitCubeStyle) => void
+  onClone: (st: ShankpitCubeStyle, global: boolean, moveAll: boolean, name: string) => void
+  onSetGlobal: (st: ShankpitCubeStyle, global: boolean) => void
+  onDelete: (st: ShankpitCubeStyle) => void
+}
+
+function StylePanel({ wall, a }: { wall: ShankpitWall; a: StylePanelActions }) {
+  const cur = a.styles.find((s) => s.id === wall.style_id) ?? null
+  const modified = cur ? !styleMatches(wall, cur) : false
+  const globals = a.styles.filter((s) => s.level_id === null)
+  const locals = a.styles.filter((s) => s.level_id !== null)
+  const ask = (label: string, def: string) => {
+    const n = window.prompt(label, def)
+    return n && n.trim() ? n.trim() : null
+  }
+  return (
+    <div className="style-panel">
+      <label>
+        Style{' '}
+        <select value={cur ? cur.id : ''} onChange={(e) => a.onApply(e.target.value === '' ? null : Number(e.target.value))}>
+          <option value="">(no style)</option>
+          {locals.length > 0 && (
+            <optgroup label="This level">
+              {locals.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </optgroup>
+          )}
+          {globals.length > 0 && (
+            <optgroup label="Global">
+              {globals.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </optgroup>
+          )}
+        </select>
+      </label>
+      {cur && (
+        <>
+          <label title="A global style is shared by every level; a local style belongs to this level only.">
+            <input
+              type="checkbox"
+              checked={cur.level_id === null}
+              disabled={cur.level_id === null && !a.levelSaved}
+              onChange={(e) => a.onSetGlobal(cur, e.target.checked)}
+            />{' '}
+            Global style
+          </label>
+          {modified && <p className="hint">This cube differs from “{cur.name}”.</p>}
+          <div className="mode-toggle">
+            <button type="button" disabled={!modified} onClick={() => a.onUpdateFromCube(cur)} title="Push this cube's material, colour and friction into the style — every cube using it updates.">
+              Update style
+            </button>
+            <button type="button" disabled={!modified} onClick={() => a.onReset(cur)} title="Put this cube back to the style's values.">
+              Reset cube
+            </button>
+          </div>
+          <div className="mode-toggle">
+            <button
+              type="button"
+              disabled={!a.levelSaved}
+              onClick={() => { const n = ask('Name for the local copy', `${cur.name} copy`); if (n) a.onClone(cur, false, false, n) }}
+              title="Copy this style into a new local style and put this cube on the copy."
+            >
+              Clone → local
+            </button>
+            <button
+              type="button"
+              onClick={() => { const n = ask('Name for the global copy', `${cur.name} copy`); if (n) a.onClone(cur, true, false, n) }}
+              title="Copy this style into a new GLOBAL style and put this cube on the copy."
+            >
+              Clone → global
+            </button>
+          </div>
+          {cur.level_id === null && (
+            <button
+              type="button"
+              disabled={!a.levelSaved}
+              onClick={() => { const n = ask('Name for the local fork', `${cur.name} (this level)`); if (n) a.onClone(cur, false, true, n) }}
+              title="Fork this global style into a local one and move EVERY cube in this level that uses it onto the fork — edit freely without touching other levels."
+            >
+              Fork for this level (all cubes)
+            </button>
+          )}
+          <button className="danger" type="button" onClick={() => a.onDelete(cur)}>Delete style</button>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          const n = ask('Name for the new style (taken from this cube)', wall.name || 'New style')
+          if (n) a.onNewFromCube(n, false)
+        }}
+        disabled={!a.levelSaved}
+        title="Make a style from this cube's current material, colour and friction (local to this level)."
+      >
+        + Style from this cube
+      </button>
+      <button type="button" onClick={() => { const n = ask('Name for the new GLOBAL style (taken from this cube)', wall.name || 'New style'); if (n) a.onNewFromCube(n, true) }} title="Same, but global — usable in every level.">
+        + Global style from this cube
+      </button>
+    </div>
+  )
+}
+
 // Exported (S482) so ShankpitWidgets.tsx can reuse it directly -- a widget's own wall editing
 // (dimensions/color/friction/material/door) is identical to a level's, no reason to fork it.
 export function WallInspector({
@@ -1667,6 +1793,7 @@ export function WallInspector({
   onDoorChange,
   isDrexit,
   onToggleDrexit,
+  styleSlot,
 }: {
   wall: ShankpitWall
   onChange: (w: ShankpitWall) => void
@@ -1680,6 +1807,8 @@ export function WallInspector({
   // ShankpitWidgets.tsx's own reuse of this same inspector simply omits these two props.
   isDrexit?: boolean
   onToggleDrexit?: () => void
+  // cube styles (level editor only; widgets omit it)
+  styleSlot?: React.ReactNode
 }) {
   const num = (v: string) => (v === '' || v === '-' ? 0 : Number(v))
   const field = (label: string, key: keyof ShankpitWall, opts: { min?: number; step?: number } = {}) => (
@@ -1717,6 +1846,7 @@ export function WallInspector({
           ))}
         </select>
       </label>
+      {styleSlot}
       {field('X', 'x')}
       {field('Y', 'y')}
       {field('Z', 'z')}
@@ -2217,6 +2347,7 @@ function usePopover() {
 export default function ShankpitLevelEditor() {
   const { list, zombieList, refresh } = useLevelList()
   const { materials } = useMaterialList()
+  const [cubeStyles, setCubeStyles] = useState<ShankpitCubeStyle[]>([])
   const { scripts: doorScriptList } = useDoorScriptList()
   const [activeId, setActiveId] = useState<number | null>(null)
   // enclosed (S493, founder real-time: "theres not much difference between having lights on and
@@ -2799,6 +2930,73 @@ export default function ShankpitLevelEditor() {
   }
 
   const selectedWall = selected !== null ? draft.walls.find((w) => w.id === selected) ?? null : null
+
+  // ---- cube styles: load the global + this level's local styles, and the actions StylePanel calls ----
+  const refreshStyles = useCallback(() => {
+    shankpitStyles.list(activeId).then(setCubeStyles).catch(() => setCubeStyles([]))
+  }, [activeId])
+  useEffect(() => {
+    refreshStyles()
+  }, [refreshStyles])
+  const styleAct = async (fn: () => Promise<void>) => {
+    try {
+      setError(null)
+      await fn()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+  const setWallsWhere = (pred: (w: ShankpitWall) => boolean, map: (w: ShankpitWall) => ShankpitWall) => {
+    pushHistory()
+    setWalls(draft.walls.map((w) => (pred(w) ? map(w) : w)))
+  }
+  const stylePanelFor = (wall: ShankpitWall): StylePanelActions => {
+    const fromWall = (name: string, global: boolean) => ({
+      name, level_id: global ? null : activeId, material: wall.material || 'brick', r: wall.r, g: wall.g, b: wall.b, friction: wall.friction,
+    })
+    return {
+      styles: cubeStyles,
+      levelSaved: activeId !== null,
+      onApply: (id) => {
+        const st = cubeStyles.find((c) => c.id === id)
+        setWallsWhere((w) => w.id === wall.id, (w) => (st ? applyStyleTo(w, st) : { ...w, style_id: 0 }))
+      },
+      onNewFromCube: (name, global) =>
+        styleAct(async () => {
+          const st = await shankpitStyles.create(fromWall(name, global))
+          setCubeStyles((l) => [...l, st])
+          setWallsWhere((w) => w.id === wall.id, (w) => ({ ...w, style_id: st.id }))
+        }),
+      onUpdateFromCube: (cur) =>
+        styleAct(async () => {
+          const st = await shankpitStyles.update({ ...cur, material: wall.material || 'brick', r: wall.r, g: wall.g, b: wall.b, friction: wall.friction })
+          setCubeStyles((l) => l.map((c) => (c.id === st.id ? st : c)))
+          setWallsWhere((w) => w.style_id === st.id, (w) => applyStyleTo(w, st))
+        }),
+      onReset: (cur) => setWallsWhere((w) => w.id === wall.id, (w) => applyStyleTo(w, cur)),
+      onClone: (cur, global, moveAll, name) =>
+        styleAct(async () => {
+          const st = await shankpitStyles.create({ ...cur, name, level_id: global ? null : activeId })
+          setCubeStyles((l) => [...l, st])
+          setWallsWhere((w) => (moveAll ? w.style_id === cur.id : w.id === wall.id), (w) => applyStyleTo(w, st))
+        }),
+      onSetGlobal: (cur, global) => {
+        if (!global && !window.confirm(`Make “${cur.name}” local to this level? Other levels using it will keep their last saved look but stop following it.`)) return
+        void styleAct(async () => {
+          const st = await shankpitStyles.update({ ...cur, level_id: global ? null : activeId })
+          setCubeStyles((l) => l.map((c) => (c.id === st.id ? st : c)))
+        })
+      },
+      onDelete: (cur) => {
+        if (!window.confirm(`Delete style “${cur.name}”? Cubes using it keep their current look.`)) return
+        void styleAct(async () => {
+          await shankpitStyles.remove(cur.id)
+          setCubeStyles((l) => l.filter((c) => c.id !== cur.id))
+          setWallsWhere((w) => w.style_id === cur.id, (w) => ({ ...w, style_id: 0 }))
+        })
+      },
+    }
+  }
   const selectedSpawner = selectedSpawnPoint !== null ? draft.spawners.find((s) => s.id === selectedSpawnPoint) ?? null : null
 
   const light = useLightTheme()
@@ -3157,6 +3355,7 @@ export default function ShankpitLevelEditor() {
                   }}
                   onDelete={deleteSelected}
                   materials={materials}
+                  styleSlot={<StylePanel wall={selectedWall} a={stylePanelFor(selectedWall)} />}
                   door={draft.doors.find((d) => d.wall_id === selectedWall.id) ?? null}
                   doorScriptList={doorScriptList}
                   onDoorChange={(scriptId) => setWallDoor(selectedWall.id, scriptId)}

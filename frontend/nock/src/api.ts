@@ -525,6 +525,42 @@ export interface ShankpitWall {
   // cube behind the scenes") -- data stays a cube; the game renders/collides it as a wedge that
   // rises toward the cube's local +Z (aim with rotation).
   ramp?: boolean
+  // style_id -- the cube style this cube follows (0/absent = none). The server overlays the
+  // style's current material/colour/friction on load, so editing a style restyles every cube using it.
+  style_id?: number
+}
+
+// ShankpitCubeStyle mirrors IDUNA/internal/shankpit.CubeStyle. level_id null = a GLOBAL style (any
+// level can use it); otherwise a LOCAL style that belongs to that one level.
+export interface ShankpitCubeStyle {
+  id: number
+  name: string
+  level_id: number | null
+  material: string
+  r: number
+  g: number
+  b: number
+  friction: number
+}
+
+const SHANKPIT_STYLES_BASE = '/admin/nock/api/shankpit-styles'
+
+async function styreq<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = opts.body ? { 'Content-Type': 'application/json' } : {}
+  const res = await fetch(`${SHANKPIT_STYLES_BASE}${path}`, { credentials: 'include', ...opts, headers })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const shankpitStyles = {
+  list: (levelId: number | null) => styreq<ShankpitCubeStyle[]>(levelId ? `?level_id=${levelId}` : ''),
+  create: (st: Omit<ShankpitCubeStyle, 'id'>) => styreq<ShankpitCubeStyle>('', { method: 'POST', body: JSON.stringify(st) }),
+  update: (st: ShankpitCubeStyle) => styreq<ShankpitCubeStyle>(`/${st.id}`, { method: 'PUT', body: JSON.stringify(st) }),
+  remove: (id: number) => styreq<void>(`/${id}`, { method: 'DELETE' }),
 }
 
 // buggySpawnTile (#464/#467) -- a buggy spawn is an ordinary thin wall NAMED buggy_spawn (facing yaw 0)
