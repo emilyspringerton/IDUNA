@@ -2,6 +2,7 @@
 
 ## 2026-10-16
 
+- feat(nock): app header redesigned to match the design export (brand mark, theme toggle, TOOLS row, GAMES row with BRAWLPIT/SHANKPIT/DEADWEIGHT tab groups); same tabs and routes. tsc + build only, not seen in a browser.
 - feat(nock): SHANKPIT level editor reskinned to the new design export (editor bar with status pill / undo-redo / Live-session popover / Save; Levels sidebar with filter and Queue/Story/Zombies tag buttons; segmented Object/Face/Rotate toolbar with switches; viewport chips + key legend; accordion inspector: Level, Cubes, Spawn points, Waypoints, Characters, Level exits, Placed objects, Import & embed). Every existing handler is kept (clone/export/delete moved under a "..." menu, glTF import and level/widget embedding under Import & embed); follows the app light/dark toggle. Verified by server-side render + tsc + build only; no browser on this box, not seen live.
 - NOCK "Set for ZOMBIES": pressing it twice on one level no longer fails on the unique `_ZOMBIES` copy name (next free suffix), and the button now alerts on failure instead of failing silently.- feat(nock): live edit sessions now sync SHANKPIT -> NOCK. A box deleted (X) or placed (B) in the native live editor is applied to the NOCK draft (matched by geometry, since the game sees the flattened export), and F5 in the game asks NOCK to save via a new `save` session event. Handler test covers the new events; the browser path is type-checked, not driven.
 

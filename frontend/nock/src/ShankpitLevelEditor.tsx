@@ -2062,7 +2062,7 @@ function Acc({ icon, title, count, action, open: initialOpen, children }: { icon
 }
 
 /** Follows the app's daisyUI theme toggle (cupcake = light, dracula = dark; no override = OS preference). */
-function useLightTheme(): boolean {
+export function useLightTheme(): boolean {
   const read = () => {
     const t = document.documentElement.dataset.theme
     if (t === 'cupcake') return true

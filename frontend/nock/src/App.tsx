@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { animations, api, doorScripts, generateProcedural, shankpitSprays, textures, type AnimationSummary, type DoorScriptSummary, type Layer, type Project, type TextureSummary } from './api'
 import LevelEditor from './LevelEditor'
-import ShankpitLevelEditor from './ShankpitLevelEditor'
+import ShankpitLevelEditor, { useLightTheme } from './ShankpitLevelEditor'
 import AiOpponents from './AiOpponents'
 import AnimationViewer from './AnimationViewer'
 import Animator from './Animator'
@@ -18,6 +18,7 @@ import Robots from './Robots'
 import { TabErrorBoundary } from './TabErrorBoundary'
 import { QrCodesPanel } from './QrCodes'
 import './App.css'
+import './NockHeader.css'
 
 // NOCK — real v0 editor UI (founder real-time, 2026-09-12: "we want the tool similar in shape
 // cli and gui"). Every action here calls the exact same /admin/nock/api routes cmd/nock's own
@@ -1349,11 +1350,31 @@ function useTheme() {
   return { theme, toggle }
 }
 
+const TOOL_TABS: [Tab, string][] = [
+  ['textures', 'Texture Library'],
+  ['animations', 'Animations'],
+  ['robots', 'Robots'],
+  ['door-scripts', 'Door Scripts'],
+  ['projects', 'Projects (layer editor)'],
+  ['sprays', 'Sprays'],
+  ['video', 'MIXFORGE EDITOR'],
+  ['sounds', 'Sounds'],
+  ['booth', 'Booth'],
+  ['generators', 'Generators'],
+  ['code', 'Code'],
+]
+const GAME_TABS: [string, [Tab, string][]][] = [
+  ['BRAWLPIT', [['brawlpit', 'Levels'], ['ai-opponents', 'AI Opponents']]],
+  ['SHANKPIT', [['shankpit', 'Levels'], ['shankpit-ai-opponents', 'AI Opponents'], ['shankpit-materials', 'Materials'], ['shankpit-widgets', 'Widgets']]],
+  ['DEADWEIGHT', [['deadweight-ai-opponents', 'AI Opponents']]],
+]
+
 export default function App() {
   const { projects, refresh } = useProjects()
   const [active, setActive] = useState<string | null>(null)
   const [tab, setTabState] = useState<Tab>(tabFromHash)
   const { theme, toggle: toggleTheme } = useTheme()
+  const lightTheme = useLightTheme()
 
   const setTab = useCallback((t: Tab) => {
     setTabState(t)
@@ -1370,69 +1391,39 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <div className="header-top">
-          <h1>NOCK</h1>
-          <button type="button" className="theme-toggle" onClick={toggleTheme} title="Toggle light/dark theme">
+      <header className={'nkh' + (lightTheme ? ' light' : '')}>
+        <div className="nkh__top">
+          <div className="nkh__brand">
+            <span className="nkh__mark" aria-hidden="true">N</span>
+            <div>
+              <h1>NOCK</h1>
+              <p className="nkh__sub">Texture generator &amp; manager — SHANKPIT texture tools, built on ImageMagick + PARENA</p>
+            </div>
+          </div>
+          <button type="button" className="nkh__theme theme-toggle" onClick={toggleTheme} title="Toggle light/dark theme">
             {theme === 'dracula' ? 'Light mode' : theme === 'cupcake' ? 'Dark mode' : 'Toggle theme'}
           </button>
         </div>
-        <p className="tagline">texture generator &amp; manager — SHANKPIT texture tools, built on ImageMagick + PARENA</p>
-        <nav className="tabs">
-          <button className={tab === 'textures' ? 'active' : ''} onClick={() => setTab('textures')}>
-            Texture Library
-          </button>
-          <button className={tab === 'animations' ? 'active' : ''} onClick={() => setTab('animations')}>
-            Animations
-          </button>
-          <button className={tab === 'robots' ? 'active' : ''} onClick={() => setTab('robots')}>
-            Robots
-          </button>
-          <button className={tab === 'door-scripts' ? 'active' : ''} onClick={() => setTab('door-scripts')}>
-            Door Scripts
-          </button>
-          <button className={tab === 'projects' ? 'active' : ''} onClick={() => setTab('projects')}>
-            Projects (layer editor)
-          </button>
-          <button className={tab === 'brawlpit' ? 'active' : ''} onClick={() => setTab('brawlpit')}>
-            BRAWLPIT Levels
-          </button>
-          <button className={tab === 'ai-opponents' ? 'active' : ''} onClick={() => setTab('ai-opponents')}>
-            BRAWLPIT AI Opponents
-          </button>
-          <button className={tab === 'shankpit' ? 'active' : ''} onClick={() => setTab('shankpit')}>
-            SHANKPIT Levels
-          </button>
-          <button className={tab === 'shankpit-ai-opponents' ? 'active' : ''} onClick={() => setTab('shankpit-ai-opponents')}>
-            SHANKPIT AI Opponents
-          </button>
-          <button className={tab === 'shankpit-materials' ? 'active' : ''} onClick={() => setTab('shankpit-materials')}>
-            SHANKPIT Materials
-          </button>
-          <button className={tab === 'shankpit-widgets' ? 'active' : ''} onClick={() => setTab('shankpit-widgets')}>
-            SHANKPIT Widgets
-          </button>
-          <button className={tab === 'deadweight-ai-opponents' ? 'active' : ''} onClick={() => setTab('deadweight-ai-opponents')}>
-            DEADWEIGHT AI Opponents
-          </button>
-          <button className={tab === 'sprays' ? 'active' : ''} onClick={() => setTab('sprays')}>
-            Sprays
-          </button>
-          <button className={tab === 'video' ? 'active' : ''} onClick={() => setTab('video')}>
-            MIXFORGE EDITOR
-          </button>
-          <button className={tab === 'sounds' ? 'active' : ''} onClick={() => setTab('sounds')}>
-            Sounds
-          </button>
-          <button className={tab === 'booth' ? 'active' : ''} onClick={() => setTab('booth')}>
-            Booth
-          </button>
-          <button className={tab === 'generators' ? 'active' : ''} onClick={() => setTab('generators')}>
-            Generators
-          </button>
-          <button className={tab === 'code' ? 'active' : ''} onClick={() => setTab('code')}>
-            Code
-          </button>
+        <nav className="nkh__row" aria-label="Tools">
+          <span className="nkh__label">Tools</span>
+          {TOOL_TABS.map(([id, label]) => (
+            <button key={id} type="button" className={'nkh__tab' + (tab === id ? ' is-on' : '')} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+        <nav className="nkh__row" aria-label="Games">
+          <span className="nkh__label">Games</span>
+          {GAME_TABS.map(([game, tabs]) => (
+            <div key={game} className="nkh__group">
+              <span className="nkh__gname">{game}</span>
+              {tabs.map(([id, label]) => (
+                <button key={id} type="button" className={'nkh__tab' + (tab === id ? ' is-on' : '')} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          ))}
         </nav>
       </header>
 

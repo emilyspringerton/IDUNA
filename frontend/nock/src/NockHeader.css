@@ -1,0 +1,22 @@
+/* NOCK app header (design export): brand, theme toggle, TOOLS row, GAMES row of grouped tabs. */
+.nkh{--hdr:#0f1017;--panel:#1c1e2a;--panel2:#262a3b;--line:#32364a;--line2:#454b66;--text:#eceef7;--muted:#a3a9c2;--faint:#8189a6;--focus:#b9c1ff;--pink:#ff5fa6;--pink-bg:rgba(255,95,166,.16);--pink-fg:#ff8dc2;
+background:var(--hdr);color:var(--text);border-bottom:1px solid var(--line);padding:14px 24px;display:flex;flex-direction:column;gap:12px;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.45}
+.nkh.light{--hdr:#ffffff;--panel:#ffffff;--panel2:#f0f2f8;--line:#dcdfeb;--line2:#bcc1d4;--text:#1b1d2b;--muted:#565c77;--faint:#6b7190;--focus:#3f4bd0;--pink:#d62f80;--pink-bg:rgba(214,47,128,.1);--pink-fg:#b01d64}
+.nkh *{box-sizing:border-box}
+.nkh h1{margin:0;font-family:'Chakra Petch',sans-serif;font-weight:700;font-size:20px;letter-spacing:.14em;line-height:1;color:var(--text)}
+.nkh button{font:inherit;color:inherit;cursor:pointer}
+.nkh :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.nkh__top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.nkh__brand{display:flex;align-items:center;gap:12px;min-width:0}
+.nkh__mark{width:34px;height:34px;flex:none;border-radius:9px;background:var(--pink);color:#fff;display:inline-flex;align-items:center;justify-content:center;font:700 20px 'Chakra Petch',sans-serif}
+.nkh__sub{margin:4px 0 0;font-size:12.5px;color:var(--muted)}
+.nkh__theme{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:9px;border:1px solid var(--line2);background:var(--panel);font-size:13px;font-weight:500}
+.nkh__theme:hover{border-color:var(--faint)}
+.nkh__row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.nkh__label{width:46px;flex:none;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.nkh__group{display:flex;align-items:center;gap:2px;padding:2px 3px 2px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.nkh__gname{font-family:'Chakra Petch',sans-serif;font-weight:600;font-size:12px;letter-spacing:.08em;margin-right:6px}
+.nkh__tab{height:30px;padding:0 11px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap}
+.nkh__tab:hover{background:var(--panel2);color:var(--text)}
+.nkh__tab.is-on{background:var(--pink-bg);border-color:var(--pink);color:var(--pink-fg)}
+@media (max-width:640px){.nkh{padding:12px 16px}.nkh__label{width:100%}}
