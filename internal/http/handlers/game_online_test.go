@@ -1417,3 +1417,37 @@ func m2arr(t *testing.T, raw []byte) []map[string]any {
 	}
 	return arr
 }
+
+// A guest upgrades in place with an IDUNA SSO identity (guest-link-sso): same player_id kept, and
+// a later sso-exchange with that identity resolves to the guest's account. An SSO identity that
+// already owns a game account is refused (409, no merge).
+func TestGuestLinkSSO_UpgradesGuestInPlace(t *testing.T) {
+	e := newGameEnv(t)
+	pid, _, guestTok := e.register(t, "deadweight", "Gary")
+	emailAuth := &handlers.PlayerEmailAuthHandler{DB: e.db, Keys: e.keys, Issuer: "test"}
+	regResp := doEmailAuth(emailAuth, "/api/v1/auth/email/register",
+		`{"email":"linkme@example.com","password":"correcthorsebattery"}`)
+	if regResp.Code != http.StatusOK {
+		t.Fatalf("SSO register: %d %s", regResp.Code, regResp.Body.String())
+	}
+	var sso struct {
+		Token    string `json:"token"`
+		PlayerID string `json:"player_id"`
+	}
+	if err := json.Unmarshal(regResp.Body.Bytes(), &sso); err != nil {
+		t.Fatal(err)
+	}
+	code, m, raw := e.do("POST", "/api/v1/games/deadweight/guest-link-sso", guestTok, map[string]string{"sso_token": sso.Token})
+	if code != 200 || m["player_id"] != pid {
+		t.Fatalf("guest-link-sso: %d %s (want player_id %s)", code, raw, pid)
+	}
+	code, m, raw = e.do("POST", "/api/v1/games/deadweight/sso-exchange", sso.Token, nil)
+	if code != 200 || m["player_id"] != pid {
+		t.Fatalf("sso-exchange after link: %d %s (want player_id %s)", code, raw, pid)
+	}
+	// A second guest cannot claim the same SSO identity.
+	_, _, otherTok := e.register(t, "deadweight", "Other")
+	if code, _, raw := e.do("POST", "/api/v1/games/deadweight/guest-link-sso", otherTok, map[string]string{"sso_token": sso.Token}); code != 409 {
+		t.Fatalf("second link should be 409, got %d %s", code, raw)
+	}
+}

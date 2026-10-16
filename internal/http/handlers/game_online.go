@@ -112,6 +112,8 @@ func (h *GameOnlineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.emailLogin(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "sso-exchange" && r.Method == http.MethodPost:
 		h.ssoExchange(w, r, cfg)
+	case len(parts) == 2 && parts[1] == "guest-link-sso" && r.Method == http.MethodPost:
+		h.guestLinkSSO(w, r, cfg)
 	case len(parts) == 2 && parts[1] == "set-display-name" && r.Method == http.MethodPost:
 		h.setDisplayName(w, r, cfg)
 	case len(parts) == 3 && parts[1] == "draft-run" && parts[2] == "start" && r.Method == http.MethodPost:
@@ -607,6 +609,12 @@ func (h *GameOnlineHandler) ssoExchange(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	ctx := r.Context()
+	// A guest upgraded via guest-link-sso: the SSO identity resolves to that guest's player row.
+	var linked string
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT player_id FROM game_sso_links WHERE sso_player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&linked); err == nil && linked != "" {
+		pid = linked
+	}
 	name, err := h.claimGamePlayer(ctx, pid, cfg)
 	if err == errPlayerScopedToOtherGame {
 		mmoWriteError(w, http.StatusForbidden, "this IDUNA identity is already linked to a different game")
@@ -629,6 +637,80 @@ func (h *GameOnlineHandler) ssoExchange(w http.ResponseWriter, r *http.Request, 
 		"player_id": pid, "display_name": name, "token": tok, "expires_at": exp,
 		"tickets": h.ticketBalance(ctx, cfg, pid), "account_state": "base",
 	})
+}
+
+// guestLinkSSO upgrades the CURRENT guest account in place with an IDUNA SSO identity ("Save
+// progress with IDUNA"): Authorization = the guest's own player token, body {"sso_token": ...} =
+// the generic IDUNA SSO JWT. The guest keeps its player_id (tickets, rings, friends, history);
+// the SSO identity is recorded in game_sso_links so a later sso-exchange resolves to it. Refuses
+// (409) when that SSO identity already has its own account for this game -- there is
+// deliberately no merge of two accounts' histories; the client falls back to a plain sign-in.
+func (h *GameOnlineHandler) guestLinkSSO(w http.ResponseWriter, r *http.Request, cfg games.Config) {
+	claims := h.bearerClaims(w, r)
+	if claims == nil {
+		return
+	}
+	pid, _ := claims["player_id"].(string)
+	if pid == "" {
+		mmoWriteError(w, http.StatusForbidden, "link needs a player token, not an agent token")
+		return
+	}
+	if g, _ := claims["game"].(string); g != cfg.Slug || !hasPerm(claims, cfg.PlayPerm) {
+		mmoWriteError(w, http.StatusForbidden, "token is not valid for this game")
+		return
+	}
+	var req struct {
+		SSOToken string `json:"sso_token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req); err != nil || req.SSOToken == "" {
+		mmoWriteError(w, http.StatusBadRequest, "sso_token required")
+		return
+	}
+	sso, err := authjwt.Verify(h.Keys, req.SSOToken)
+	if err != nil {
+		mmoWriteError(w, http.StatusUnauthorized, "invalid sso token")
+		return
+	}
+	ssoPID, _ := sso["sub"].(string)
+	if ssoPID == "" {
+		ssoPID, _ = sso["player_id"].(string)
+	}
+	if ssoPID == "" || ssoPID == pid {
+		mmoWriteError(w, http.StatusBadRequest, "sso token has no distinct subject")
+		return
+	}
+	ctx := r.Context()
+	var existing string
+	if err := h.DB.QueryRowContext(ctx, `SELECT player_id FROM game_sso_links WHERE sso_player_id = ?`, ssoPID).Scan(&existing); err == nil {
+		mmoWriteError(w, http.StatusConflict, "this IDUNA identity is already linked to a DEADWEIGHT account -- sign in with it instead")
+		return
+	}
+	var gameCol sql.NullString
+	if err := h.DB.QueryRowContext(ctx, `SELECT game FROM players WHERE player_id = ?`, ssoPID).Scan(&gameCol); err == nil &&
+		gameCol.Valid && gameCol.String != "" {
+		mmoWriteError(w, http.StatusConflict, "this IDUNA identity already has its own game account -- sign in with it instead")
+		return
+	}
+	var name string
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT display_name FROM players WHERE player_id = ? AND game = ?`, pid, cfg.Slug).Scan(&name); err != nil {
+		mmoWriteError(w, http.StatusNotFound, "unknown player")
+		return
+	}
+	if _, err := h.DB.ExecContext(ctx,
+		`INSERT INTO game_sso_links (sso_player_id, player_id, game) VALUES (?, ?, ?)`, ssoPID, pid, cfg.Slug); err != nil {
+		mmoWriteError(w, http.StatusConflict, "already linked")
+		return
+	}
+	tok, exp, err := h.playerToken(cfg, "email", pid, name)
+	if err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+	emitAuthEvent(ctx, h.EventLog, "iduna:games.sso_linked", "iduna-games", map[string]any{
+		"game": cfg.Slug, "player_id": pid, "sso_player_id": ssoPID,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"player_id": pid, "display_name": name, "token": tok, "expires_at": exp, "account_state": "base"})
 }
 
 // setDisplayName is the real "choose your username" path (founder real-time, 2026-09-29, same
