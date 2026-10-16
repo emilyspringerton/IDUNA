@@ -37,7 +37,8 @@ func marketSetup(t *testing.T) (*sql.DB, string) {
 func TestHatMarket_ResaleMovesHatAndSplits88_12(t *testing.T) {
 	db, hat := marketSetup(t)
 	defer db.Close()
-	before := gold(db, "seller") // 900 after buying the store copy
+	before := gold(db, "seller")     // 900 after buying the store copy
+	makerBefore := gold(db, "maker") // already holds the 88% store-sale proceeds
 	rec := studioDo(t, db, "POST", "/api/v1/characters/seller/hats/market/list", map[string]any{"hat_id": hat, "price": 201})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
@@ -58,8 +59,17 @@ func TestHatMarket_ResaleMovesHatAndSplits88_12(t *testing.T) {
 	if g := gold(db, "buyer"); g != 1000-201 {
 		t.Errorf("buyer = %d", g)
 	}
-	if g := gold(db, "seller"); g != before+176 { // floor(201*.88)=176, 25 burned
+	// 201 Flow: seller floor(176.88)=176, designer royalty floor(16.08)=16, burned 201-176-16=9.
+	if g := gold(db, "seller"); g != before+176 {
 		t.Errorf("seller = %d, want %d", g, before+176)
+	}
+	if g := gold(db, "maker"); g != makerBefore+16 {
+		t.Errorf("designer royalty: maker = %d, want %d", g, makerBefore+16)
+	}
+	var burn, roy int
+	db.QueryRow(`SELECT burn_amount, royalty_amount FROM hat_listings WHERE status='sold'`).Scan(&burn, &roy)
+	if burn != 9 || roy != 16 {
+		t.Errorf("recorded burn=%d royalty=%d, want 9 and 16", burn, roy)
 	}
 	var owns int
 	db.QueryRow(`SELECT COUNT(*) FROM character_hats WHERE hat_id=? AND character_id='buyer'`, hat).Scan(&owns)

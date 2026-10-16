@@ -99,7 +99,7 @@ func newInventoryDB(t *testing.T) *sql.DB {
 		CREATE TABLE hat_listings (
 			listing_id TEXT PRIMARY KEY, hat_id TEXT NOT NULL, seller_character_id TEXT NOT NULL,
 			price INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', buyer_character_id TEXT,
-			seller_amount INTEGER NOT NULL DEFAULT 0, burn_amount INTEGER NOT NULL DEFAULT 0,
+			seller_amount INTEGER NOT NULL DEFAULT 0, royalty_amount INTEGER NOT NULL DEFAULT 0, burn_amount INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT '', sold_at TEXT
 		);
 		CREATE TABLE hat_reports (

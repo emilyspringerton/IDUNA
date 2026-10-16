@@ -8,7 +8,8 @@ package handlers
 //   POST /api/v1/characters/:id/hats/market/buy           -- {listing_id}
 //
 // Only limited-edition hats (hats.quantity_limit set) can be listed. A sale moves the
-// character_hats row to the buyer; the seller gets 88% of the price, 12% is burned.
+// character_hats row to the buyer; 8% of the price is a royalty to the hat's designer, 4% is
+// burned, and the seller keeps the rest (88%).
 
 import (
 	"database/sql"
@@ -19,6 +20,23 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const (
+	// Resale split: fixed rates. Any future change to the burn is capped at HatMarketBurnCeilingPct.
+	HatMarketRoyaltyPct     = 8
+	HatMarketBurnPct        = 4
+	HatMarketBurnCeilingPct = 25
+)
+
+// splitMarketPrice returns (seller, royalty, burn). Each share rounds down and the odd remainder
+// is burned. With no designer to pay, the royalty share is burned too.
+func splitMarketPrice(price int, hasCreator bool) (seller, royalty, burn int) {
+	seller = price * (100 - HatMarketRoyaltyPct - HatMarketBurnPct) / 100
+	if hasCreator {
+		royalty = price * HatMarketRoyaltyPct / 100
+	}
+	return seller, royalty, price - seller - royalty
+}
 
 type marketListing struct {
 	ListingID         string `json:"listing_id"`
@@ -213,7 +231,24 @@ func (h *MMOHandler) handleMarketBuy(w http.ResponseWriter, r *http.Request, cha
 		mmoWriteError(w, http.StatusConflict, "insufficient Flow balance")
 		return
 	}
-	sellerAmt, burn := splitHatPrice(price, true)
+	var creatorID sql.NullString
+	tx.QueryRowContext(r.Context(), `SELECT generated_by_character_id FROM hats WHERE hat_id=? AND user_generated=1`, hatID).Scan(&creatorID)
+	hasCreator := false
+	if creatorID.Valid {
+		if err := tx.QueryRowContext(r.Context(), `SELECT 1 FROM characters WHERE character_id=?`, creatorID.String).Scan(&one); err == nil {
+			hasCreator = true
+		}
+	}
+	sellerAmt, royalty, burn := splitMarketPrice(price, hasCreator)
+	if hasCreator && royalty > 0 {
+		// If the designer is the seller, both credits land on the same character: that is correct.
+		if _, err := tx.ExecContext(r.Context(),
+			`UPDATE characters SET gold_balance = gold_balance + ?, updated_at = ? WHERE character_id = ?`,
+			royalty, now, creatorID.String); err != nil {
+			mmoWriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if _, err := tx.ExecContext(r.Context(),
 		`UPDATE characters SET gold_balance = gold_balance + ?, updated_at = ? WHERE character_id = ?`,
 		sellerAmt, now, sellerID); err != nil {
@@ -221,7 +256,7 @@ func (h *MMOHandler) handleMarketBuy(w http.ResponseWriter, r *http.Request, cha
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(),
-		`UPDATE hat_listings SET seller_amount=?, burn_amount=? WHERE listing_id=?`, sellerAmt, burn, req.ListingID); err != nil {
+		`UPDATE hat_listings SET seller_amount=?, royalty_amount=?, burn_amount=? WHERE listing_id=?`, sellerAmt, royalty, burn, req.ListingID); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

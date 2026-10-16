@@ -295,8 +295,10 @@ func (h *MMOHandler) handleListDesigns(w http.ResponseWriter, r *http.Request, c
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
 		`SELECT h.hat_id, h.name, h.description, h.flow_cost, h.status, h.sales_count, h.report_count, h.quantity_limit,
-		        COALESCE((SELECT SUM(creator_amount) FROM hat_sales s WHERE s.hat_id=h.hat_id), 0),
+		        COALESCE((SELECT SUM(creator_amount) FROM hat_sales s WHERE s.hat_id=h.hat_id), 0)
+		          + COALESCE((SELECT SUM(royalty_amount) FROM hat_listings l WHERE l.hat_id=h.hat_id AND l.status='sold'), 0),
 		        COALESCE((SELECT SUM(burn_amount)    FROM hat_sales s WHERE s.hat_id=h.hat_id), 0)
+		          + COALESCE((SELECT SUM(burn_amount) FROM hat_listings l WHERE l.hat_id=h.hat_id AND l.status='sold'), 0)
 		 FROM hats h
 		 WHERE h.user_generated=1 AND h.flow_cost>0 AND h.generated_by_character_id=? AND h.png_data IS NOT NULL
 		 ORDER BY h.created_at DESC`, characterID)
@@ -419,10 +421,11 @@ func (h *MMOHandler) handleHatEconomy(w http.ResponseWriter, r *http.Request) {
 	var burned, paid, sales int
 	h.DB.QueryRowContext(r.Context(),
 		`SELECT COALESCE(SUM(burn_amount),0), COALESCE(SUM(creator_amount),0), COUNT(*) FROM hat_sales`).Scan(&burned, &paid, &sales)
-	// Secondary-market resales burn 12% too (they are not counted as store sales).
-	var marketBurned int
-	h.DB.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(burn_amount),0) FROM hat_listings WHERE status='sold'`).Scan(&marketBurned)
+	// Secondary-market resales burn too, and pay designers a royalty (not counted as store sales).
+	var marketBurned, marketRoyalty int
+	h.DB.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(burn_amount),0), COALESCE(SUM(royalty_amount),0) FROM hat_listings WHERE status='sold'`).Scan(&marketBurned, &marketRoyalty)
 	burned += marketBurned
+	paid += marketRoyalty
 	writeJSON(w, http.StatusOK, map[string]any{
 		"creator_share_pct": HatCreatorSharePct, "burn_pct": HatBurnPct,
 		"min_price": hatMinPrice, "max_price": hatMaxPrice,

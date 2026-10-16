@@ -2,7 +2,7 @@
 
 ## 2026-10-16
 
-- feat(hats): **secondary market** for sold-out limited editions (migration `202610160004_hat_market.sql`, `hat_market.go`): `GET /hats/market`, `POST /characters/:id/hats/market/{list,cancel,buy}`. Limited editions only; seller sets the price (10..100,000); a sale moves ownership, seller gets 88%, 12% burned (counted in economy `total_burned`), resales don't touch `sales_count`. Owned-hats response now carries `quantity_limit`. 2 new tests.
+- feat(hats): **secondary market** for sold-out limited editions (migration `202610160004_hat_market.sql`, `hat_market.go`): `GET /hats/market`, `POST /characters/:id/hats/market/{list,cancel,buy}`. Limited editions only; seller sets the price (10..100,000); a sale moves ownership; resale split is 8% designer royalty / 4% burn / 88% seller (`splitMarketPrice`; rates fixed, any future burn change capped at 25%; royalty and burn counted in the economy totals and designer earnings), resales don't touch `sales_count`. Owned-hats response now carries `quantity_limit`. 2 new tests.
 - feat(hats): limited-edition hats (migration `202610160003_hat_quantity_limit.sql`). `POST /characters/:id/hats/design` accepts optional `quantity_limit` (1..1,000,000; omitted = unlimited). The last copy is claimed atomically in `settleHatSale`; buying a sold-out hat returns 410 and charges nothing. Catalog and `/hats/designs` expose `quantity_limit`, `remaining`, `sold_out`. The secondary market itself does not exist yet. 2 new tests.
 - feat(hats): Hat Studio backend (migration `202610160002_hat_studio.sql`, `hat_studio.go`):
   player-drawn hats (`POST /characters/:id/hats/design`), creator listing/pricing, public image +
