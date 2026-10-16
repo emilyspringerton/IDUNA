@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { LiveSessionPanel, useLiveSession } from './ShankpitLiveSession'
+import { useLiveSession, type SpawnMode } from './ShankpitLiveSession'
+import './ShankpitLevelEditor.css'
 import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 import {
   AI_ROLE_OPTIONS,
@@ -1987,6 +1988,124 @@ function LevelExitInspector({
   )
 }
 
+// ---- UI kit for the redesigned editor chrome (mockup: SHANKPIT_level_editor design export) ----
+const ICONS: Record<string, string> = {
+  layers: 'M12 3 3 8l9 5 9-5-9-5Z M3 13l9 5 9-5 M3 17.5 12 22.5l9-5',
+  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z M21 21l-4.3-4.3',
+  plus: 'M12 5v14 M5 12h14',
+  play: 'M7 4.5v15l12-7.5-12-7.5Z',
+  book: 'M4 5a2 2 0 0 1 2-2h5v17H6a2 2 0 0 0-2 2V5Z M20 5a2 2 0 0 0-2-2h-5v17h5a2 2 0 0 1 2 2V5Z',
+  skull: 'M12 3a8 8 0 0 0-8 8c0 2.6 1.2 4.2 3 5.2V20h10v-3.8c1.8-1 3-2.6 3-5.2a8 8 0 0 0-8-8Z M9 12h.01 M15 12h.01',
+  cube: 'M12 2 3 7v10l9 5 9-5V7l-9-5Z M3 7l9 5 9-5 M12 12v10',
+  pin: 'M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11Z M12 7.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z',
+  car: 'M5 16l1.5-5.5A2 2 0 0 1 8.4 9h7.2a2 2 0 0 1 1.9 1.5L19 16 M3 16h18v3H3z M7 19v1.5 M17 19v1.5',
+  chev: 'M6 9l6 6 6-6',
+  undo: 'M9 14 4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3',
+  redo: 'M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3',
+  save: 'M5 3h11l4 4v14H5V3Z M8 3v6h8V3 M8 21v-7h8v7',
+  move: 'M12 2v20 M2 12h20 M12 2l-3 3 M12 2l3 3 M12 22l-3-3 M12 22l3-3 M2 12l3-3 M2 12l3 3 M22 12l-3-3 M22 12l-3 3',
+  rotate: 'M21 12a9 9 0 1 1-3-6.7 M21 4v5h-5',
+  lock: 'M6 11h12v10H6V11Z M8 11V7a4 4 0 0 1 8 0v4',
+  download: 'M12 3v12 M7 10l5 5 5-5 M4 21h16',
+  trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 14h10l1-14',
+  copy: 'M9 9h11v11H9V9Z M5 15H4V4h11v1',
+  more: 'M5 12h.01 M12 12h.01 M19 12h.01',
+  live: 'M12 12m-2 0a2 2 0 1 0 4 0 2 2 0 1 0-4 0 M7.5 7.5a6.4 6.4 0 0 0 0 9 M16.5 7.5a6.4 6.4 0 0 1 0 9',
+  cursor: 'M5 3l14 7-6 2-2 6L5 3Z',
+  sliders: 'M4 6h10 M18 6h2 M4 12h4 M12 12h8 M4 18h12 M20 18h0 M14 4v4 M8 10v4 M16 16v4',
+  route: 'M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M8 17h6a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h6',
+  bot: 'M6 8h12v10H6V8Z M12 4v4 M9 13h.01 M15 13h.01 M3 12v3 M21 12v3',
+  exit: 'M10 4H5v16h5 M15 8l4 4-4 4 M19 12H9',
+  import: 'M12 3v12 M7 10l5 5 5-5 M4 21h16',
+}
+
+function Ic({ n, sm }: { n: string; sm?: boolean }) {
+  return (
+    <svg className={sm ? 'ic ic--sm' : 'ic'} viewBox="0 0 24 24" aria-hidden="true">
+      {(ICONS[n] ?? '').split(' M').map((d, i) => (
+        <path key={i} d={i === 0 ? d : 'M' + d} />
+      ))}
+    </svg>
+  )
+}
+
+function Sw({ on, onChange, disabled, children, hint }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; children: React.ReactNode; hint?: React.ReactNode }) {
+  return (
+    <button type="button" className="sw" aria-pressed={on} disabled={disabled} onClick={() => onChange(!on)}>
+      <span className="sw__track" />
+      <span>{children}</span>
+      {hint && <span className="sw__hint">{hint}</span>}
+    </button>
+  )
+}
+
+function Acc({ icon, title, count, action, open: initialOpen, children }: { icon: string; title: string; count?: number; action?: React.ReactNode; open?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(initialOpen ?? false)
+  return (
+    <section className={'acc' + (open ? ' is-open' : '')}>
+      <div className="acc__head">
+        <button type="button" className="acc__toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <span className="chev">
+            <Ic n="chev" sm />
+          </span>
+          <span className="lead">
+            <Ic n={icon} />
+          </span>
+          {title}
+          {count !== undefined && <span className="count">{count}</span>}
+        </button>
+        {action}
+      </div>
+      {open && <div className="acc__body">{children}</div>}
+    </section>
+  )
+}
+
+/** Follows the app's daisyUI theme toggle (cupcake = light, dracula = dark; no override = OS preference). */
+function useLightTheme(): boolean {
+  const read = () => {
+    const t = document.documentElement.dataset.theme
+    if (t === 'cupcake') return true
+    if (t === 'dracula') return false
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false
+  }
+  const [light, setLight] = useState(read)
+  useEffect(() => {
+    const mo = new MutationObserver(() => setLight(read()))
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    const mq = window.matchMedia?.('(prefers-color-scheme: light)')
+    const onMq = () => setLight(read())
+    mq?.addEventListener?.('change', onMq)
+    return () => {
+      mo.disconnect()
+      mq?.removeEventListener?.('change', onMq)
+    }
+  }, [])
+  return light
+}
+
+/** Click-outside + Escape closes a popover. */
+function usePopover() {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  return { open, setOpen, ref }
+}
+
 export default function ShankpitLevelEditor() {
   const { list, zombieList, refresh } = useLevelList()
   const { materials } = useMaterialList()
@@ -2572,363 +2691,287 @@ export default function ShankpitLevelEditor() {
   const selectedWall = selected !== null ? draft.walls.find((w) => w.id === selected) ?? null : null
   const selectedSpawner = selectedSpawnPoint !== null ? draft.spawners.find((s) => s.id === selectedSpawnPoint) ?? null : null
 
-  return (
-    <div className="layout">
-      <aside className="project-list">
-        <h2>SHANKPIT Levels</h2>
-        <ul>
-          {list.map((l) => (
-            <li key={l.id} className={l.id === activeId ? 'active' : ''}>
-              <button onClick={() => load(l.id)}>
-                {l.name} <span className="hint">({l.wall_count} cubes)</span>
-              </button>
-              {/* S459-41, founder real-time: "need to add an option to shankpit levels to set a
-                  level as default for queue" -- exactly one level is the real, global QUEUE
-                  default at a time, same real shape Sprays.tsx's own "Set as default" already
-                  uses. */}
-              {l.is_default_queue ? (
-                <span className="hint">QUEUE default</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await shankpitLevels.setDefaultQueue(l.id)
-                    refresh()
-                  }}
-                >
-                  Set as QUEUE default
-                </button>
-              )}
-              {/* S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we dont
-                  need the text cutscene in the beginning we just need to spawn into the first
-                  map that the story is") -- exactly one level is the real, global MODE_STORY
-                  entry level at a time, same real shape the QUEUE default toggle above uses. */}
-              {l.is_story_start ? (
-                <span className="hint">STORY start</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await shankpitLevels.setStoryStart(l.id)
-                    refresh()
-                  }}
-                >
-                  Set as STORY start
-                </button>
-              )}
-              {/* Founder real-time, 2026-10-02: "a new button for set for zombies" -- copies this level
-                  into the ZOMBIES repository and makes it the level the ZOMBIES sandbox loads. */}
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await shankpitLevels.setZombieDefault(l.id)
-                    refresh()
-                  } catch (e) {
-                    window.alert('Set for ZOMBIES failed: ' + (e instanceof Error ? e.message : String(e)))
-                  }
-                }}
-              >
-                Set for ZOMBIES
-              </button>
-            </li>
-          ))}
-        </ul>
-        <h2>ZOMBIE Levels</h2>
-        <ul>
-          {zombieList.map((l) => (
-            <li key={l.id} className={l.id === activeId ? 'active' : ''}>
-              <button onClick={() => load(l.id)}>
-                {l.name} <span className="hint">({l.wall_count} cubes)</span>
-              </button>
-              {l.is_zombie_default ? (
-                <span className="hint">ZOMBIES default</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await shankpitLevels.setZombieDefault(l.id)
-                      refresh()
-                    } catch (e) {
-                      window.alert('Set for ZOMBIES failed: ' + (e instanceof Error ? e.message : String(e)))
-                    }
-                  }}
-                >
-                  Make ZOMBIES default
-                </button>
-              )}
-            </li>
-          ))}
-          {zombieList.length === 0 && <li className="hint">None yet -- "Set for ZOMBIES" on a level, or play ZOMBIES and press F1.</li>}
-        </ul>
-        <button type="button" onClick={startNew}>
-          + New level
-        </button>
-        <p className="hint">
-          Manage materials (shader, specular/shininess, friction, textures) in the "SHANKPIT
-          Materials" tab -- a wall here only picks one by name.
-        </p>
-      </aside>
+  const light = useLightTheme()
+  const livePop = usePopover()
+  const morePop = usePopover()
+  const [lvFilter, setLvFilter] = useState('')
+  const [joinId, setJoinId] = useState('')
+  const filteredList = list.filter((l) => l.name.toLowerCase().includes(lvFilter.trim().toLowerCase()))
+  const tagZombies = async (id: number) => {
+    try {
+      await shankpitLevels.setZombieDefault(id)
+      refresh()
+    } catch (e) {
+      window.alert('Set for ZOMBIES failed: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+  const setDim = (k: 'width' | 'height' | 'depth', v: string) => {
+    setDraft((d) => ({ ...d, [k]: Math.max(1, Number(v) || 1) }))
+    setDirty(true)
+  }
+  const statusClass = activeId === null ? 'is-dirty' : dirty ? 'is-dirty' : 'is-saved'
+  const statusText = activeId === null ? 'Unsaved draft' : dirty ? 'Unsaved changes' : 'Saved'
+  const sizeLabel = `${draft.width} × ${draft.height} × ${draft.depth} · ${draft.groundPlaneSquares} squares`
 
-      <main>
-        <div className="project-header">
-          <input
-            className="level-name-input"
-            placeholder="Level name"
-            value={draft.name}
-            onChange={(e) => {
-              setDraft((d) => ({ ...d, name: e.target.value }))
-              setDirty(true)
-            }}
-          />
-          <div className="dims">
-            <label>
-              Width{' '}
-              <input
-                type="number"
-                min={1}
-                value={draft.width}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, width: Math.max(1, Number(e.target.value)) }))
-                  setDirty(true)
-                }}
-              />
-            </label>
-            <label>
-              Height{' '}
-              <input
-                type="number"
-                min={1}
-                value={draft.height}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, height: Math.max(1, Number(e.target.value)) }))
-                  setDirty(true)
-                }}
-              />
-            </label>
-            <label>
-              Depth{' '}
-              <input
-                type="number"
-                min={1}
-                value={draft.depth}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, depth: Math.max(1, Number(e.target.value)) }))
-                  setDirty(true)
-                }}
-              />
-            </label>
-          </div>
-          <div className="dims">
-            <label>
-              <input
-                type="checkbox"
-                checked={draft.groundPlaneEnabled}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, groundPlaneEnabled: e.target.checked }))
-                  setDirty(true)
-                }}
-              />{' '}
-              Ground plane
-            </label>
-            <label>
-              squares ({SHANKPIT_GRID_CELL_SIZE}u each){' '}
-              <input
-                type="number"
-                min={1}
-                disabled={!draft.groundPlaneEnabled}
-                value={draft.groundPlaneSquares}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, groundPlaneSquares: Math.max(1, Math.round(Number(e.target.value))) }))
-                  setDirty(true)
-                }}
-              />
-            </label>
-          </div>
-          <div className="dims" data-testid="floor-tint">
-            <label title="Tint the level's ground plane so it is not transparent. Pick a colour and an alpha (1 = solid, lower = see-through). Applies immediately.">
-              Floor tint{' '}
-              <input
-                type="color"
-                disabled={activeId === null}
-                value={floorTint ? rgbToHex(floorTint) : '#808080'}
-                onChange={(e) => void applyFloorTint(hexToRgb(e.target.value, floorTint?.a ?? 1))}
-              />
-            </label>{' '}
-            <label>
-              alpha{' '}
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                disabled={activeId === null || !floorTint}
-                value={floorTint?.a ?? 1}
-                onChange={(e) => floorTint && void applyFloorTint({ ...floorTint, a: Number(e.target.value) })}
-              />{' '}
-              {floorTint ? floorTint.a.toFixed(2) : '-'}
-            </label>{' '}
-            <button type="button" disabled={activeId === null || !floorTint} onClick={() => void applyFloorTint(null)}>
-              Clear tint
-            </button>
-            {activeId === null && <span className="hint">Save the level first to set this.</span>}
-          </div>
-          <div className="dims">
-            <label title="Suppresses outdoor sun/moon sky-fill lighting for this level, so real darkness and your own placed HPS/IPS light fixtures actually matter -- turn this on for a fully enclosed interior with no windows.">
-              <input
-                type="checkbox"
-                checked={enclosed}
-                disabled={activeId === null}
-                onChange={async (e) => {
-                  const next = e.target.checked
-                  setEnclosedState(next) // optimistic -- matches Set as QUEUE default/STORY start's own immediate-apply UX
-                  if (activeId !== null) {
-                    try {
-                      await shankpitLevels.setEnclosed(activeId, next)
-                    } catch {
-                      setEnclosedState(!next) // revert on a real failure
-                    }
-                  }
-                }}
-              />{' '}
-              Enclosed / indoor (real lighting, no simulated outdoor daylight)
-            </label>
-            {activeId === null && <span className="hint">Save the level first to set this.</span>}
-          </div>
-          <div className="mode-toggle">
-            <button type="button" className={editMode === 'object' ? 'active' : ''} onClick={() => setEditMode('object')}>
-              Object mode
-            </button>
-            <button type="button" className={editMode === 'face' ? 'active' : ''} onClick={() => setEditMode('face')}>
-              Face mode
-            </button>
-            <button type="button" className={editMode === 'rotate' ? 'active' : ''} onClick={() => setEditMode('rotate')} title="Drag the red/green/blue rings to rotate the selected cube about X/Y/Z">
-              Rotate mode
-            </button>
-          </div>
-          <label className="constrain-y">
-            <input type="checkbox" checked={arbitraryRotation} onChange={(e) => setArbitraryRotation(e.target.checked)} />{' '}
-            Arbitrary rotation (off = snap to {ROTATE_SNAP_DEG}°)
+  return (
+    <div className={'sle' + (light ? ' light' : '')}>
+      <div className="ebar">
+        <div className="ebar__name">
+          <span className="ebar__crumb">Editing</span>
+          <label className="namefield">
+            <Ic n="layers" />
+            <input
+              className="level-name-input"
+              placeholder="Level name"
+              aria-label="Level name"
+              value={draft.name}
+              onChange={(e) => {
+                setDraft((d) => ({ ...d, name: e.target.value }))
+                setDirty(true)
+              }}
+            />
           </label>
-          <label className="constrain-y">
-            <input type="checkbox" checked={constrainY} onChange={(e) => setConstrainY(e.target.checked)} />{' '}
-            Constrain Y while dragging
-          </label>
-          <div className="mode-toggle">
-            <button type="button" onClick={undo} disabled={history.length === 0} title="Undo (Ctrl+Z)">
-              Undo
-            </button>
-            <button type="button" onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Shift+Z)">
-              Redo
-            </button>
-          </div>
-          <button type="button" onClick={addCube}>
-            + Add cube
-          </button>
-          <button type="button" onClick={addSpawner}>
-            + Add spawner
-          </button>
+          <span className={'status ' + statusClass}>
+            <span className="dot" />
+            {statusText}
+          </span>
+        </div>
+        <span className="vsep" />
+        <button type="button" className="btn btn--ghost btn--icon" onClick={undo} disabled={history.length === 0} title="Undo (Ctrl+Z)" aria-label="Undo">
+          <Ic n="undo" />
+        </button>
+        <button type="button" className="btn btn--ghost btn--icon" onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+          <Ic n="redo" />
+        </button>
+        <span className="ebar__spacer" />
+        {error && <span className="ebar__err">{error}</span>}
+        <div className="livewrap live-pop" ref={livePop.ref} data-testid="live-session-panel">
           <button
             type="button"
-            onClick={addBuggySpawn}
-            title="A thin amber tile named buggy_spawn: a buggy spawns on it. Rename the wall to buggy_spawn_90 etc. to turn it. Widgets can carry one too."
+            className={'btn ' + (live.id ? 'btn--live-solid is-live' : 'btn--live')}
+            aria-expanded={livePop.open}
+            onClick={() => livePop.setOpen((o) => !o)}
           >
-            + Add buggy spawn
+            <span className="pulse" />
+            {live.id ? 'Live · connected' : 'Live session'}
+            <Ic n="chev" sm />
           </button>
-          <label
-            className="hint"
-            title="Import a Blender glTF 2.0 export (.glb, or .gltf + its .bin): one cube per mesh object, sized to its bounds; objects named door... become doors. Added to this level; Undo removes it."
-          >
-            <input
-              type="file"
-              multiple
-              accept=".glb,.gltf,.bin,.png,.jpg,.jpeg"
-              disabled={gltfBusy}
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? [])
-                e.target.value = ''
-                if (files.length > 0) void importGltfFiles(files)
-              }}
-            />
-            glTF scale{' '}
-            <input
-              type="number"
-              step="any"
-              min="0"
-              value={gltfScale}
-              onChange={(e) => setGltfScale(e.target.value)}
-              style={{ width: '5em' }}
-            />
-            {gltfBusy ? ' Importing...' : ''}
-          </label>
-          <LiveSessionPanel live={live} />
-          <div className="mode-toggle">
-            <select value={objectPickLevelId} onChange={(e) => setObjectPickLevelId(e.target.value === '' ? '' : Number(e.target.value))}>
-              <option value="">Add level as object...</option>
-              {list
-                .filter((l) => l.id !== activeId)
-                .map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-            </select>
-            <button
-              type="button"
-              disabled={objectPickLevelId === ''}
-              onClick={() => {
-                if (objectPickLevelId !== '') addObject({ refLevelId: objectPickLevelId })
-              }}
-            >
-              + Add object
-            </button>
-          </div>
-          {/* S482, founder real-time: "make widget or something" -- a real, second, separate
-              picker (not merged into the level dropdown above) since a level and a widget are
-              real, different things: a widget has no dimension/ground plane and never shows up
-              in the Levels list. */}
-          <div className="mode-toggle">
-            <select value={objectPickWidgetId} onChange={(e) => setObjectPickWidgetId(e.target.value === '' ? '' : Number(e.target.value))}>
-              <option value="">Add widget as object...</option>
-              {widgetList.map((wgt) => (
-                <option key={wgt.id} value={wgt.id}>
-                  {wgt.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={objectPickWidgetId === ''}
-              onClick={() => {
-                if (objectPickWidgetId !== '') addObject({ refWidgetId: objectPickWidgetId })
-              }}
-            >
-              + Add widget
-            </button>
-          </div>
-          <button type="button" onClick={save} disabled={!dirty}>
-            {activeId === null ? 'Create level' : 'Save changes'}
-          </button>
-          {activeId !== null && (
-            <>
-              <input placeholder="clone as..." value={newName} onChange={(e) => setNewName(e.target.value)} />
-              <button type="button" onClick={doClone} disabled={!newName}>
-                Clone
-              </button>
-              <a className="export-link" href={shankpitLevels.exportUrl(activeId)} target="_blank" rel="noreferrer">
-                Export JSON
-              </a>
-              <button className="danger" type="button" onClick={doDelete}>
-                Delete
-              </button>
-            </>
+          {livePop.open && (
+            <div className="pop">
+              <h3>Live SHANKPIT session</h3>
+              {live.id === null ? (
+                <>
+                  <p className="help">Edit the level while a SHANKPIT client is connected. Start a session and give its id to the game, or join one the game started.</p>
+                  <button type="button" className="btn btn--live-solid" onClick={() => void live.create()}>
+                    Start live session
+                  </button>
+                  <div className="inline">
+                    <input className="field" placeholder="join: paste session id" value={joinId} onChange={(e) => setJoinId(e.target.value)} />
+                    <button type="button" className="btn btn--live" onClick={() => void live.join(joinId)} disabled={joinId.trim() === ''}>
+                      Join
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="help">
+                    Give this id to the SHANKPIT client: <span className="code">shank_lobby --edit-map --edit-session {live.id}</span>
+                  </p>
+                  <div className="inline">
+                    <span className="code" title="Session id">{live.id}</span>
+                    <button type="button" className="btn btn--sm" onClick={() => void navigator.clipboard?.writeText(live.id ?? '')}>
+                      <Ic n="copy" sm />
+                      Copy
+                    </button>
+                  </div>
+                  <label className="block">
+                    <span className="cap">Spawn at</span>
+                    <select className="field" value={live.spawnMode} onChange={(e) => live.setSpawnMode(e.target.value as SpawnMode)}>
+                      <option value="spawner">spawner</option>
+                      <option value="crosshair">crosshair</option>
+                    </select>
+                  </label>
+                  <button type="button" className="btn btn--danger" onClick={live.leave}>
+                    Leave session
+                  </button>
+                </>
+              )}
+              <p className="help">{live.status}</p>
+            </div>
           )}
-          {error && <span className="error">{error}</span>}
         </div>
+        {activeId !== null && (
+          <div className="livewrap more" ref={morePop.ref}>
+            <button type="button" className="btn btn--ghost btn--icon" aria-label="More actions" aria-expanded={morePop.open} onClick={() => morePop.setOpen((o) => !o)}>
+              <Ic n="more" />
+            </button>
+            {morePop.open && (
+              <div className="pop">
+                <div className="inline">
+                  <input className="field" placeholder="clone as..." value={newName} onChange={(e) => setNewName(e.target.value)} />
+                  <button type="button" className="btn btn--sm" onClick={doClone} disabled={!newName}>
+                    <Ic n="copy" sm />
+                    Clone
+                  </button>
+                </div>
+                <a className="btn export-link" href={shankpitLevels.exportUrl(activeId)} target="_blank" rel="noreferrer">
+                  <Ic n="download" sm />
+                  Export JSON
+                </a>
+                <button className="btn btn--danger danger" type="button" onClick={doDelete}>
+                  <Ic n="trash" sm />
+                  Delete level
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          className={'btn btn--save ' + (dirty || activeId === null ? 'is-dirty' : 'is-clean')}
+          onClick={save}
+          disabled={!dirty && activeId !== null}
+        >
+          <Ic n="save" />
+          {activeId === null ? 'Create level' : 'Save level'}
+        </button>
+      </div>
 
-        <div className="editor-body">
-          <div className="canvas-pane">
+      <div className="sle__main">
+        <aside className="panel sle__list">
+          <div className="side__head">
+            <span className="side__title">
+              <Ic n="layers" />
+              <h2>Levels</h2>
+              <span className="count">{list.length}</span>
+            </span>
+            <button type="button" className="btn btn--add btn--sm" onClick={startNew}>
+              <Ic n="plus" sm />
+              New
+            </button>
+          </div>
+          <label className="search">
+            <Ic n="search" />
+            <input placeholder="Filter levels" aria-label="Filter levels" value={lvFilter} onChange={(e) => setLvFilter(e.target.value)} />
+          </label>
+          <div className="legend">
+            <span>Tag a level:</span>
+            <span><Ic n="play" sm /> Queue default</span>
+            <span><Ic n="book" sm /> Story start</span>
+            <span><Ic n="skull" sm /> Zombies</span>
+          </div>
+          <div className="lvlist">
+            {activeId === null && (
+              <div className="lv lv--draft">
+                <div className="lv__top">
+                  <span className="lv__name"><b>{draft.name || 'untitled'}</b></span>
+                  <span className="badge">Draft</span>
+                </div>
+                <span className="cubes">
+                  <Ic n="cube" sm /> {draft.walls.length} cubes · not saved yet
+                </span>
+              </div>
+            )}
+            {filteredList.map((l) => (
+              <div key={l.id} className={'lv' + (l.id === activeId ? ' lv--draft' : '')}>
+                <button type="button" className="lv__top link" style={{ textDecoration: 'none', width: '100%' }} onClick={() => load(l.id)} title={`Open ${l.name}`}>
+                  <span className="lv__name"><b>{l.name}</b></span>
+                  <span className="cubes">
+                    <Ic n="cube" sm /> {l.wall_count}
+                  </span>
+                </button>
+                {/* QUEUE default / STORY start / ZOMBIES: exactly one level holds each tag; each press applies immediately. */}
+                <div className="roles">
+                  <button
+                    type="button"
+                    className={'role' + (l.is_default_queue ? ' is-on' : '')}
+                    title={l.is_default_queue ? 'QUEUE default' : 'Set as QUEUE default'}
+                    onClick={async () => {
+                      await shankpitLevels.setDefaultQueue(l.id)
+                      refresh()
+                    }}
+                  >
+                    <Ic n="play" sm /> Queue
+                  </button>
+                  <button
+                    type="button"
+                    className={'role' + (l.is_story_start ? ' is-on' : '')}
+                    title={l.is_story_start ? 'STORY start' : 'Set as STORY start'}
+                    onClick={async () => {
+                      await shankpitLevels.setStoryStart(l.id)
+                      refresh()
+                    }}
+                  >
+                    <Ic n="book" sm /> Story
+                  </button>
+                  <button type="button" className="role" title="Copy into the ZOMBIES repository and make it the ZOMBIES level" onClick={() => void tagZombies(l.id)}>
+                    <Ic n="skull" sm /> Zombies
+                  </button>
+                </div>
+              </div>
+            ))}
+            {filteredList.length === 0 && <div className="noresults">{lvFilter ? `No levels match "${lvFilter}".` : 'No saved levels yet.'}</div>}
+            <div className="sechead">ZOMBIE levels</div>
+            {zombieList.map((l) => (
+              <div key={l.id} className={'lv' + (l.id === activeId ? ' lv--draft' : '')}>
+                <button type="button" className="lv__top link" style={{ textDecoration: 'none', width: '100%' }} onClick={() => load(l.id)}>
+                  <span className="lv__name"><b>{l.name}</b></span>
+                  <span className="cubes">
+                    <Ic n="cube" sm /> {l.wall_count}
+                  </span>
+                </button>
+                <div className="roles">
+                  <button type="button" className={'role' + (l.is_zombie_default ? ' is-on' : '')} onClick={() => !l.is_zombie_default && void tagZombies(l.id)}>
+                    <Ic n="skull" sm /> {l.is_zombie_default ? 'ZOMBIES default' : 'Make ZOMBIES default'}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {zombieList.length === 0 && <div className="noresults">None yet — tag a level "Zombies", or play ZOMBIES and press F1.</div>}
+          </div>
+          <p className="help" style={{ padding: '0 14px 14px' }}>
+            Materials (shader, specular/shininess, friction, textures) live in the "Materials" tab — a cube here only picks one by name.
+          </p>
+        </aside>
+
+        <div className="sle__center">
+          <div className="panel tools">
+            <div className="tools__row">
+              <div className="seg" role="group" aria-label="Edit mode">
+                <button type="button" className={'seg__b' + (editMode === 'object' ? ' is-on' : '')} onClick={() => setEditMode('object')}>
+                  <Ic n="move" /> Object
+                </button>
+                <button type="button" className={'seg__b' + (editMode === 'face' ? ' is-on' : '')} onClick={() => setEditMode('face')}>
+                  <Ic n="cube" /> Face
+                </button>
+                <button type="button" className={'seg__b' + (editMode === 'rotate' ? ' is-on' : '')} onClick={() => setEditMode('rotate')} title="Drag the red/green/blue rings to rotate the selected cube about X/Y/Z">
+                  <Ic n="rotate" /> Rotate
+                </button>
+              </div>
+              <span className="vsep" />
+              <Sw on={constrainY} onChange={setConstrainY}>Constrain Y while dragging</Sw>
+              <Sw on={arbitraryRotation} onChange={setArbitraryRotation} hint={`snaps to ${ROTATE_SNAP_DEG}°`}>Free rotation</Sw>
+            </div>
+            <div className="tools__row">
+              <span className="tools__label"><Ic n="plus" sm /> Add to scene</span>
+              <button type="button" className="btn btn--add" onClick={addCube}>
+                <Ic n="cube" /> Add cube
+              </button>
+              <button type="button" className="btn btn--add" onClick={addSpawner}>
+                <Ic n="pin" /> Add spawner
+              </button>
+              <button
+                type="button"
+                className="btn btn--add"
+                onClick={addBuggySpawn}
+                title="A thin amber tile named buggy_spawn: a buggy spawns on it. Rename the wall to buggy_spawn_90 etc. to turn it. Widgets can carry one too."
+              >
+                <Ic n="car" /> Add buggy spawn
+              </button>
+            </div>
+          </div>
+
+          <div className="vp">
             <Viewport3D
               width={draft.width}
               height={draft.height}
@@ -2961,82 +3004,307 @@ export default function ShankpitLevelEditor() {
               characters={draft.characters}
               rotateSnap={!arbitraryRotation}
             />
-            <p className="hint">
-              WASD+QE move the yellow spawner marker (Shift = fast) -- the camera always orbits
-              around it, so moving it walks your view through the level too. Middle-mouse drag to
-              orbit in place, scroll to zoom. Tab toggles Object/Edit mode (Alt+3 jumps to Face
-              select).{' '}
-              {editMode === 'object'
-                ? "Object mode: drag a cube to move it, drag the yellow spawner marker to reposition it. New cubes spawn at the marker."
-                : 'Face mode: click a face to select it, drag it to reshape the cube, Alt+E to extrude it into a new connected box.'}{' '}
-              Click a cube to select it.
-            </p>
+            <span className="vp__chip is-mode">{editMode === 'object' ? 'Object mode' : editMode === 'face' ? 'Face mode' : 'Rotate mode'}</span>
+            <span className="vp__chip is-legend">
+              <span><i style={{ background: '#ffd34d' }} />Spawn marker</span>
+              <span><i style={{ background: '#e040fb' }} />Character</span>
+            </span>
+            <span className="vp__chip is-grid">{sizeLabel}</span>
           </div>
-          <div className="side-pane">
+
+          <div className="keys">
+            <span className="keygrp"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>Q</kbd><kbd>E</kbd> Move marker</span>
+            <span className="keygrp"><kbd>Shift</kbd> Fast</span>
+            <span className="keygrp"><kbd>Tab</kbd> Object / Edit</span>
+            <span className="keygrp"><kbd>Alt</kbd>+<kbd>3</kbd> Face select</span>
+            <span className="keygrp"><kbd>Alt</kbd>+<kbd>E</kbd> Extrude face</span>
+            <span className="keygrp"><kbd>Scroll</kbd> Zoom</span>
+            <span className="keygrp"><kbd>Mid-drag</kbd> Orbit</span>
+            <span className="keygrp"><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo</span>
+          </div>
+          <p className="guide">
+            The camera orbits the yellow spawner marker, so moving it walks your view through the level.{' '}
+            {editMode === 'object'
+              ? 'Object mode: drag a cube to move it, drag the spawner marker to reposition it. New cubes spawn at the marker.'
+              : editMode === 'face'
+                ? 'Face mode: click a face to select it, drag it to reshape the cube, Alt+E extrudes it into a new connected box.'
+                : 'Rotate mode: drag the red/green/blue rings to rotate the selected cube.'}{' '}
+            Click a cube to select it.
+          </p>
+        </div>
+
+        <div className="panel sle__side">
+          <div className="sel">
             {selectedWall ? (
-              <WallInspector
-                wall={selectedWall}
-                onChange={(w) => {
-                  const next = draft.walls.map((ow) => (ow.id === w.id ? w : ow))
-                  setWalls(next)
-                }}
-                onDelete={deleteSelected}
-                materials={materials}
-                door={draft.doors.find((d) => d.wall_id === selectedWall.id) ?? null}
-                doorScriptList={doorScriptList}
-                onDoorChange={(scriptId) => setWallDoor(selectedWall.id, scriptId)}
-                isDrexit={isDrexitWall(selectedWall.id)}
-                onToggleDrexit={() => toggleDrexit(selectedWall.id)}
-              />
+              <div className="legacy">
+                <WallInspector
+                  wall={selectedWall}
+                  onChange={(w) => {
+                    const next = draft.walls.map((ow) => (ow.id === w.id ? w : ow))
+                    setWalls(next)
+                  }}
+                  onDelete={deleteSelected}
+                  materials={materials}
+                  door={draft.doors.find((d) => d.wall_id === selectedWall.id) ?? null}
+                  doorScriptList={doorScriptList}
+                  onDoorChange={(scriptId) => setWallDoor(selectedWall.id, scriptId)}
+                  isDrexit={isDrexitWall(selectedWall.id)}
+                  onToggleDrexit={() => toggleDrexit(selectedWall.id)}
+                />
+              </div>
             ) : selectedSpawner ? (
-              <SpawnerInspector spawner={selectedSpawner} onChange={updateSpawner} onDelete={deleteSelectedSpawner} />
+              <div className="legacy">
+                <SpawnerInspector spawner={selectedSpawner} onChange={updateSpawner} onDelete={deleteSelectedSpawner} />
+              </div>
             ) : (
-              <p className="hint">Select a cube or spawner to edit it, or add a new one.</p>
-            )}
-            {draft.walls.length > 0 && (
-              <div className="object-list">
-                <h3>Cubes ({draft.walls.length})</h3>
-                <p className="hint">
-                  Super basic, deliberately flat -- founder real-time: "theres no way to find a
-                  lost cube if you put it inside a big cube etc... it doesnt really need to be
-                  hierarchical." Click one to select it in the scene.
-                </p>
-                {draft.walls.map((w) => (
-                  <button
-                    key={w.id}
-                    type="button"
-                    className={w.id === selected ? 'active' : ''}
-                    onClick={() => {
-                      setSelected(w.id)
-                      setSelectedSpawnPoint(null)
-                    }}
-                  >
-                    {w.name || `Cube #${w.id}`}
-                  </button>
-                ))}
+              <div className="sel__empty">
+                <span className="sel__icon"><Ic n="cursor" /></span>
+                <span>Select a cube or spawner to edit it, or add a new one.</span>
               </div>
             )}
-            {draft.spawners.length > 0 && (
-              <div className="object-list">
-                <h3>Spawners</h3>
-                {draft.spawners.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={s.id === selectedSpawnPoint ? 'active' : ''}
-                    onClick={() => {
-                      setSelectedSpawnPoint(s.id)
-                      setSelected(null)
-                    }}
-                  >
-                    {SPAWNER_TEAM_LABELS[s.team]}
-                  </button>
+          </div>
+
+          <Acc icon="sliders" title="Level" open>
+            <div className="group">
+              <span className="cap">Size</span>
+              <div className="grid3">
+                {(['width', 'height', 'depth'] as const).map((k) => (
+                  <label key={k} className="nf">
+                    <span className="nf__l">{k[0].toUpperCase()}</span>
+                    <input type="number" min={1} aria-label={k} value={draft[k]} onChange={(e) => setDim(k, e.target.value)} />
+                  </label>
                 ))}
               </div>
-            )}
-            {draft.objects.length > 0 && (
-              <div className="object-list">
-                <h3>Objects (levels/widgets placed as objects)</h3>
+              <div className="row">
+                <Sw
+                  on={draft.groundPlaneEnabled}
+                  onChange={(v) => {
+                    setDraft((d) => ({ ...d, groundPlaneEnabled: v }))
+                    setDirty(true)
+                  }}
+                >
+                  Ground plane
+                </Sw>
+                <label className="nf" style={{ width: 170 }} title={`each square is ${SHANKPIT_GRID_CELL_SIZE}u`}>
+                  <span className="nf__l">Squares</span>
+                  <input
+                    type="number"
+                    min={1}
+                    disabled={!draft.groundPlaneEnabled}
+                    value={draft.groundPlaneSquares}
+                    onChange={(e) => {
+                      setDraft((d) => ({ ...d, groundPlaneSquares: Math.max(1, Math.round(Number(e.target.value) || 1)) }))
+                      setDirty(true)
+                    }}
+                  />
+                  <span className="nf__u">×{SHANKPIT_GRID_CELL_SIZE}u</span>
+                </label>
+              </div>
+              {activeId === null && (
+                <div className="lock">
+                  <Ic n="lock" />
+                  <span>
+                    Floor tint and Enclosed unlock once the level is saved.{' '}
+                    <button type="button" className="link link--save" onClick={save}>
+                      Save now
+                    </button>
+                  </span>
+                </div>
+              )}
+              <div className={'group' + (activeId === null ? ' is-locked' : '')} data-testid="floor-tint">
+                <div className="tintrow" title="Tint the level's ground plane so it is not transparent. Pick a colour and an alpha (1 = solid, lower = see-through). Applies immediately.">
+                  <span className="lbl">Floor tint</span>
+                  <input
+                    type="color"
+                    aria-label="Floor tint colour"
+                    disabled={activeId === null}
+                    value={floorTint ? rgbToHex(floorTint) : '#808080'}
+                    onChange={(e) => void applyFloorTint(hexToRgb(e.target.value, floorTint?.a ?? 1))}
+                  />
+                  <label className="alpha">
+                    alpha
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      disabled={activeId === null || !floorTint}
+                      value={floorTint?.a ?? 1}
+                      onChange={(e) => floorTint && void applyFloorTint({ ...floorTint, a: Number(e.target.value) })}
+                    />
+                    {floorTint ? Math.round(floorTint.a * 100) + '%' : '-'}
+                  </label>
+                  <button type="button" className="btn btn--sm btn--ghost" disabled={activeId === null || !floorTint} onClick={() => void applyFloorTint(null)}>
+                    Clear tint
+                  </button>
+                </div>
+                <Sw
+                  on={enclosed}
+                  disabled={activeId === null}
+                  hint="real lighting, no outdoor daylight"
+                  onChange={async (next) => {
+                    setEnclosedState(next) // optimistic -- applies immediately like the QUEUE/STORY tags
+                    if (activeId !== null) {
+                      try {
+                        await shankpitLevels.setEnclosed(activeId, next)
+                      } catch {
+                        setEnclosedState(!next) // revert on a real failure
+                      }
+                    }
+                  }}
+                >
+                  Enclosed / indoor
+                </Sw>
+              </div>
+            </div>
+          </Acc>
+
+          <Acc
+            icon="cube"
+            title="Cubes"
+            count={draft.walls.length}
+            open
+            action={
+              <button type="button" className="btn btn--add btn--sm" onClick={addCube}>
+                <Ic n="plus" sm /> Add
+              </button>
+            }
+          >
+            <p className="help">A flat list on purpose: click one to select it in the scene.</p>
+            <div className="chips">
+              {draft.walls.map((w) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  className={'chip' + (w.id === selected ? ' is-on' : '')}
+                  onClick={() => {
+                    setSelected(w.id)
+                    setSelectedSpawnPoint(null)
+                  }}
+                >
+                  {w.name || `Cube #${w.id}`}
+                </button>
+              ))}
+              {draft.walls.length === 0 && <span className="empty">No cubes yet.</span>}
+            </div>
+          </Acc>
+
+          <Acc
+            icon="pin"
+            title="Spawn points"
+            count={draft.spawners.length}
+            open
+            action={
+              <button type="button" className="btn btn--add btn--sm" onClick={addSpawner}>
+                <Ic n="plus" sm /> Add
+              </button>
+            }
+          >
+            <p className="help">Spawners and buggy spawns. Click one to select it.</p>
+            <div className="chips">
+              {draft.spawners.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={'chip' + (s.id === selectedSpawnPoint ? ' is-on' : '')}
+                  onClick={() => {
+                    setSelectedSpawnPoint(s.id)
+                    setSelected(null)
+                  }}
+                >
+                  {SPAWNER_TEAM_LABELS[s.team]}
+                </button>
+              ))}
+              {draft.spawners.length === 0 && <span className="empty">No spawn points yet.</span>}
+            </div>
+          </Acc>
+
+          <Acc
+            icon="route"
+            title="Waypoints / cover"
+            count={draft.navNodes.length}
+            action={
+              <button type="button" className="btn btn--add btn--sm" onClick={addNavNode}>
+                <Ic n="plus" sm /> Add
+              </button>
+            }
+          >
+            <p className="help">Positioned and linked numerically here — not yet drag-placed in the 3D viewport.</p>
+            <div className="legacy">
+              {draft.navNodes.map((n) => (
+                <NavNodeInspector key={n.id} node={n} allNodes={draft.navNodes} onChange={updateNavNode} onDelete={() => deleteNavNode(n.id)} />
+              ))}
+            </div>
+          </Acc>
+
+          <Acc
+            icon="bot"
+            title="Characters"
+            count={draft.characters.length}
+            action={
+              <button type="button" className="btn btn--add btn--sm" onClick={addCharacter}>
+                <Ic n="plus" sm /> Add
+              </button>
+            }
+          >
+            <p className="help">
+              story_ai NPCs, spawned on the dedicated server in any mode. Role picks the AI's combat/behavior brain, Kit picks which robot
+              model it renders as ("Auto" keeps the connection-order look). Shown in the 3D view as a magenta capsule.
+            </p>
+            <div className="legacy">
+              {draft.characters.map((c) => (
+                <CharacterInspector key={c.id} character={c} onChange={updateCharacter} onDelete={() => deleteCharacter(c.id)} />
+              ))}
+            </div>
+          </Acc>
+
+          <Acc
+            icon="exit"
+            title="Level exits"
+            count={draft.levelExits.length}
+            action={
+              <button type="button" className="btn btn--add btn--sm" onClick={addLevelExit}>
+                <Ic n="plus" sm /> Add
+              </button>
+            }
+          >
+            <p className="help">
+              A player entering an exit volume moves to the "Next level" below. Every exit in this level leads to the same next level.
+            </p>
+            <Sw on={showLevelExits} onChange={setShowLevelExits}>Show exit markers in the 3D view</Sw>
+            <label className="block">
+              <span className="cap">Next level</span>
+              <select
+                className="field"
+                value={draft.nextLevelId ?? ''}
+                onChange={(e) => setNextLevelId(e.target.value === '' ? null : Number(e.target.value))}
+              >
+                <option value="">(none — end of the story)</option>
+                {list
+                  .filter((l) => l.id !== activeId)
+                  .map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <div className="legacy">
+              {draft.levelExits.map((ex) => (
+                <LevelExitInspector
+                  key={ex.id}
+                  exit={ex}
+                  onChange={updateLevelExit}
+                  onDelete={() => deleteLevelExit(ex.id)}
+                  targetLevelSpawners={targetLevelSpawners}
+                />
+              ))}
+            </div>
+          </Acc>
+
+          {draft.objects.length > 0 && (
+            <Acc icon="layers" title="Placed objects" count={draft.objects.length} open>
+              <div className="legacy">
                 {draft.objects.map((o) => (
                   <ObjectInspector
                     key={o.id}
@@ -3051,63 +3319,36 @@ export default function ShankpitLevelEditor() {
                   />
                 ))}
               </div>
-            )}
-            <div className="object-list">
-              <h3>Waypoint / cover nodes</h3>
-              <p className="hint">
-                Positioned and linked numerically here (same v0 scope as Objects above) -- not yet drag-placed in the 3D
-                viewport.
-              </p>
-              <button type="button" onClick={addNavNode}>
-                + Add waypoint node
-              </button>
-              {draft.navNodes.map((n) => (
-                <NavNodeInspector
-                  key={n.id}
-                  node={n}
-                  allNodes={draft.navNodes}
-                  onChange={updateNavNode}
-                  onDelete={() => deleteNavNode(n.id)}
-                />
-              ))}
-            </div>
-            <div className="object-list">
-              <h3>Characters (story_ai NPCs)</h3>
-              <p className="hint">
-                Spawn on the dedicated server in any mode (S480) -- Role picks the AI's real combat/behavior
-                brain, Kit picks which of the 5 real robot models it renders as (S492 -- "Auto" keeps the
-                prior connection-order round-robin/witness_ai-role look for characters that don't opt in).
-                Position edited numerically, same v0 scope as Objects/Waypoints above; shown in the 3D view
-                as a magenta capsule.
-              </p>
-              <button type="button" onClick={addCharacter}>
-                + Add character
-              </button>
-              {draft.characters.map((c) => (
-                <CharacterInspector key={c.id} character={c} onChange={updateCharacter} onDelete={() => deleteCharacter(c.id)} />
-              ))}
-            </div>
-            <div className="object-list">
-              {/* S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we need
-                  a way to string 2 levels together and ... we need the loading points or
-                  whatever the opposite of the spawners is") -- a real, placed trigger volume; a
-                  player entering it transitions to whichever level "Next level" below names. */}
-              <h3>Level exits</h3>
-              <p className="hint">
-                A player entering this volume transitions to the "Next level" chosen below. Every exit in this level leads
-                to the same next level (v0 is a chain, not a per-exit destination).
-              </p>
-              <label>
-                <input type="checkbox" checked={showLevelExits} onChange={(e) => setShowLevelExits(e.target.checked)} />{' '}
-                Show exit markers in the 3D view (editor only -- never shown in the real game client)
-              </label>
-              <label>
-                Next level{' '}
-                <select
-                  value={draft.nextLevelId ?? ''}
-                  onChange={(e) => setNextLevelId(e.target.value === '' ? null : Number(e.target.value))}
-                >
-                  <option value="">(none -- end of the story)</option>
+            </Acc>
+          )}
+
+          <Acc icon="import" title="Import & embed">
+            <label
+              className="block"
+              title="Import a Blender glTF 2.0 export (.glb, or .gltf + its .bin): one cube per mesh object, sized to its bounds; objects named door... become doors. Added to this level; Undo removes it."
+            >
+              <span className="cap">glTF import {gltfBusy ? '— importing…' : ''}</span>
+              <input
+                type="file"
+                multiple
+                accept=".glb,.gltf,.bin,.png,.jpg,.jpeg"
+                disabled={gltfBusy}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? [])
+                  e.target.value = ''
+                  if (files.length > 0) void importGltfFiles(files)
+                }}
+              />
+            </label>
+            <label className="nf" style={{ width: 170 }}>
+              <span className="nf__l">glTF scale</span>
+              <input type="number" step="any" min="0" value={gltfScale} onChange={(e) => setGltfScale(e.target.value)} />
+            </label>
+            <div className="block">
+              <span className="cap">Place another level</span>
+              <div className="inline">
+                <select className="field" value={objectPickLevelId} onChange={(e) => setObjectPickLevelId(e.target.value === '' ? '' : Number(e.target.value))}>
+                  <option value="">Add level as object...</option>
                   {list
                     .filter((l) => l.id !== activeId)
                     .map((l) => (
@@ -3116,23 +3357,45 @@ export default function ShankpitLevelEditor() {
                       </option>
                     ))}
                 </select>
-              </label>
-              <button type="button" onClick={addLevelExit}>
-                + Add level exit
-              </button>
-              {draft.levelExits.map((ex) => (
-                <LevelExitInspector
-                  key={ex.id}
-                  exit={ex}
-                  onChange={updateLevelExit}
-                  onDelete={() => deleteLevelExit(ex.id)}
-                  targetLevelSpawners={targetLevelSpawners}
-                />
-              ))}
+                <button
+                  type="button"
+                  className="btn btn--add"
+                  disabled={objectPickLevelId === ''}
+                  onClick={() => {
+                    if (objectPickLevelId !== '') addObject({ refLevelId: objectPickLevelId })
+                  }}
+                >
+                  <Ic n="plus" sm /> Add
+                </button>
+              </div>
             </div>
-          </div>
+            {/* a level and a widget are different things (a widget has no dimensions/ground plane): separate picker */}
+            <div className="block">
+              <span className="cap">Place a widget</span>
+              <div className="inline">
+                <select className="field" value={objectPickWidgetId} onChange={(e) => setObjectPickWidgetId(e.target.value === '' ? '' : Number(e.target.value))}>
+                  <option value="">Add widget as object...</option>
+                  {widgetList.map((wgt) => (
+                    <option key={wgt.id} value={wgt.id}>
+                      {wgt.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn--add"
+                  disabled={objectPickWidgetId === ''}
+                  onClick={() => {
+                    if (objectPickWidgetId !== '') addObject({ refWidgetId: objectPickWidgetId })
+                  }}
+                >
+                  <Ic n="plus" sm /> Add
+                </button>
+              </div>
+            </div>
+          </Acc>
         </div>
-      </main>
+      </div>
     </div>
   )
 }
