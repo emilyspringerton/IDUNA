@@ -79,6 +79,13 @@ func TestZombieRepository(t *testing.T) {
 		t.Fatalf("main registry should still hold only the original: %+v", lv)
 	}
 
+	// Pressing the button again on the same level must not fail on the (unique) copy name.
+	z2, err := st.SetZombieDefaultLevel(ctx, src.ID)
+	if err != nil || z2.ID == z.ID || !z2.IsZombieDefault {
+		t.Fatalf("second set-for-zombies: %v %+v", err, z2)
+	}
+	z = z2
+
 	// A zombies-mode snapshot lands in zombies and becomes the new default; the old one is unflagged.
 	snap, err := st.SnapshotLevelTo(ctx, z.ID, []shankpit.BrickCell{{Wall: 0, Key: 5, HP: 0}}, time.Date(2026, 10, 2, 15, 30, 45, 0, time.UTC), shankpit.CollectionZombies, true)
 	if err != nil {
@@ -94,8 +101,8 @@ func TestZombieRepository(t *testing.T) {
 			}
 		}
 	}
-	if len(zl) != 2 || defaults != 1 {
-		t.Fatalf("want 2 zombie levels with exactly one default, got %d / %d", len(zl), defaults)
+	if len(zl) != 3 || defaults != 1 {
+		t.Fatalf("want 3 zombie levels with exactly one default, got %d / %d", len(zl), defaults)
 	}
 	// A plain snapshot must not leak into zombies or take the flag.
 	plain, err := st.SnapshotLevelTo(ctx, src.ID, nil, time.Date(2026, 10, 2, 15, 30, 46, 0, time.UTC), "bogus", true)

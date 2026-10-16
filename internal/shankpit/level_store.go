@@ -1158,7 +1158,19 @@ func (s *LevelStore) SetZombieDefaultLevel(ctx context.Context, id int64) (*Leve
 		if len(name) > 40 {
 			name = name[:40]
 		}
-		cp, err := s.CloneLevel(ctx, id, name+"_ZOMBIES")
+		// Names are unique: a second "Set for ZOMBIES" on the same level (or one whose copy already
+		// exists) used to fail on the name. Take the next free suffix instead.
+		var cp *Level
+		for n := 1; n <= 50; n++ {
+			cand := name + "_ZOMBIES"
+			if n > 1 {
+				cand = fmt.Sprintf("%s_ZOMBIES_%d", name, n)
+			}
+			cp, err = s.CloneLevel(ctx, id, cand)
+			if err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+				break
+			}
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -2621,8 +2621,12 @@ export default function ShankpitLevelEditor() {
               <button
                 type="button"
                 onClick={async () => {
-                  await shankpitLevels.setZombieDefault(l.id)
-                  refresh()
+                  try {
+                    await shankpitLevels.setZombieDefault(l.id)
+                    refresh()
+                  } catch (e) {
+                    window.alert('Set for ZOMBIES failed: ' + (e instanceof Error ? e.message : String(e)))
+                  }
                 }}
               >
                 Set for ZOMBIES
@@ -2643,8 +2647,12 @@ export default function ShankpitLevelEditor() {
                 <button
                   type="button"
                   onClick={async () => {
-                    await shankpitLevels.setZombieDefault(l.id)
-                    refresh()
+                    try {
+                      await shankpitLevels.setZombieDefault(l.id)
+                      refresh()
+                    } catch (e) {
+                      window.alert('Set for ZOMBIES failed: ' + (e instanceof Error ? e.message : String(e)))
+                    }
                   }}
                 >
                   Make ZOMBIES default

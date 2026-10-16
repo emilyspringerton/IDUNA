@@ -1,7 +1,8 @@
 # IDUNA Changelog
 
 ## 2026-10-16
-- feat(nock): live edit sessions now sync SHANKPIT -> NOCK. A box deleted (X) or placed (B) in the native live editor is applied to the NOCK draft (matched by geometry, since the game sees the flattened export), and F5 in the game asks NOCK to save via a new `save` session event. Handler test covers the new events; the browser path is type-checked, not driven.
+
+- NOCK "Set for ZOMBIES": pressing it twice on one level no longer fails on the unique `_ZOMBIES` copy name (next free suffix), and the button now alerts on failure instead of failing silently.- feat(nock): live edit sessions now sync SHANKPIT -> NOCK. A box deleted (X) or placed (B) in the native live editor is applied to the NOCK draft (matched by geometry, since the game sees the flattened export), and F5 in the game asks NOCK to save via a new `save` session event. Handler test covers the new events; the browser path is type-checked, not driven.
 
 ## 2026-10-16
 
