@@ -679,7 +679,7 @@ function Viewport3D({
     | { mode: 'orbit'; lastX: number; lastY: number }
     | { mode: 'face'; hit: FaceHit; linePoint: THREE.Vector3; axisDir: THREE.Vector3; startT: number; startWall: ShankpitWall }
     | { mode: 'move-wall'; wallIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3; startWall: ShankpitWall; cloneOf: boolean }
-    | { mode: 'move-object'; objectIndex: number; plane: THREE.Plane; startPoint: THREE.Vector3; startObj: ShankpitLevelObject }
+    | { mode: 'move-object'; objectIndex: number; plane: THREE.Plane; startPoint: THREE.Vector3; startObj: ShankpitLevelObject; cloneOf: boolean; size: THREE.Vector3 }
     | { mode: 'rotate'; wallIndex: number; axis: 0 | 1 | 2; plane: THREE.Plane; center: THREE.Vector3; basisA: THREE.Vector3; basisB: THREE.Vector3; startAngle: number; startQuat: THREE.Quaternion; startWall: ShankpitWall }
     | { mode: 'move-spawner'; plane: THREE.Plane; grabOffset: THREE.Vector3 }
     | { mode: 'move-spawn-point'; spawnIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3 }
@@ -1003,9 +1003,21 @@ function Viewport3D({
           onSelect(null)
           onSelectSpawnPointRef.current(null)
           onDragStartRef.current()
+          const size = new THREE.Box3().setFromObject(root as THREE.Group).getSize(new THREE.Vector3())
+          if (e.altKey) {
+            // Alt-drag clones an embedded level/widget exactly like a cube: the copy is
+            // appended and dragged, the original stays put.
+            const clone: ShankpitLevelObject = { ...startObj, id: nextObjectId(objectsRef.current) }
+            onObjectsChangeRef.current([...objectsRef.current, clone])
+            dragRef.current = {
+              mode: 'move-object', objectIndex: objectsRef.current.length, startObj: { ...clone },
+              plane: dragPlaneThrough(objHit.point.clone()), startPoint: objHit.point.clone(), cloneOf: true, size,
+            }
+            return
+          }
           dragRef.current = {
             mode: 'move-object', objectIndex, startObj: { ...startObj },
-            plane: dragPlaneThrough(objHit.point.clone()), startPoint: objHit.point.clone(),
+            plane: dragPlaneThrough(objHit.point.clone()), startPoint: objHit.point.clone(), cloneOf: false, size,
           }
           return
         }
@@ -1109,6 +1121,19 @@ function Viewport3D({
         const hp = new THREE.Vector3()
         if (!raycaster.ray.intersectPlane(drag.plane, hp)) return
         const d = hp.sub(drag.startPoint)
+        if (e.shiftKey) {
+          // Shift locks the move to the dominant world axis (an embedded level only turns in 90
+          // degree steps, so its footprint axes are the world axes); a copy snaps to whole
+          // footprint lengths so copies sit flush, same as cubes.
+          const comps: ('x' | 'y' | 'z')[] = constrainYRef.current ? ['x', 'z'] : ['x', 'y', 'z']
+          let best: 'x' | 'y' | 'z' = comps[0]
+          for (const c of comps) if (Math.abs(d[c]) > Math.abs(d[best])) best = c
+          const keep = d[best]
+          let t = keep
+          if (drag.cloneOf && drag.size[best] > 0.01) t = Math.round(t / drag.size[best]) * drag.size[best]
+          d.set(0, 0, 0)
+          d[best] = t
+        }
         const next = objectsRef.current.slice()
         next[drag.objectIndex] = {
           ...drag.startObj,
@@ -1701,6 +1726,19 @@ export function WallInspector({
       {field('Rot X°', 'rot_x', { step: ROTATE_SNAP_DEG })}
       {field('Rot Y°', 'rot_y', { step: ROTATE_SNAP_DEG })}
       {field('Rot Z°', 'rot_z', { step: ROTATE_SNAP_DEG })}
+      <div className="mode-toggle">
+        <button
+          type="button"
+          onClick={() => {
+            // a quarter turn about world Y, composed with whatever rotation the cube already has
+            const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2).multiply(new THREE.Quaternion().setFromEuler(wallEuler(wall)))
+            const e = new THREE.Euler().setFromQuaternion(q, 'XYZ')
+            onChange({ ...wall, rot_x: roundDeg(e.x), rot_y: roundDeg(e.y), rot_z: roundDeg(e.z) })
+          }}
+        >
+          Rotate 90° (now {wall.rot_y ?? 0}°)
+        </button>
+      </div>
       {field('Size X', 'sx', { min: MIN_WALL_SIZE })}
       {field('Size Y', 'sy', { min: MIN_WALL_SIZE })}
       {field('Size Z', 'sz', { min: MIN_WALL_SIZE })}
@@ -2227,7 +2265,7 @@ export default function ShankpitLevelEditor() {
     }
   }, [draft.nextLevelId])
   const [editMode, setEditMode] = useState<EditMode>('object')
-  // Tab toggles Object <-> Edit mode; Alt+3 jumps straight to Face select (S488, founder
+  // Tab cycles Object -> Face -> Rotate (Shift+Tab back); Alt+3 jumps straight to Face select (S488, founder
   // real-time: "also do alt 1 2 3 for the different edit modes tab moves you between object and
   // edit mode"). Matches Blender's own real convention (Tab for the mode toggle, 1/2/3 for
   // vertex/edge/face select -- here Alt-modified per the founder's own "hotkeys can be alt driven
@@ -2240,7 +2278,9 @@ export default function ShankpitLevelEditor() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.key === 'Tab') {
         e.preventDefault()
-        setEditMode((m) => (m === 'object' ? 'face' : 'object'))
+        // Tab cycles Object -> Face -> Rotate; Shift+Tab goes back.
+        const order: EditMode[] = ['object', 'face', 'rotate']
+        setEditMode((m) => order[(order.indexOf(m) + (e.shiftKey ? 2 : 1)) % 3])
         return
       }
       if (e.altKey && e.key === '3') {
@@ -3086,7 +3126,7 @@ export default function ShankpitLevelEditor() {
           <div className="keys">
             <span className="keygrp"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>Q</kbd><kbd>E</kbd> Move marker</span>
             <span className="keygrp"><kbd>Shift</kbd> Fast</span>
-            <span className="keygrp"><kbd>Tab</kbd> Object / Edit</span>
+            <span className="keygrp"><kbd>Tab</kbd> Object / Face / Rotate</span>
             <span className="keygrp"><kbd>Alt</kbd>+<kbd>3</kbd> Face select</span>
             <span className="keygrp"><kbd>Alt</kbd>+<kbd>E</kbd> Extrude face</span>
             <span className="keygrp"><kbd>Alt</kbd>+drag Copy · +<kbd>Shift</kbd> axis-lock, flush</span>
