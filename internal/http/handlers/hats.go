@@ -18,6 +18,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,6 +40,11 @@ type hatResponse struct {
 	ImageURL   string `json:"image_url,omitempty"`
 	Creator    string `json:"creator,omitempty"`
 	SalesCount int    `json:"sales_count,omitempty"`
+	// Limited editions: QuantityLimit is nil for unlimited hats. Remaining/SoldOut let the store
+	// show "N left" and disable Buy; a sold-out hat is only available on the secondary market.
+	QuantityLimit *int `json:"quantity_limit,omitempty"`
+	Remaining     *int `json:"remaining,omitempty"`
+	SoldOut       bool `json:"sold_out,omitempty"`
 }
 
 type ownedHatResponse struct {
@@ -71,7 +77,7 @@ func (h *MMOHandler) routeHats(w http.ResponseWriter, r *http.Request, path stri
 func (h *MMOHandler) handleListHatCatalog(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.QueryContext(r.Context(),
 		`SELECT hats.hat_id, hats.name, hats.description, hats.flow_cost, hats.image_asset,
-		        CASE WHEN hats.png_data IS NULL THEN 0 ELSE 1 END, COALESCE(c.name, ''), hats.sales_count
+		        CASE WHEN hats.png_data IS NULL THEN 0 ELSE 1 END, COALESCE(c.name, ''), hats.sales_count, hats.quantity_limit
 		 FROM hats LEFT JOIN characters c ON c.character_id = hats.generated_by_character_id
 		 WHERE hats.status = 'listed' AND hats.flow_cost > 0
 		 ORDER BY hats.flow_cost ASC, hats.name ASC`)
@@ -86,9 +92,17 @@ func (h *MMOHandler) handleListHatCatalog(w http.ResponseWriter, r *http.Request
 		var hat hatResponse
 		var hasPNG int
 		if err := rows.Scan(&hat.HatID, &hat.Name, &hat.Description, &hat.FlowCost, &hat.ImageAsset,
-			&hasPNG, &hat.Creator, &hat.SalesCount); err != nil {
+			&hasPNG, &hat.Creator, &hat.SalesCount, &hat.QuantityLimit); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if hat.QuantityLimit != nil {
+			left := *hat.QuantityLimit - hat.SalesCount
+			if left < 0 {
+				left = 0
+			}
+			hat.Remaining = &left
+			hat.SoldOut = left == 0
 		}
 		if hasPNG != 0 {
 			hat.ImageURL = "/api/v1/hats/" + hat.HatID + "/image"
@@ -258,6 +272,10 @@ func (h *MMOHandler) handleBuyHat(w http.ResponseWriter, r *http.Request, charac
 		sellerID = creatorID.String
 	}
 	if err := settleHatSale(r.Context(), tx, req.HatID, characterID, sellerID, flowCost, now); err != nil {
+		if errors.Is(err, errHatSoldOut) {
+			mmoWriteError(w, http.StatusGone, "sold out -- this limited edition is only available on the secondary market now")
+			return
+		}
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

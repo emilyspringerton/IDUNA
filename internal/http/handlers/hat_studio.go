@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -49,6 +50,7 @@ const (
 	hatMaxPNGBytes    = 16 * 1024
 	hatMinPixels      = 8
 	hatReportHold     = 3 // distinct reporters before a hat is held for review
+	hatMaxQuantity    = 1000000
 )
 
 // splitHatPrice returns (creator, burn). The creator's cut rounds down so any odd Flow is
@@ -86,9 +88,21 @@ func settleHatSale(ctx context.Context, tx *sql.Tx, hatID, buyerID, sellerID str
 		uuid.New().String(), hatID, buyerID, seller, price, creator, burn, now); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE hats SET sales_count = sales_count + 1 WHERE hat_id = ?`, hatID)
-	return err
+	// Claim one unit of a limited edition atomically: the guard in the WHERE clause means two
+	// buyers racing for the last copy cannot both succeed.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE hats SET sales_count = sales_count + 1
+		 WHERE hat_id = ? AND (quantity_limit IS NULL OR sales_count < quantity_limit)`, hatID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errHatSoldOut
+	}
+	return nil
 }
+
+var errHatSoldOut = errors.New("hat sold out")
 
 // routeHatStudio handles the /api/v1/hats/... studio routes; false = not one of ours.
 func (h *MMOHandler) routeHatStudio(w http.ResponseWriter, r *http.Request, path string) bool {
@@ -178,6 +192,8 @@ func (h *MMOHandler) handleDesignHat(w http.ResponseWriter, r *http.Request, cha
 		Description string `json:"description"`
 		FlowCost    int    `json:"flow_cost"`
 		PNGBase64   string `json:"png_base64"`
+		// QuantityLimit makes the hat a limited edition; omitted/null = unlimited.
+		QuantityLimit *int `json:"quantity_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		mmoWriteError(w, http.StatusBadRequest, "invalid request body")
@@ -195,6 +211,10 @@ func (h *MMOHandler) handleDesignHat(w http.ResponseWriter, r *http.Request, cha
 	}
 	if req.FlowCost < hatMinPrice || req.FlowCost > hatMaxPrice {
 		mmoWriteError(w, http.StatusBadRequest, "price must be between 10 and 100000 Flow")
+		return
+	}
+	if req.QuantityLimit != nil && (*req.QuantityLimit < 1 || *req.QuantityLimit > hatMaxQuantity) {
+		mmoWriteError(w, http.StatusBadRequest, "quantity limit must be between 1 and 1,000,000")
 		return
 	}
 	pngBytes, bad := decodeHatPNG(req.PNGBase64)
@@ -226,9 +246,9 @@ func (h *MMOHandler) handleDesignHat(w http.ResponseWriter, r *http.Request, cha
 	hatID := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(r.Context(),
-		`INSERT INTO hats (hat_id, name, description, flow_cost, image_asset, user_generated, generated_by_character_id, created_at, png_data, status)
-		 VALUES (?, ?, ?, ?, '', 1, ?, ?, ?, 'listed')`,
-		hatID, req.Name, req.Description, req.FlowCost, characterID, now, pngBytes); err != nil {
+		`INSERT INTO hats (hat_id, name, description, flow_cost, image_asset, user_generated, generated_by_character_id, created_at, png_data, status, quantity_limit)
+		 VALUES (?, ?, ?, ?, '', 1, ?, ?, ?, 'listed', ?)`,
+		hatID, req.Name, req.Description, req.FlowCost, characterID, now, pngBytes, req.QuantityLimit); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -245,6 +265,7 @@ func (h *MMOHandler) handleDesignHat(w http.ResponseWriter, r *http.Request, cha
 	}
 	writeJSON(w, http.StatusCreated, hatResponse{
 		HatID: hatID, Name: req.Name, Description: req.Description, FlowCost: req.FlowCost,
+		QuantityLimit: req.QuantityLimit,
 		ImageURL: "/api/v1/hats/" + hatID + "/image",
 	})
 }
@@ -257,6 +278,8 @@ type designResponse struct {
 	Status        string `json:"status"`
 	ImageURL      string `json:"image_url"`
 	SalesCount    int    `json:"sales_count"`
+	QuantityLimit *int   `json:"quantity_limit,omitempty"`
+	SoldOut       bool   `json:"sold_out,omitempty"`
 	FlowEarned    int    `json:"flow_earned"`
 	FlowBurned    int    `json:"flow_burned"`
 	ReportCount   int    `json:"report_count"`
@@ -268,7 +291,7 @@ func (h *MMOHandler) handleListDesigns(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT h.hat_id, h.name, h.description, h.flow_cost, h.status, h.sales_count, h.report_count,
+		`SELECT h.hat_id, h.name, h.description, h.flow_cost, h.status, h.sales_count, h.report_count, h.quantity_limit,
 		        COALESCE((SELECT SUM(creator_amount) FROM hat_sales s WHERE s.hat_id=h.hat_id), 0),
 		        COALESCE((SELECT SUM(burn_amount)    FROM hat_sales s WHERE s.hat_id=h.hat_id), 0)
 		 FROM hats h
@@ -284,10 +307,11 @@ func (h *MMOHandler) handleListDesigns(w http.ResponseWriter, r *http.Request, c
 	for rows.Next() {
 		var d designResponse
 		if err := rows.Scan(&d.HatID, &d.Name, &d.Description, &d.FlowCost, &d.Status,
-			&d.SalesCount, &d.ReportCount, &d.FlowEarned, &d.FlowBurned); err != nil {
+			&d.SalesCount, &d.ReportCount, &d.QuantityLimit, &d.FlowEarned, &d.FlowBurned); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		d.SoldOut = d.QuantityLimit != nil && d.SalesCount >= *d.QuantityLimit
 		d.ImageURL = "/api/v1/hats/" + d.HatID + "/image"
 		totalEarned += d.FlowEarned
 		totalBurned += d.FlowBurned

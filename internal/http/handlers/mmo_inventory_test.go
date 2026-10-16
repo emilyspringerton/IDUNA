@@ -88,7 +88,8 @@ func newInventoryDB(t *testing.T) *sql.DB {
 			png_data                  BLOB,
 			status                    TEXT NOT NULL DEFAULT 'listed',
 			report_count              INTEGER NOT NULL DEFAULT 0,
-			sales_count               INTEGER NOT NULL DEFAULT 0
+			sales_count               INTEGER NOT NULL DEFAULT 0,
+			quantity_limit            INTEGER
 		);
 		CREATE TABLE hat_sales (
 			sale_id TEXT PRIMARY KEY, hat_id TEXT NOT NULL, buyer_character_id TEXT NOT NULL,

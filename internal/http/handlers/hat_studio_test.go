@@ -212,3 +212,71 @@ func TestHatStudio_DesignLimit(t *testing.T) {
 		t.Errorf("want 409, got %d", rec.Code)
 	}
 }
+
+func TestHatStudio_LimitedEdition_SellsOutThenRefuses(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	for _, id := range []string{"maker", "b1", "b2", "b3"} {
+		seedCharacterForInv(t, db, id)
+	}
+	db.Exec(`UPDATE characters SET gold_balance=1000 WHERE character_id IN ('b1','b2','b3')`)
+	rec := studioDo(t, db, "POST", "/api/v1/characters/maker/hats/design", map[string]any{
+		"name": "Ltd Cone", "flow_cost": 100, "png_base64": studioPNG(t, 32, 100), "quantity_limit": 2,
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("publish: %d %s", rec.Code, rec.Body.String())
+	}
+	var hat map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &hat)
+	id := hat["hat_id"].(string)
+
+	for _, b := range []string{"b1", "b2"} {
+		if r := studioDo(t, db, "POST", "/api/v1/characters/"+b+"/hats/buy", map[string]string{"hat_id": id}); r.Code != http.StatusNoContent {
+			t.Fatalf("%s buy: %d %s", b, r.Code, r.Body.String())
+		}
+	}
+	// Sold out: refused, and the buyer is not charged.
+	r := studioDo(t, db, "POST", "/api/v1/characters/b3/hats/buy", map[string]string{"hat_id": id})
+	if r.Code != http.StatusGone {
+		t.Fatalf("third buy = %d, want 410: %s", r.Code, r.Body.String())
+	}
+	if g := gold(db, "b3"); g != 1000 {
+		t.Errorf("sold-out buyer was charged: balance %d", g)
+	}
+	// Catalog still lists it, flagged sold out with nothing remaining.
+	cat := studioDo(t, db, "GET", "/api/v1/hats", nil)
+	var list []map[string]any
+	json.Unmarshal(cat.Body.Bytes(), &list)
+	var found bool
+	for _, h := range list {
+		if h["hat_id"] == id {
+			found = true
+			if h["sold_out"] != true || h["remaining"].(float64) != 0 || h["quantity_limit"].(float64) != 2 {
+				t.Errorf("catalog entry = %v", h)
+			}
+		}
+	}
+	if !found {
+		t.Error("sold-out hat missing from catalog")
+	}
+}
+
+func TestHatStudio_UnlimitedByDefault_AndLimitValidation(t *testing.T) {
+	db := newInventoryDB(t)
+	defer db.Close()
+	seedCharacterForInv(t, db, "maker")
+	id := publish(t, db, "maker", 100)
+	var lim sql.NullInt64
+	db.QueryRow(`SELECT quantity_limit FROM hats WHERE hat_id=?`, id).Scan(&lim)
+	if lim.Valid {
+		t.Errorf("default quantity_limit = %v, want NULL", lim.Int64)
+	}
+	for _, bad := range []int{0, -1, 1000001} {
+		rec := studioDo(t, db, "POST", "/api/v1/characters/maker/hats/design", map[string]any{
+			"name": "Bad", "flow_cost": 100, "png_base64": studioPNG(t, 32, 100), "quantity_limit": bad,
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("limit %d = %d, want 400", bad, rec.Code)
+		}
+	}
+}

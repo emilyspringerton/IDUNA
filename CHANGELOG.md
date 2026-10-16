@@ -2,6 +2,7 @@
 
 ## 2026-10-16
 
+- feat(hats): limited-edition hats (migration `202610160003_hat_quantity_limit.sql`). `POST /characters/:id/hats/design` accepts optional `quantity_limit` (1..1,000,000; omitted = unlimited). The last copy is claimed atomically in `settleHatSale`; buying a sold-out hat returns 410 and charges nothing. Catalog and `/hats/designs` expose `quantity_limit`, `remaining`, `sold_out`. The secondary market itself does not exist yet. 2 new tests.
 - feat(hats): Hat Studio backend (migration `202610160002_hat_studio.sql`, `hat_studio.go`):
   player-drawn hats (`POST /characters/:id/hats/design`), creator listing/pricing, public image +
   economy price guide, reports, agent moderation. Buy now settles 88% to the designer and burns the
