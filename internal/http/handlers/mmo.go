@@ -272,6 +272,22 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleGenerateHat(w, r, id)
 		return
 	}
+	// Hat Studio (hat_studio.go): design / designs dashboard / creator listing.
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/hats/design") {
+		h.handleDesignHat(w, r, extractSegment(path, "/api/v1/characters/", "/hats/design"))
+		return
+	}
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/hats/designs") {
+		h.handleListDesigns(w, r, extractSegment(path, "/api/v1/characters/", "/hats/designs"))
+		return
+	}
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/listing") && strings.Contains(path, "/hats/") {
+		seg := strings.TrimPrefix(path, "/api/v1/characters/")
+		if p := strings.Split(seg, "/"); len(p) == 4 && p[1] == "hats" && p[3] == "listing" {
+			h.handleSetListing(w, r, p[0], p[2])
+			return
+		}
+	}
 	// PATCH /api/v1/characters/:id/hats/equip
 	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/hats/equip") {
 		id := extractSegment(path, "/api/v1/characters/", "/hats/equip")

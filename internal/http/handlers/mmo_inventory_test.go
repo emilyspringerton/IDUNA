@@ -84,7 +84,20 @@ func newInventoryDB(t *testing.T) *sql.DB {
 			image_asset               TEXT NOT NULL DEFAULT '',
 			user_generated            INTEGER NOT NULL DEFAULT 0,
 			generated_by_character_id TEXT,
-			created_at                TEXT NOT NULL DEFAULT ''
+			created_at                TEXT NOT NULL DEFAULT '',
+			png_data                  BLOB,
+			status                    TEXT NOT NULL DEFAULT 'listed',
+			report_count              INTEGER NOT NULL DEFAULT 0,
+			sales_count               INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE TABLE hat_sales (
+			sale_id TEXT PRIMARY KEY, hat_id TEXT NOT NULL, buyer_character_id TEXT NOT NULL,
+			seller_character_id TEXT, price INTEGER NOT NULL, creator_amount INTEGER NOT NULL,
+			burn_amount INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE hat_reports (
+			hat_id TEXT NOT NULL, character_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (hat_id, character_id)
 		);
 		CREATE TABLE character_hats (
 			character_id TEXT NOT NULL,

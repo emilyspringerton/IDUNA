@@ -1595,7 +1595,15 @@ func main() {
 	mux.Handle("/api/v1/fieldoffices", mmoH)
 	mux.Handle("/api/v1/fieldoffices/", mmoH)
 	mux.Handle("/api/v1/hats", mmoH)
-	mux.Handle("/api/v1/hats/", mmoH)
+	// Hat art and the price guide are public (an <img> tag / native client cannot send a bearer
+	// token); everything else under /api/v1/hats/ stays behind the MMO auth wrapper.
+	mux.HandleFunc("/api/v1/hats/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/image") || r.URL.Path == "/api/v1/hats/economy") {
+			(&handlers.MMOHandler{DB: db}).ServeHTTP(w, r)
+			return
+		}
+		mmoH.ServeHTTP(w, r)
+	})
 	// SSH key -> character fingerprint lookup (SSH_TRANSPORT_IDENTITY_SPEC.md §3, Stage 5) --
 	// list/bind/revoke live under /api/v1/characters/:id/ssh-keys, already covered by the
 	// /api/v1/characters/ registration above; this is only the top-level lookup-by-fingerprint

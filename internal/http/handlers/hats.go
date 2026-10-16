@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,11 @@ type hatResponse struct {
 	Description string `json:"description"`
 	FlowCost    int    `json:"flow_cost"`
 	ImageAsset  string `json:"image_asset"`
+	// Player-designed hats (hat_studio.go). ImageURL is set when the hat has pixel art; Creator
+	// is the designing character's name; both are empty for curated emoji hats.
+	ImageURL   string `json:"image_url,omitempty"`
+	Creator    string `json:"creator,omitempty"`
+	SalesCount int    `json:"sales_count,omitempty"`
 }
 
 type ownedHatResponse struct {
@@ -40,6 +46,8 @@ type ownedHatResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	ImageAsset  string `json:"image_asset"`
+	ImageURL    string `json:"image_url,omitempty"`
+	Creator     string `json:"creator,omitempty"`
 	AcquiredAt  string `json:"acquired_at"`
 	Equipped    bool   `json:"equipped"`
 }
@@ -53,12 +61,20 @@ func (h *MMOHandler) routeHats(w http.ResponseWriter, r *http.Request, path stri
 		h.handleListHatCatalog(w, r)
 		return
 	}
+	// Hat Studio routes (hat_studio.go): economy, image, report, status.
+	if h.routeHatStudio(w, r, path) {
+		return
+	}
 	http.NotFound(w, r)
 }
 
 func (h *MMOHandler) handleListHatCatalog(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT hat_id, name, description, flow_cost, image_asset FROM hats ORDER BY flow_cost ASC`)
+		`SELECT hats.hat_id, hats.name, hats.description, hats.flow_cost, hats.image_asset,
+		        CASE WHEN hats.png_data IS NULL THEN 0 ELSE 1 END, COALESCE(c.name, ''), hats.sales_count
+		 FROM hats LEFT JOIN characters c ON c.character_id = hats.generated_by_character_id
+		 WHERE hats.status = 'listed' AND hats.flow_cost > 0
+		 ORDER BY hats.flow_cost ASC, hats.name ASC`)
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -68,9 +84,16 @@ func (h *MMOHandler) handleListHatCatalog(w http.ResponseWriter, r *http.Request
 	out := []hatResponse{}
 	for rows.Next() {
 		var hat hatResponse
-		if err := rows.Scan(&hat.HatID, &hat.Name, &hat.Description, &hat.FlowCost, &hat.ImageAsset); err != nil {
+		var hasPNG int
+		if err := rows.Scan(&hat.HatID, &hat.Name, &hat.Description, &hat.FlowCost, &hat.ImageAsset,
+			&hasPNG, &hat.Creator, &hat.SalesCount); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if hasPNG != 0 {
+			hat.ImageURL = "/api/v1/hats/" + hat.HatID + "/image"
+		} else {
+			hat.Creator = "" // curated hats carry no designer credit
 		}
 		out = append(out, hat)
 	}
@@ -112,9 +135,12 @@ func checkHatOwnership(h *MMOHandler, r *http.Request, characterID string) (ok b
 
 func (h *MMOHandler) handleListCharacterHats(w http.ResponseWriter, r *http.Request, characterID string) {
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT ch.hat_id, hats.name, hats.description, hats.image_asset, ch.acquired_at, ch.equipped
+		`SELECT ch.hat_id, hats.name, hats.description, hats.image_asset,
+		        CASE WHEN hats.png_data IS NULL THEN 0 ELSE 1 END, COALESCE(c.name, ''),
+		        ch.acquired_at, ch.equipped
 		 FROM character_hats ch JOIN hats ON hats.hat_id = ch.hat_id
-		 WHERE ch.character_id = ? ORDER BY ch.acquired_at ASC`, characterID)
+		 LEFT JOIN characters c ON c.character_id = hats.generated_by_character_id
+		 WHERE ch.character_id = ? AND hats.status <> 'removed' ORDER BY ch.acquired_at ASC`, characterID)
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -124,10 +150,16 @@ func (h *MMOHandler) handleListCharacterHats(w http.ResponseWriter, r *http.Requ
 	out := []ownedHatResponse{}
 	for rows.Next() {
 		var oh ownedHatResponse
-		var equipped int
-		if err := rows.Scan(&oh.HatID, &oh.Name, &oh.Description, &oh.ImageAsset, &oh.AcquiredAt, &equipped); err != nil {
+		var equipped, hasPNG int
+		if err := rows.Scan(&oh.HatID, &oh.Name, &oh.Description, &oh.ImageAsset, &hasPNG, &oh.Creator,
+			&oh.AcquiredAt, &equipped); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if hasPNG != 0 {
+			oh.ImageURL = "/api/v1/hats/" + oh.HatID + "/image"
+		} else {
+			oh.Creator = ""
 		}
 		oh.Equipped = equipped != 0
 		out = append(out, oh)
@@ -153,14 +185,23 @@ func (h *MMOHandler) handleBuyHat(w http.ResponseWriter, r *http.Request, charac
 		return
 	}
 
-	var flowCost int
+	var flowCost, userGenerated int
+	var status string
+	var creatorID sql.NullString
 	if err := h.DB.QueryRowContext(r.Context(),
-		`SELECT flow_cost FROM hats WHERE hat_id = ?`, req.HatID).Scan(&flowCost); err != nil {
+		`SELECT flow_cost, status, user_generated, generated_by_character_id FROM hats WHERE hat_id = ?`,
+		req.HatID).Scan(&flowCost, &status, &userGenerated, &creatorID); err != nil {
 		if err == sql.ErrNoRows {
 			mmoWriteError(w, http.StatusNotFound, "hat not found")
 			return
 		}
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Not for sale: pulled by its creator / held for review / removed, or a Phase 4.5
+	// surprise-box reward (flow_cost 0, granted once, never sold).
+	if status != "listed" || (userGenerated != 0 && flowCost == 0) {
+		mmoWriteError(w, http.StatusNotFound, "hat is not for sale")
 		return
 	}
 
@@ -210,10 +251,24 @@ func (h *MMOHandler) handleBuyHat(w http.ResponseWriter, r *http.Request, charac
 		return
 	}
 
+	// Settlement: the creator earns 88%, the remainder is burned. A curated hat (no designer)
+	// burns the whole price. The split is recorded per sale in hat_sales.
+	sellerID := ""
+	if userGenerated != 0 && creatorID.Valid {
+		sellerID = creatorID.String
+	}
+	if err := settleHatSale(r.Context(), tx, req.HatID, characterID, sellerID, flowCost, now); err != nil {
+		mmoWriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	if err := tx.Commit(); err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	creatorAmt, burnAmt := splitHatPrice(flowCost, sellerID != "")
+	w.Header().Set("X-Flow-To-Creator", strconv.Itoa(creatorAmt))
+	w.Header().Set("X-Flow-Burned", strconv.Itoa(burnAmt))
 	w.WriteHeader(http.StatusNoContent)
 }
 
