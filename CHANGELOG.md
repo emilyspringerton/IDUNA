@@ -1,6 +1,7 @@
 # IDUNA Changelog
 
 ## 2026-10-16
+- feat(nock): level editor — embedded levels/widgets can now be dragged in Object mode (respects Constrain Y); Shift while dragging locks movement to one of the block's own axes, and Shift+Alt-drag copy also snaps to whole block-lengths so copies sit flush (square layouts). tsc + build only, not driven in a browser.
 
 - feat(nock): app header redesigned to match the design export (brand mark, theme toggle, TOOLS row, GAMES row with BRAWLPIT/SHANKPIT/DEADWEIGHT tab groups); same tabs and routes. tsc + build only, not seen in a browser.
 - feat(nock): SHANKPIT level editor reskinned to the new design export (editor bar with status pill / undo-redo / Live-session popover / Save; Levels sidebar with filter and Queue/Story/Zombies tag buttons; segmented Object/Face/Rotate toolbar with switches; viewport chips + key legend; accordion inspector: Level, Cubes, Spawn points, Waypoints, Characters, Level exits, Placed objects, Import & embed). Every existing handler is kept (clone/export/delete moved under a "..." menu, glTF import and level/widget embedding under Import & embed); follows the app light/dark toggle. Verified by server-side render + tsc + build only; no browser on this box, not seen live.

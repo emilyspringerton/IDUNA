@@ -603,6 +603,7 @@ function Viewport3D({
   showLevelExits,
   characters,
   rotateSnap,
+  onObjectsChange,
 }: {
   width: number
   height: number
@@ -639,6 +640,7 @@ function Viewport3D({
   showLevelExits: boolean
   characters: ShankpitCharacter[]
   rotateSnap: boolean
+  onObjectsChange: (objects: ShankpitLevelObject[]) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [webglUnavailable, setWebglUnavailable] = useState(false)
@@ -662,6 +664,8 @@ function Viewport3D({
   const onSpawnerChangeRef = useRef(onSpawnerChange)
   const constrainYRef = useRef(constrainY)
   const onDragStartRef = useRef(onDragStart)
+  const objectsRef = useRef(objects)
+  const onObjectsChangeRef = useRef(onObjectsChange)
   const spawnPointsRef = useRef(spawnPoints)
   const onSpawnPointsChangeRef = useRef(onSpawnPointsChange)
   const onSelectSpawnPointRef = useRef(onSelectSpawnPoint)
@@ -674,7 +678,8 @@ function Viewport3D({
   const dragRef = useRef<
     | { mode: 'orbit'; lastX: number; lastY: number }
     | { mode: 'face'; hit: FaceHit; linePoint: THREE.Vector3; axisDir: THREE.Vector3; startT: number; startWall: ShankpitWall }
-    | { mode: 'move-wall'; wallIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3; startWall: ShankpitWall }
+    | { mode: 'move-wall'; wallIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3; startWall: ShankpitWall; cloneOf: boolean }
+    | { mode: 'move-object'; objectIndex: number; plane: THREE.Plane; startPoint: THREE.Vector3; startObj: ShankpitLevelObject }
     | { mode: 'rotate'; wallIndex: number; axis: 0 | 1 | 2; plane: THREE.Plane; center: THREE.Vector3; basisA: THREE.Vector3; basisB: THREE.Vector3; startAngle: number; startQuat: THREE.Quaternion; startWall: ShankpitWall }
     | { mode: 'move-spawner'; plane: THREE.Plane; grabOffset: THREE.Vector3 }
     | { mode: 'move-spawn-point'; spawnIndex: number; plane: THREE.Plane; grabOffset: THREE.Vector3 }
@@ -693,6 +698,8 @@ function Viewport3D({
   onSpawnerChangeRef.current = onSpawnerChange
   constrainYRef.current = constrainY
   onDragStartRef.current = onDragStart
+  objectsRef.current = objects
+  onObjectsChangeRef.current = onObjectsChange
   spawnPointsRef.current = spawnPoints
   onSpawnPointsChangeRef.current = onSpawnPointsChange
   onSelectSpawnPointRef.current = onSelectSpawnPoint
@@ -982,6 +989,27 @@ function Viewport3D({
         ? [spawnerMeshRef.current, ...spawnPointMeshesRef.current, ...meshesRef.current]
         : [...spawnPointMeshesRef.current, ...meshesRef.current]
       const hits = raycaster.intersectObjects(candidates, false)
+      // Embedded levels/widgets are draggable too: hit-test their real wall meshes (not the
+      // wireframe), and grab the object when it is nearer than anything in the root level.
+      const objHit = raycaster
+        .intersectObjects(objectMeshesRef.current, true)
+        .find((h) => h.object instanceof THREE.Mesh)
+      if (objHit && (hits.length === 0 || objHit.distance < hits[0].distance)) {
+        let root: THREE.Object3D | null = objHit.object
+        while (root && !objectMeshesRef.current.includes(root as THREE.Group)) root = root.parent
+        const objectIndex = root ? objectMeshesRef.current.indexOf(root as THREE.Group) : -1
+        const startObj = objectsRef.current[objectIndex]
+        if (startObj) {
+          onSelect(null)
+          onSelectSpawnPointRef.current(null)
+          onDragStartRef.current()
+          dragRef.current = {
+            mode: 'move-object', objectIndex, startObj: { ...startObj },
+            plane: dragPlaneThrough(objHit.point.clone()), startPoint: objHit.point.clone(),
+          }
+          return
+        }
+      }
       if (hits.length > 0) {
         const mesh = hits[0].object as THREE.Mesh
         if (mesh === spawnerMeshRef.current) {
@@ -1018,12 +1046,12 @@ function Viewport3D({
           const cloneIndex = wallsRef.current.length
           onChange([...wallsRef.current, clone])
           onSelect(cloneId)
-          dragRef.current = { mode: 'move-wall', wallIndex: cloneIndex, plane, grabOffset, startWall: { ...clone } }
+          dragRef.current = { mode: 'move-wall', wallIndex: cloneIndex, plane, grabOffset, startWall: { ...clone }, cloneOf: true }
           return
         }
         onSelect(wall.id)
         onDragStartRef.current()
-        dragRef.current = { mode: 'move-wall', wallIndex, plane, grabOffset, startWall: { ...wall } }
+        dragRef.current = { mode: 'move-wall', wallIndex, plane, grabOffset, startWall: { ...wall }, cloneOf: false }
         return
       }
       onSelect(null)
@@ -1075,6 +1103,22 @@ function Viewport3D({
         onChange(next)
         return
       }
+      if (drag.mode === 'move-object') {
+        setNdcFromEvent(e)
+        raycaster.setFromCamera(ndc, camera)
+        const hp = new THREE.Vector3()
+        if (!raycaster.ray.intersectPlane(drag.plane, hp)) return
+        const d = hp.sub(drag.startPoint)
+        const next = objectsRef.current.slice()
+        next[drag.objectIndex] = {
+          ...drag.startObj,
+          x: drag.startObj.x + d.x,
+          y: constrainYRef.current ? drag.startObj.y : drag.startObj.y + d.y,
+          z: drag.startObj.z + d.z,
+        }
+        onObjectsChangeRef.current(next)
+        return
+      }
       // move-wall / move-spawner: intersect the current ray against the drag's own camera-facing
       // plane, re-applying the original grab offset so the object doesn't jump to snap its own
       // center onto the cursor the instant a drag starts.
@@ -1107,7 +1151,33 @@ function Viewport3D({
       // on, y is authoritatively the wall's own unchanged startWall.y -- ignore whatever the
       // plane/grabOffset arithmetic computed for it entirely, don't try to correct that math.
       const lockedY = constrainYRef.current ? drag.startWall.y : newPos.y
-      const updated = { ...drag.startWall, x: newPos.x, y: lockedY, z: newPos.z }
+      let updated = { ...drag.startWall, x: newPos.x, y: lockedY, z: newPos.z }
+      if (e.shiftKey) {
+        // Shift while dragging (with Alt: while cloning) locks the move to ONE of the block's own
+        // local axes -- the one the cursor has pulled furthest along -- so the copy stays exactly
+        // parallel to the block it came from. A clone also snaps to whole block-lengths along that
+        // axis, so copies butt up flush: square/regular layouts without nudging numbers.
+        const sw = drag.startWall
+        const q = new THREE.Quaternion().setFromEuler(wallEuler(sw))
+        const sizes = [sw.sx, sw.sy, sw.sz]
+        const d = new THREE.Vector3(updated.x - sw.x, updated.y - sw.y, updated.z - sw.z)
+        let best = -1
+        let bestAbs = 0
+        let bestAxis = new THREE.Vector3()
+        for (let i = 0; i < 3; i++) {
+          const axis = new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0).applyQuaternion(q)
+          if (constrainYRef.current && Math.abs(axis.y) > 0.5) continue
+          const t = Math.abs(d.dot(axis))
+          if (t > bestAbs) { bestAbs = t; best = i; bestAxis = axis }
+        }
+        if (best !== -1) {
+          let t = d.dot(bestAxis)
+          if (drag.cloneOf && sizes[best] > 0) t = Math.round(t / sizes[best]) * sizes[best]
+          updated = { ...updated, x: sw.x + bestAxis.x * t, y: sw.y + bestAxis.y * t, z: sw.z + bestAxis.z * t }
+        } else {
+          updated = { ...updated, x: sw.x, y: sw.y, z: sw.z }
+        }
+      }
       const next = wallsRef.current.slice()
       next[drag.wallIndex] = updated
       onChange(next)
@@ -1115,7 +1185,7 @@ function Viewport3D({
 
     const onPointerUp = (e: PointerEvent) => {
       container.releasePointerCapture(e.pointerId)
-      const wasWallDrag = dragRef.current?.mode === 'face' || dragRef.current?.mode === 'rotate' || dragRef.current?.mode === 'move-wall' || dragRef.current?.mode === 'move-spawn-point'
+      const wasWallDrag = dragRef.current?.mode === 'face' || dragRef.current?.mode === 'rotate' || dragRef.current?.mode === 'move-wall' || dragRef.current?.mode === 'move-object' || dragRef.current?.mode === 'move-spawn-point'
       dragRef.current = null
       if (wasWallDrag) onCommit()
     }
@@ -3003,6 +3073,7 @@ export default function ShankpitLevelEditor() {
               showLevelExits={showLevelExits}
               characters={draft.characters}
               rotateSnap={!arbitraryRotation}
+              onObjectsChange={setObjects}
             />
             <span className="vp__chip is-mode">{editMode === 'object' ? 'Object mode' : editMode === 'face' ? 'Face mode' : 'Rotate mode'}</span>
             <span className="vp__chip is-legend">
@@ -3018,6 +3089,7 @@ export default function ShankpitLevelEditor() {
             <span className="keygrp"><kbd>Tab</kbd> Object / Edit</span>
             <span className="keygrp"><kbd>Alt</kbd>+<kbd>3</kbd> Face select</span>
             <span className="keygrp"><kbd>Alt</kbd>+<kbd>E</kbd> Extrude face</span>
+            <span className="keygrp"><kbd>Alt</kbd>+drag Copy · +<kbd>Shift</kbd> axis-lock, flush</span>
             <span className="keygrp"><kbd>Scroll</kbd> Zoom</span>
             <span className="keygrp"><kbd>Mid-drag</kbd> Orbit</span>
             <span className="keygrp"><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo</span>
