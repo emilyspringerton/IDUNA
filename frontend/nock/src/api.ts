@@ -554,6 +554,11 @@ export interface ShankpitMaterial {
   // rendering parameter like specular/shininess. Default 0.30 matches physics.h's own tuned
   // global FRICTION baseline.
   friction: number
+  // density (kg/m^3, 2026-10-16, founder: "calculate mass of the different materials, have it
+  // configurable on the NOCK material") -- mass density for SHANKPIT's destructible-brick rigid
+  // bodies (a chunk that falls away weighs density x volume). 0 = unset: the game uses its own
+  // per-kind default (brick 1900, concrete 2400, wood 600, glass 2500).
+  density: number
   created_at: string
   updated_at: string
 }
@@ -580,10 +585,11 @@ export const shankpitMaterials = {
     textureId: number | null,
     shaderName: string = 'standard',
     friction: number = 0.3,
+    density: number = 0,
   ) =>
     mreq<ShankpitMaterial>('', {
       method: 'POST',
-      body: JSON.stringify({ name, specular, shininess, texture_id: textureId, shader_name: shaderName, friction }),
+      body: JSON.stringify({ name, specular, shininess, texture_id: textureId, shader_name: shaderName, friction, density }),
     }),
   update: (
     id: number,
@@ -592,10 +598,11 @@ export const shankpitMaterials = {
     textureId: number | null,
     shaderName: string = 'standard',
     friction: number = 0.3,
+    density?: number,
   ) =>
     mreq<ShankpitMaterial>(`/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ specular, shininess, texture_id: textureId, shader_name: shaderName, friction }),
+      body: JSON.stringify({ specular, shininess, texture_id: textureId, shader_name: shaderName, friction, density }),
     }),
   delete: (id: number) => mreq<void>(`/${id}`, { method: 'DELETE' }),
 }

@@ -53,12 +53,13 @@ type MaterialFormState = {
   specular: number
   shininess: number
   friction: number
+  density: number
   shaderName: string
   textureId: number | null
 }
 
 function materialToFormState(m: ShankpitMaterial): MaterialFormState {
-  return { specular: m.specular, shininess: m.shininess, friction: m.friction, shaderName: m.shader_name, textureId: m.texture_id ?? null }
+  return { specular: m.specular, shininess: m.shininess, friction: m.friction, density: m.density ?? 0, shaderName: m.shader_name, textureId: m.texture_id ?? null }
 }
 
 function MaterialFields({
@@ -91,6 +92,13 @@ function MaterialFields({
         <input
           type="number" min={0} max={1} step={0.02} value={state.friction}
           onChange={(e) => onChange({ ...state, friction: Number(e.target.value) })}
+        />
+      </label>
+      <label title="Mass density in kg/m^3 -- broken-off chunks of wall/glass and thrown shards weigh density x volume in SHANKPIT's rigid-body physics (a 0.2 m brick shard is ~15 kg). 0 = use the game's own default for this kind (brick 1900, concrete 2400, wood 600, glass 2500).">
+        Density{' '}
+        <input
+          type="number" min={0} max={30000} step={50} value={state.density}
+          onChange={(e) => onChange({ ...state, density: Number(e.target.value) })}
         />
       </label>
       <label>
@@ -147,7 +155,7 @@ function MaterialRow({
     setBusy(true)
     setError(null)
     try {
-      await shankpitMaterials.update(m.id, form.specular, form.shininess, form.textureId, form.shaderName, form.friction)
+      await shankpitMaterials.update(m.id, form.specular, form.shininess, form.textureId, form.shaderName, form.friction, form.density)
       setEditing(false)
       onSaved()
     } catch (err) {
@@ -199,6 +207,7 @@ function MaterialRow({
       <td>{m.specular}</td>
       <td>{m.shininess}</td>
       <td>{m.friction}</td>
+      <td>{m.density ? `${m.density} kg/m³` : 'default'}</td>
       <td>{textureName ?? <span className="hint">(default)</span>}</td>
       <td>
         <button type="button" disabled={busy} onClick={startEdit}>
@@ -218,7 +227,7 @@ export default function ShankpitMaterials() {
   const textureList = useTextureList()
 
   const [name, setName] = useState('')
-  const [form, setForm] = useState<MaterialFormState>({ specular: 0.05, shininess: 8, friction: 0.3, shaderName: 'standard', textureId: null })
+  const [form, setForm] = useState<MaterialFormState>({ specular: 0.05, shininess: 8, friction: 0.3, density: 0, shaderName: 'standard', textureId: null })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -227,9 +236,9 @@ export default function ShankpitMaterials() {
     setBusy(true)
     setError(null)
     try {
-      await shankpitMaterials.create(name, form.specular, form.shininess, form.textureId, form.shaderName, form.friction)
+      await shankpitMaterials.create(name, form.specular, form.shininess, form.textureId, form.shaderName, form.friction, form.density)
       setName('')
-      setForm({ specular: 0.05, shininess: 8, friction: 0.3, shaderName: 'standard', textureId: null })
+      setForm({ specular: 0.05, shininess: 8, friction: 0.3, density: 0, shaderName: 'standard', textureId: null })
       refresh()
     } catch (err) {
       setError(String(err))
@@ -259,6 +268,7 @@ export default function ShankpitMaterials() {
               <th>Specular</th>
               <th>Shininess</th>
               <th>Friction</th>
+              <th>Density</th>
               <th>Texture</th>
               <th></th>
             </tr>

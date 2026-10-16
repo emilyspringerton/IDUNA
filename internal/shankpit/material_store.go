@@ -41,7 +41,15 @@ type Material struct {
 	// its material_idx -- real, live ground friction per material, not just a rendering
 	// parameter. Default 0.30 matches physics.h's own global FRICTION baseline exactly (see this
 	// column's own migration).
-	Friction  float64 `json:"friction"`
+	Friction float64 `json:"friction"`
+	// Density -- mass per cubic metre (kg/m^3), founder real-time, 2026-10-16: "calculate mass of
+	// the different materials, have it configurable on the NOCK material; just make it up for
+	// now". Consumed natively by SHANKPIT's destructible-brick rigid bodies
+	// (packages/simulation/brick_bodies.h): a chunk of wall/glass that falls away gets
+	// mass = density x volume, so a glass pane's disc really is heavier than a brick shard.
+	// 0 = unset: the native engine uses its own per-kind default (brick 1900, concrete 2400,
+	// wood 600, glass 2500). See this column's own migration for the seeded numbers.
+	Density   float64 `json:"density"`
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
 }
@@ -100,6 +108,17 @@ const MaxShininess = 256.0
 // decelerates a grounded player at all (frictionless ice, a real, legitimate extreme -- not
 // disallowed); 1.0 is comfortably above physics.h's own tuned FRICTION baseline (0.30), leaving
 // headroom for a deliberately very-sticky material without allowing a nonsensical value.
+// MaxDensity (kg/m^3) bounds the density field: real osmium is ~22600, so 30000 is a generous
+// ceiling; 0 is the legitimate "unset, use the engine default" value.
+const MaxDensity = 30000.0
+
+func validateMaterialDensity(density float64) error {
+	if density < 0 || density > MaxDensity {
+		return fmt.Errorf("shankpit: material density must be in [0, %g] kg/m^3 (0 = engine default), got %g", MaxDensity, density)
+	}
+	return nil
+}
+
 const MinFriction = 0.0
 const MaxFriction = 1.0
 
@@ -139,14 +158,14 @@ type MaterialStore struct {
 	DB *sql.DB
 }
 
-const materialColumns = `id, name, shader_name, texture_id, specular, shininess, friction, created_at, updated_at`
+const materialColumns = `id, name, shader_name, texture_id, specular, shininess, friction, density, created_at, updated_at`
 
 func scanMaterial(row interface {
 	Scan(dest ...any) error
 }) (*Material, error) {
 	var m Material
 	var textureID sql.NullInt64
-	if err := row.Scan(&m.ID, &m.Name, &m.ShaderName, &textureID, &m.Specular, &m.Shininess, &m.Friction, &m.CreatedAt, &m.UpdatedAt); err != nil {
+	if err := row.Scan(&m.ID, &m.Name, &m.ShaderName, &textureID, &m.Specular, &m.Shininess, &m.Friction, &m.Density, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("shankpit: material not found")
 		}
@@ -190,7 +209,7 @@ func (s *MaterialStore) GetMaterialByName(ctx context.Context, name string) (*Ma
 // native client's own real, honest "brick" fallback; see level_boxes.h's own doc comment).
 // shaderName references SHANKPIT's own real, native, compiled-in shader registry by name (see
 // Material's own ShaderName doc comment) -- empty defaults to ShaderStandard.
-func (s *MaterialStore) CreateMaterial(ctx context.Context, name, shaderName string, textureID *int64, specular, shininess, friction float64) (*Material, error) {
+func (s *MaterialStore) CreateMaterial(ctx context.Context, name, shaderName string, textureID *int64, specular, shininess, friction, density float64) (*Material, error) {
 	if err := validateMaterialName(name); err != nil {
 		return nil, err
 	}
@@ -206,9 +225,12 @@ func (s *MaterialStore) CreateMaterial(ctx context.Context, name, shaderName str
 	if err := validateMaterialFriction(friction); err != nil {
 		return nil, err
 	}
+	if err := validateMaterialDensity(density); err != nil {
+		return nil, err
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO shankpit_materials (name, shader_name, texture_id, specular, shininess, friction) VALUES (?, ?, ?, ?, ?, ?)`,
-		name, shaderName, textureID, specular, shininess, friction)
+		`INSERT INTO shankpit_materials (name, shader_name, texture_id, specular, shininess, friction, density) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		name, shaderName, textureID, specular, shininess, friction, density)
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: create material: %w", err)
 	}
@@ -228,7 +250,9 @@ func (s *MaterialStore) getMaterialByID(ctx context.Context, id int64) (*Materia
 // (textureID nil clears back to the native procedural default; non-nil sets a real NOCK-managed
 // override -- see this file's own DefaultMaterialName / package doc comment on the native
 // loader's own real, current "override stored but not yet fetched/decoded" limitation).
-func (s *MaterialStore) UpdateMaterial(ctx context.Context, id int64, shaderName string, textureID *int64, specular, shininess, friction float64) (*Material, error) {
+// density nil KEEPS the stored value (an older editor build that never sends the field must not
+// silently reset a configured mass to the engine default); non-nil replaces it (0 = engine default).
+func (s *MaterialStore) UpdateMaterial(ctx context.Context, id int64, shaderName string, textureID *int64, specular, shininess, friction float64, density *float64) (*Material, error) {
 	if shaderName == "" {
 		shaderName = ShaderStandard
 	}
@@ -241,9 +265,22 @@ func (s *MaterialStore) UpdateMaterial(ctx context.Context, id int64, shaderName
 	if err := validateMaterialFriction(friction); err != nil {
 		return nil, err
 	}
-	res, err := s.DB.ExecContext(ctx,
-		`UPDATE shankpit_materials SET shader_name = ?, texture_id = ?, specular = ?, shininess = ?, friction = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		shaderName, textureID, specular, shininess, friction, id)
+	if density != nil {
+		if err := validateMaterialDensity(*density); err != nil {
+			return nil, err
+		}
+	}
+	var res sql.Result
+	var err error
+	if density == nil {
+		res, err = s.DB.ExecContext(ctx,
+			`UPDATE shankpit_materials SET shader_name = ?, texture_id = ?, specular = ?, shininess = ?, friction = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			shaderName, textureID, specular, shininess, friction, id)
+	} else {
+		res, err = s.DB.ExecContext(ctx,
+			`UPDATE shankpit_materials SET shader_name = ?, texture_id = ?, specular = ?, shininess = ?, friction = ?, density = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			shaderName, textureID, specular, shininess, friction, *density, id)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("shankpit: update material: %w", err)
 	}

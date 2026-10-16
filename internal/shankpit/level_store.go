@@ -667,6 +667,10 @@ type MaterialExport struct {
 	// Friction (S478b) -- the real, native-consumed ground-friction value for any box resolving
 	// to this material. See Material.Friction's own doc comment for the full rationale.
 	Friction   float64 `json:"friction"`
+	// Density (kg/m^3, 2026-10-16) -- the material's mass density for SHANKPIT's destructible-brick
+	// rigid bodies (packages/simulation/brick_bodies.h). Omitted when 0 = unset: the native engine
+	// then uses its own per-kind default.
+	Density    float64 `json:"density,omitempty"`
 	TextureURL string  `json:"texture_url,omitempty"`
 }
 
@@ -1629,7 +1633,7 @@ func (s *LevelStore) materialsForExport(ctx context.Context) ([]MaterialExport, 
 	}
 	out := make([]MaterialExport, 0, len(mats))
 	for _, m := range mats {
-		me := MaterialExport{Name: m.Name, ShaderName: m.ShaderName, Specular: m.Specular, Shininess: m.Shininess, Friction: m.Friction}
+		me := MaterialExport{Name: m.Name, ShaderName: m.ShaderName, Specular: m.Specular, Shininess: m.Shininess, Friction: m.Friction, Density: m.Density}
 		if m.TextureID != nil {
 			me.TextureURL = fmt.Sprintf("/admin/nock/api/textures/%d/image", *m.TextureID)
 		}

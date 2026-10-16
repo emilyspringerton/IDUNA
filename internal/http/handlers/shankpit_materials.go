@@ -73,6 +73,8 @@ type createShankpitMaterialReq struct {
 	// so a stale frontend build would silently create frictionless materials. Guarded against
 	// exactly that in create() below.
 	Friction float64 `json:"friction"`
+	// Density (kg/m^3, 2026-10-16) -- 0/omitted = unset, the native engine's own per-material default.
+	Density float64 `json:"density"`
 }
 
 // shankpitMaterialFrictionUnset is the real sentinel a request body's own JSON decode can't tell
@@ -94,7 +96,7 @@ func (h *ShankpitMaterialsHandler) create(w http.ResponseWriter, r *http.Request
 	if friction == 0 {
 		friction = shankpitMaterialFrictionDefault
 	}
-	m, err := h.Store.CreateMaterial(r.Context(), req.Name, req.ShaderName, req.TextureID, req.Specular, req.Shininess, friction)
+	m, err := h.Store.CreateMaterial(r.Context(), req.Name, req.ShaderName, req.TextureID, req.Specular, req.Shininess, friction, req.Density)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -108,6 +110,9 @@ type updateShankpitMaterialReq struct {
 	Specular   float64 `json:"specular"`
 	Shininess  float64 `json:"shininess"`
 	Friction   float64 `json:"friction"`
+	// Density (kg/m^3) -- a pointer on purpose: omitted (an older editor build) KEEPS the stored mass
+	// density instead of silently resetting it; an explicit 0 means "engine default".
+	Density *float64 `json:"density"`
 }
 
 func (h *ShankpitMaterialsHandler) update(w http.ResponseWriter, r *http.Request, idStr string) {
@@ -125,7 +130,7 @@ func (h *ShankpitMaterialsHandler) update(w http.ResponseWriter, r *http.Request
 	if friction == 0 {
 		friction = shankpitMaterialFrictionDefault
 	}
-	m, err := h.Store.UpdateMaterial(r.Context(), id, req.ShaderName, req.TextureID, req.Specular, req.Shininess, friction)
+	m, err := h.Store.UpdateMaterial(r.Context(), id, req.ShaderName, req.TextureID, req.Specular, req.Shininess, friction, req.Density)
 	if err != nil {
 		mmoWriteError(w, http.StatusBadRequest, err.Error())
 		return
