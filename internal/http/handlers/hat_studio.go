@@ -112,6 +112,9 @@ func (h *MMOHandler) routeHatStudio(w http.ResponseWriter, r *http.Request, path
 	case r.Method == http.MethodGet && rest == "economy":
 		h.handleHatEconomy(w, r)
 		return true
+	case r.Method == http.MethodGet && rest == "market":
+		h.handleHatMarket(w, r)
+		return true
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[1] == "image":
 		h.handleHatImage(w, r, parts[0])
 		return true
@@ -416,6 +419,10 @@ func (h *MMOHandler) handleHatEconomy(w http.ResponseWriter, r *http.Request) {
 	var burned, paid, sales int
 	h.DB.QueryRowContext(r.Context(),
 		`SELECT COALESCE(SUM(burn_amount),0), COALESCE(SUM(creator_amount),0), COUNT(*) FROM hat_sales`).Scan(&burned, &paid, &sales)
+	// Secondary-market resales burn 12% too (they are not counted as store sales).
+	var marketBurned int
+	h.DB.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(burn_amount),0) FROM hat_listings WHERE status='sold'`).Scan(&marketBurned)
+	burned += marketBurned
 	writeJSON(w, http.StatusOK, map[string]any{
 		"creator_share_pct": HatCreatorSharePct, "burn_pct": HatBurnPct,
 		"min_price": hatMinPrice, "max_price": hatMaxPrice,

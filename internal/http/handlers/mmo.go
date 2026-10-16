@@ -258,6 +258,23 @@ func (h *MMOHandler) routeCharacters(w http.ResponseWriter, r *http.Request, pat
 		h.handleUpdateEquipment(w, r, id)
 		return
 	}
+	// Secondary market (hat_market.go), longer suffixes first.
+	if r.Method == http.MethodPost && strings.Contains(path, "/hats/market/") {
+		for _, act := range []string{"list", "cancel", "buy"} {
+			if strings.HasSuffix(path, "/hats/market/"+act) {
+				id := extractSegment(path, "/api/v1/characters/", "/hats/market/"+act)
+				switch act {
+				case "list":
+					h.handleMarketList(w, r, id)
+				case "cancel":
+					h.handleMarketCancel(w, r, id)
+				default:
+					h.handleMarketBuy(w, r, id)
+				}
+				return
+			}
+		}
+	}
 	// POST /api/v1/characters/:id/hats/buy (WOTAN_HAT_STORE_NORTHSTAR.md Phase 1) -- checked
 	// before the plain GET .../hats route below since it's a longer, more specific suffix.
 	if r.Method == http.MethodPost && strings.HasSuffix(path, "/hats/buy") {

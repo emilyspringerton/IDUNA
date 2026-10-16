@@ -54,7 +54,9 @@ type ownedHatResponse struct {
 	ImageAsset  string `json:"image_asset"`
 	ImageURL    string `json:"image_url,omitempty"`
 	Creator     string `json:"creator,omitempty"`
-	AcquiredAt  string `json:"acquired_at"`
+	// QuantityLimit is set for limited editions, which can be resold on the secondary market.
+	QuantityLimit *int   `json:"quantity_limit,omitempty"`
+	AcquiredAt    string `json:"acquired_at"`
 	Equipped    bool   `json:"equipped"`
 }
 
@@ -151,7 +153,7 @@ func (h *MMOHandler) handleListCharacterHats(w http.ResponseWriter, r *http.Requ
 	rows, err := h.DB.QueryContext(r.Context(),
 		`SELECT ch.hat_id, hats.name, hats.description, hats.image_asset,
 		        CASE WHEN hats.png_data IS NULL THEN 0 ELSE 1 END, COALESCE(c.name, ''),
-		        ch.acquired_at, ch.equipped
+		        hats.quantity_limit, ch.acquired_at, ch.equipped
 		 FROM character_hats ch JOIN hats ON hats.hat_id = ch.hat_id
 		 LEFT JOIN characters c ON c.character_id = hats.generated_by_character_id
 		 WHERE ch.character_id = ? AND hats.status <> 'removed' ORDER BY ch.acquired_at ASC`, characterID)
@@ -166,7 +168,7 @@ func (h *MMOHandler) handleListCharacterHats(w http.ResponseWriter, r *http.Requ
 		var oh ownedHatResponse
 		var equipped, hasPNG int
 		if err := rows.Scan(&oh.HatID, &oh.Name, &oh.Description, &oh.ImageAsset, &hasPNG, &oh.Creator,
-			&oh.AcquiredAt, &equipped); err != nil {
+			&oh.QuantityLimit, &oh.AcquiredAt, &equipped); err != nil {
 			mmoWriteError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
