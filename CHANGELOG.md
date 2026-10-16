@@ -1,5 +1,12 @@
 # IDUNA Changelog
 
+## 2026-10-16
+
+- feat(hats): Hat Studio backend (migration `202610160002_hat_studio.sql`, `hat_studio.go`):
+  player-drawn hats (`POST /characters/:id/hats/design`), creator listing/pricing, public image +
+  economy price guide, reports, agent moderation. Buy now settles 88% to the designer and burns the
+  rest (`hat_sales` ledger). Catalog hides unlisted/held/zero-cost reward hats. 6 new tests.
+
 ## 2026-10-15
 - IDUNA login SDK (`sdk/README.md`, `sdk/c/iduna_login.h` native loopback + test, `sdk/web/iduna-login.js`): one SSO contract, two client profiles. Cards #630/#631. Web profile untested (no node).
 
