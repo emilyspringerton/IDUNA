@@ -161,6 +161,24 @@ func TestChatMessages_BigOSourceAndChannel(t *testing.T) {
 	}
 }
 
+func TestChatMessages_ShankpitClientSourceAndChannel(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestChatDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := chatHandlerWithAuth(keys, db)
+
+	body, _ := json.Marshal(map[string]string{
+		"channel": "shankpit", "sender_name": "Tyler", "sender_source": "shankpit_client", "body": "hi from the phone",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/messages", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("post status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestChatMessages_RejectsInvalidSource(t *testing.T) {
 	keys, _ := jwt.GenerateKeys()
 	db := newTestChatDB(t)

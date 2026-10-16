@@ -38,7 +38,7 @@ type chatMessage struct {
 }
 
 var validChatChannels = map[string]bool{
-	"say": true, "yell": true, "guild": true, "battlegrounds": true, "gta7": true, "big_o": true,
+	"say": true, "yell": true, "guild": true, "battlegrounds": true, "gta7": true, "big_o": true, "shankpit": true,
 }
 
 // gfd_server/einhorn_survival added for the S171-04 GFD<->EINHORN_SURVIVAL
@@ -48,13 +48,16 @@ var validChatChannels = map[string]bool{
 // "yell" channel (GFD's own zone-wide broadcast channel, the only one this
 // bridge relays); einhorn_survival posts under the new "gta7" channel.
 //
+// shankpit_client/shankpit added 2026-10-16 (founder real-time: SHANKPIT GFD phone app <-> GFD MUD global chat):
+// each SHANKPIT client posts directly under its own IDUNA login (player JWT), channel "shankpit".
+//
 // bigo_server added 2026-09-24 (EMILY/BACKLOG.md SECTION 536 follow-up, BIG_O/NORTHSTAR.md §27):
 // BIG_O joins this same three-way (now four-way) bus rather than opening its own bespoke
 // connection to any one existing side -- same "check for an existing system before building a
 // parallel one" discipline the gfd_server/einhorn_survival addition above already applied. Posts
 // under the new "big_o" channel (BIG_O has no GFD-native channel taxonomy to reuse, same real
 // reason einhorn_survival got its own "gta7" channel rather than borrowing "yell").
-var validChatSources = map[string]bool{"mud": true, "battlegrounds": true, "gfd_server": true, "einhorn_survival": true, "bigo_server": true}
+var validChatSources = map[string]bool{"mud": true, "battlegrounds": true, "gfd_server": true, "einhorn_survival": true, "bigo_server": true, "shankpit_client": true}
 
 func (h *ChatMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.DB == nil {
@@ -88,11 +91,11 @@ func (h *ChatMessagesHandler) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validChatChannels[body.Channel] {
-		http.Error(w, "channel must be one of: say, yell, guild, battlegrounds, gta7, big_o", http.StatusBadRequest)
+		http.Error(w, "channel must be one of: say, yell, guild, battlegrounds, gta7, big_o, shankpit", http.StatusBadRequest)
 		return
 	}
 	if !validChatSources[body.SenderSource] {
-		http.Error(w, "sender_source must be one of: mud, battlegrounds, gfd_server, einhorn_survival, bigo_server", http.StatusBadRequest)
+		http.Error(w, "sender_source must be one of: mud, battlegrounds, gfd_server, einhorn_survival, bigo_server, shankpit_client", http.StatusBadRequest)
 		return
 	}
 	if body.SenderName == "" || len(body.SenderName) > 64 {
