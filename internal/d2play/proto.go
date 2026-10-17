@@ -48,11 +48,17 @@ const (
 	SPong        = 0x8B
 	SRoundBreak  = 0x8C
 	SRoundResult = 0x8D
-	// SOppShip: once, right after COMBAT_START, the opponent's packed ship (packing is secret, the fight is not): [n u8] then 16 x [item row col rot cut].
+	// SOppShip: once, right after COMBAT_START, the opponent's packed ship (packing is secret, the fight is not): [n u8] then 36 x [item row col rot]
+	// (ruleset 2: a ship may hold a part to a cell; a cut is no longer a thing a ship does, so the cut flag is gone).
 	SOppShip = 0x90
-	// SOppCut: the opponent Panic-Cut a placement during the fight: [idx u8].
+	// SOppCut: reserved (ruleset 1 let a ship be Panic-Cut in the fight): [idx u8].
 	SOppCut = 0x91
-	SError  = 0x8F
+	// SEvents: right after every TICK, what that second did, in order: [tick u8][n u8][dropped u8][structure_you u16][structure_opp u16] then n x [type side a b c d e]
+	// (core/combat.h Dw2Event, the sides already turned so 0 is the recipient's own ship). The only server frame whose size depends on its content.
+	SEvents = 0x92
+	// MaxEvents is the most events one SEvents frame carries (DW2_WIRE_MAX_EVENTS).
+	MaxEvents = 60
+	SError    = 0x8F
 )
 
 // Gateway frames (gateway -> browser only).
@@ -91,7 +97,7 @@ const (
 // payload sizes of the server frames (bytes after the type byte), from core/protocol.c payload_size.
 var serverPayload = map[byte]int{
 	SWelcome: 5, SQueued: 2, SMatchFound: 28, SPlaceAck: 1, SPlaceReject: 1, SCutAck: 1, SCutReject: 1,
-	SCombatStart: 10, STick: 9, SMatchEnd: 7, SPong: 4, SRoundBreak: 6, SRoundResult: 6, SOppShip: 81, SOppCut: 1, SError: 1,
+	SCombatStart: 10, STick: 9, SMatchEnd: 7, SPong: 4, SRoundBreak: 6, SRoundResult: 6, SOppShip: 145, SOppCut: 1, SError: 1,
 }
 
 // MATCH_FOUND carries the packing time as a u16 (28 bytes, the older server) or a u32 (30 bytes: the packing clock is 120 s, which a u16 of ms cannot hold).
@@ -119,6 +125,13 @@ func splitFrame(b []byte) (frame []byte, used int, err error) {
 		return nil, 0, nil
 	}
 	f := b[2 : 2+n]
+	if f[0] == SEvents {
+		// [tick][n][dropped][structure_you u16][structure_opp u16] then n x 7 bytes: the size says how many, and both must agree
+		if n-1 < 7 || int(f[2]) > MaxEvents || n-1 != 7+7*int(f[2]) {
+			return nil, 0, ErrFrame
+		}
+		return f, 2 + n, nil
+	}
 	if want, ok := serverPayload[f[0]]; !ok || (want != n-1 && !(f[0] == SMatchFound && n-1 == matchFoundWide)) {
 		return nil, 0, ErrFrame
 	}

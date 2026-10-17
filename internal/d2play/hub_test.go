@@ -128,6 +128,36 @@ func TestSplitFrame(t *testing.T) {
 	}
 }
 
+// EVENTS is the one server frame whose size depends on what is in it: [tick][n][dropped][structure x2 u16] then n x 7 bytes
+func TestSplitFrameEvents(t *testing.T) {
+	ev := []byte{SEvents, 7, 2, 0, 0x2D, 1, 0xFF, 0}
+	ev = append(ev, 1, 0, 10, 3, 0, 0, 0, 2, 1, 20, 30, 15, 1, 3)
+	f, used, err := splitFrame(withLen(ev))
+	if err != nil || used != 2+len(ev) || f[0] != SEvents || f[2] != 2 {
+		t.Fatalf("a two-event frame = %v %d %v", f, used, err)
+	}
+	empty := withLen([]byte{SEvents, 3, 0, 0, 0, 0, 0, 0})
+	if _, _, err := splitFrame(empty); err != nil {
+		t.Fatalf("a second with nothing in it is a valid frame: %v", err)
+	}
+	bad := append([]byte{}, ev...)
+	bad[2] = 3 // claims three events, carries two
+	if _, _, err := splitFrame(withLen(bad)); err != ErrFrame {
+		t.Fatalf("a count that disagrees with the size must be an error, got %v", err)
+	}
+	huge := append([]byte{SEvents, 1, 61, 0, 0, 0, 0, 0}, make([]byte, 61*7)...)
+	if _, _, err := splitFrame(withLen(huge)); err != ErrFrame {
+		t.Fatalf("more than %d events must be an error, got %v", MaxEvents, err)
+	}
+	if _, _, err := splitFrame(withLen([]byte{SEvents, 1, 0})); err != ErrFrame {
+		t.Fatalf("a truncated header must be an error, got %v", err)
+	}
+	max := append([]byte{SEvents, 1, MaxEvents, 0, 0, 0, 0, 0}, make([]byte, MaxEvents*7)...)
+	if _, _, err := splitFrame(withLen(max)); err != nil {
+		t.Fatalf("a full frame must fit (%d bytes): %v", len(max), err)
+	}
+}
+
 func TestHelloFrameIsASanitisedHuman(t *testing.T) {
 	f := helloFrame("Wraith \"Q\"\\ é long long name")
 	if f[0] != CHello || f[1] != 1 || f[2] != 0 {
@@ -504,7 +534,7 @@ func TestAgainstTheRealServer(t *testing.T) {
 		c.Handle([]byte{CReady})
 		tr.next(t, SCombatStart, 15*time.Second)
 		// the fight shows both ships: the opponent's packed ship arrives (n placements, then unused slots marked 255) and is relayed untouched
-		if os := tr.next(t, SOppShip, 5*time.Second); len(os) != 82 || os[1] == 0 || os[1] > 16 || os[2] >= 12 || os[2+5*16-5] != 255 && os[1] < 16 {
+		if os := tr.next(t, SOppShip, 5*time.Second); len(os) != 146 || os[1] == 0 || os[1] > 36 || os[2] >= 24 || os[2+4*35] != 255 && os[1] < 36 {
 			t.Fatalf("OPP_SHIP = %v", os)
 		}
 		for {
