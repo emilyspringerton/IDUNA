@@ -490,12 +490,16 @@ func (c *Conn) onServer(f []byte) {
 			c.phase = phQueued
 		}
 	case SMatchFound:
+		pack := int(u16(f[27:]))
+		if len(f) >= 1+matchFoundWide {
+			pack = int(u32(f[27:]))
+		}
 		m := &matchState{
 			key:     matchKey{u32(f[1:]), u32(f[5:])},
 			seat:    int(f[9]),
 			oppName: cstr(f[10:26]),
 			oppKind: "human",
-			packMS:  int(u16(f[27:])),
+			packMS:  pack,
 			hullYou: 100, hullOpp: 100,
 			startedAt: time.Now(),
 		}

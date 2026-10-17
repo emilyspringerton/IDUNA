@@ -94,6 +94,9 @@ var serverPayload = map[byte]int{
 	SCombatStart: 10, STick: 9, SMatchEnd: 7, SPong: 4, SRoundBreak: 6, SRoundResult: 6, SOppShip: 81, SOppCut: 1, SError: 1,
 }
 
+// MATCH_FOUND carries the packing time as a u16 (28 bytes, the older server) or a u32 (30 bytes: the packing clock is 120 s, which a u16 of ms cannot hold).
+const matchFoundWide = 30
+
 // payload sizes of the client frames the gateway relays.
 var clientPayload = map[byte]int{
 	CQueue: 0, CPlace: 4, CPanicCut: 1, CReady: 0, CLeave: 0, CPing: 4, CRoundCall: 1,
@@ -116,7 +119,7 @@ func splitFrame(b []byte) (frame []byte, used int, err error) {
 		return nil, 0, nil
 	}
 	f := b[2 : 2+n]
-	if want, ok := serverPayload[f[0]]; !ok || want != n-1 {
+	if want, ok := serverPayload[f[0]]; !ok || (want != n-1 && !(f[0] == SMatchFound && n-1 == matchFoundWide)) {
 		return nil, 0, ErrFrame
 	}
 	return f, 2 + n, nil
