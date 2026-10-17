@@ -352,12 +352,10 @@ func (c *Conn) Handle(msg []byte) {
 			}
 		}
 	}
-	c.mu.Unlock()
 	if len(c.pend) > 64 {
-		c.mu.Lock()
 		c.pend = c.pend[1:]
-		c.mu.Unlock()
 	}
+	c.mu.Unlock()
 	_, _ = srv.Write(withLen(msg))
 }
 

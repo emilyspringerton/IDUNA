@@ -503,6 +503,10 @@ func TestAgainstTheRealServer(t *testing.T) {
 		_ = mf
 		c.Handle([]byte{CReady})
 		tr.next(t, SCombatStart, 15*time.Second)
+		// the fight shows both ships: the opponent's packed ship arrives (n placements, then unused slots marked 255) and is relayed untouched
+		if os := tr.next(t, SOppShip, 5*time.Second); len(os) != 82 || os[1] == 0 || os[1] > 16 || os[2] >= 12 || os[2+5*16-5] != 255 && os[1] < 16 {
+			t.Fatalf("OPP_SHIP = %v", os)
+		}
 		for {
 			f := tr.next(t, 0, 30*time.Second)
 			switch f[0] {

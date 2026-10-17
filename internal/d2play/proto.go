@@ -48,7 +48,11 @@ const (
 	SPong        = 0x8B
 	SRoundBreak  = 0x8C
 	SRoundResult = 0x8D
-	SError       = 0x8F
+	// SOppShip: once, right after COMBAT_START, the opponent's packed ship (packing is secret, the fight is not): [n u8] then 16 x [item row col rot cut].
+	SOppShip = 0x90
+	// SOppCut: the opponent Panic-Cut a placement during the fight: [idx u8].
+	SOppCut = 0x91
+	SError  = 0x8F
 )
 
 // Gateway frames (gateway -> browser only).
@@ -87,7 +91,7 @@ const (
 // payload sizes of the server frames (bytes after the type byte), from core/protocol.c payload_size.
 var serverPayload = map[byte]int{
 	SWelcome: 5, SQueued: 2, SMatchFound: 28, SPlaceAck: 1, SPlaceReject: 1, SCutAck: 1, SCutReject: 1,
-	SCombatStart: 10, STick: 9, SMatchEnd: 7, SPong: 4, SRoundBreak: 6, SRoundResult: 6, SError: 1,
+	SCombatStart: 10, STick: 9, SMatchEnd: 7, SPong: 4, SRoundBreak: 6, SRoundResult: 6, SOppShip: 81, SOppCut: 1, SError: 1,
 }
 
 // payload sizes of the client frames the gateway relays.
