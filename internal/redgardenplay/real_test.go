@@ -31,6 +31,7 @@ func TestAgainstTheRealArena(t *testing.T) {
 	start := func(name string, args ...string) *exec.Cmd {
 		c := exec.Command(filepath.Join(dir, name), args...)
 		c.Env = env
+		c.Dir = t.TempDir() // the C servers write var/matches and var/corpus under their working directory
 		if os.Getenv("REAL_LOG") != "" {
 			c.Stdout, c.Stderr = os.Stdout, os.Stderr
 		}
