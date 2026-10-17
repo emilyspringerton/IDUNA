@@ -379,7 +379,8 @@ func (c *Conn) onHello(msg []byte) {
 	}
 	b := []byte{SWelcome, Version, 1, byte(len(name))}
 	b = append(b, name...)
-	b = append(b, byte(online), byte(online>>8))
+	b = append(b, byte(online), byte(online>>8), byte(len(id.ID)))
+	b = append(b, id.ID...)
 	c.send(b)
 }
 

@@ -31,7 +31,8 @@
 //	  0x19 HOLD
 //	  0x1F PING    t u32
 //	gateway -> client
-//	  0x81 WELCOME ver u8 | auth u8 | nameLen u8 | name | online u16   auth: 1 signed in, 2 token rejected
+//	  0x81 WELCOME ver u8 | auth u8 | nameLen u8 | name | online u16 | idLen u8 | player id   (the player id is the REDGARDEN
+//	               player_id the match will be recorded against; the page links to its profile)
 //	  0x82 STATUS  state u8 | mode u8 | lobby u8 | elapsed u16 | ahead u8   state: 0 idle 1 searching 2 connecting 3 in match
 //	  0x83 MATCH   owner u8 | lobby u8 | team u8 | mode u8             you are hero slot `owner`; team 0 or 1
 //	  0x84 SNAP    world[1244] | heroes0[1460] | heroes1[1460]         the arena's own snapshot bodies, ~20 Hz

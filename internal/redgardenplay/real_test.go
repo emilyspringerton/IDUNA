@@ -76,6 +76,14 @@ func TestAgainstTheRealArena(t *testing.T) {
 		return &Snap{World: f[1 : 1+worldLen], Heroes: f[1+worldLen:]}
 	}
 	waitForLong(t, "the draft", 20*time.Second, func() bool { s := last(); return s != nil && s.Phase() == PhaseDraft })
+	dump := os.Getenv("REAL_DUMP_DIR")
+	save := func(name string, b []byte) {
+		if dump != "" {
+			_ = os.WriteFile(filepath.Join(dump, name), b, 0o644)
+		}
+	}
+	save("match.bin", tr.of(SMatch)[0])
+	save("snap_draft.bin", tr.of(SSnap)[len(tr.of(SSnap))-1])
 	s := last()
 	if s.Count() != 20 {
 		t.Fatalf("lobby of %d, want 20", s.Count())
@@ -88,6 +96,8 @@ func TestAgainstTheRealArena(t *testing.T) {
 		h := s.hero(owner)
 		return getF32(h, hX), getF32(h, hZ), int(h[hHeroID])
 	}
+	time.Sleep(2 * time.Second)
+	save("snap_live0.bin", tr.of(SSnap)[len(tr.of(SSnap))-1])
 	x0, z0, hero := pos()
 	if hero != 9 {
 		t.Fatalf("picked hero 9, snapshot says %d", hero)
@@ -103,6 +113,9 @@ func TestAgainstTheRealArena(t *testing.T) {
 		return math.Hypot(float64(x-tx), float64(z-tz)) < d0-6
 	})
 	x1, z1, _ := pos()
+	time.Sleep(4 * time.Second)
+	save("snap_live1.bin", tr.of(SSnap)[len(tr.of(SSnap))-1])
+	save("snap_live1_prev.bin", tr.of(SSnap)[len(tr.of(SSnap))-2])
 	t.Logf("hero walked %.1f,%.1f -> %.1f,%.1f on a real arena server", x0, z0, x1, z1)
 
 	// the snapshot's other heroes are real too: 6 alive heroes with HP and distinct hero ids
