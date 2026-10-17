@@ -1329,6 +1329,13 @@ func main() {
 	}
 	mux.Handle("/api/v1/shankpit460/play", shankpit460Play)
 	mux.Handle("/api/v1/shankpit460/status", shankpit460Play)
+	// REDGARDEN web (WOTAN /redgarden/play.html, founder real-time 2026-10-17): the browser gateway to the live arena --
+	// matchmaker + persistent bot pool + authoritative arena server, with the result recorded against the player's
+	// account. See handlers/redgarden_play.go and internal/redgardenplay. Needs REDGARDEN_TICKET_SECRET (the arena's).
+	redgardenPlay := handlers.NewRedgardenPlay(gameOnlineH)
+	mux.Handle("/api/v1/redgarden/play", redgardenPlay)
+	mux.Handle("/api/v1/redgarden/status", redgardenPlay)
+	mux.Handle("/api/v1/redgarden/web-matches", redgardenPlay)
 
 	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
 	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:
