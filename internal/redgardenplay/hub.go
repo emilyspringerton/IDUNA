@@ -40,8 +40,9 @@ type Config struct {
 // DefaultConfig is the production layout (the services in `kubectl get svc -n emily`).
 func DefaultConfig() Config {
 	return Config{
+		// Only the 10v10 pools: apps/arena_server splits teams at slot 10 whatever the lobby size, so the 3v3 queue
+		// (:7780, lobby 6) seats everyone on team 0. Configure it back in with REDGARDEN_POOLS when that is fixed.
 		Pools: []Pool{
-			{Name: "rnd-3v3", Mode: 0, Addr: "redgarden-rnd-udp.emily.svc.cluster.local:7780", Lobby: 6},
 			{Name: "rnd-10v10", Mode: 1, Addr: "redgarden-rnd-udp.emily.svc.cluster.local:7778", Lobby: 20},
 			{Name: "stable-10v10", Mode: 1, Addr: "redgarden-stable-udp.emily.svc.cluster.local:8778", Lobby: 20},
 		},

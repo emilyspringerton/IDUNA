@@ -39,6 +39,7 @@ type fakeArena struct {
 	deaths  int
 	lobby   int
 	badConn int
+	slot    int
 	silent  bool
 	stop    chan struct{}
 }
@@ -53,7 +54,7 @@ func newFakeArena(t *testing.T, lobby int) *fakeArena {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeArena{t: t, mm: mm, srv: srv, lobby: lobby, stop: make(chan struct{}), heroID: 7, kills: 3, deaths: 1}
+	f := &fakeArena{t: t, mm: mm, srv: srv, lobby: lobby, stop: make(chan struct{}), heroID: 7, kills: 3, deaths: 1, slot: 2}
 	go f.runMatchmaker()
 	go f.runServer()
 	go f.broadcast()
@@ -122,7 +123,7 @@ func (f *fakeArena) runServer() {
 				}
 				f.client = from
 				w := netHeader(pWelcome, 0, 0)
-				w[1] = 2 // the player is hero slot 2
+				w[1] = byte(f.slot) // the player's hero slot
 				_, _ = f.srv.WriteToUDP(w, from)
 			}
 		} else if buf[0] != pConnect {
@@ -157,7 +158,7 @@ func (f *fakeArena) broadcast() {
 		}
 		f.mu.Lock()
 		to, silent := f.client, f.silent
-		phase, winner := f.phase, f.winner
+		phase, winner, mySlot := f.phase, f.winner, f.slot
 		f.mu.Unlock()
 		if to == nil || silent {
 			continue
@@ -176,7 +177,7 @@ func (f *fakeArena) broadcast() {
 				slot := c*heroChunkSize + i
 				e := hb[4+i*heroSnapLen:]
 				e[hHeroID] = byte(slot + 5)
-				if slot == 2 {
+				if slot == mySlot {
 					e[hHeroID] = byte(f.heroID)
 					e[hKills], e[hDeaths] = byte(f.kills), byte(f.deaths)
 					binary.LittleEndian.PutUint16(e[hFlowEar:], 1234)
@@ -434,13 +435,14 @@ func TestQueueMatchPlayAndRecordAWin(t *testing.T) {
 }
 
 func TestTeamOneLosingIsALoss(t *testing.T) {
-	a := newFakeArena(t, 4) // slot 2 of 4 is on team 1
+	a := newFakeArena(t, 20)
+	a.set(func() { a.slot = 12 }) // slots 10..19 are team 1, whatever the lobby size
 	rec := &memRecorder{}
 	_, c, tr := startPlayer(t, a, rec)
 	c.Handle([]byte{CQueue, 0})
 	waitFor(t, "match", func() bool { return len(tr.of(SMatch)) == 1 })
 	if tr.of(SMatch)[0][3] != 1 {
-		t.Fatalf("slot 2 of 4 should be on team 1: %v", tr.of(SMatch)[0])
+		t.Fatalf("slot 12 should be on team 1: %v", tr.of(SMatch)[0])
 	}
 	a.set(func() { a.phase = PhaseLive; a.winner = 1 })
 	waitFor(t, "record", func() bool { return len(rec.all()) == 1 })

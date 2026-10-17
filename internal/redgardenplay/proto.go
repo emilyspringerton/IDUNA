@@ -229,7 +229,20 @@ type HeroStat struct {
 	FlowEarned, XP                    int
 }
 
-// Hero reads slot's numbers. Team follows the server's rule: the first half of the lobby is team 0.
+// TeamSize is ARENA_TEAM_SIZE: apps/arena_server's arena_init_teams puts slots 0..9 on team 0 and 10..19 on team 1
+// whatever the lobby size is (so a 6-player "3v3" lobby is six heroes on team 0 with nobody to fight -- which is why the
+// web client offers only the 10v10 pools).
+const TeamSize = 10
+
+// TeamOf is the server's team for a hero slot.
+func TeamOf(slot int) int {
+	if slot >= TeamSize {
+		return 1
+	}
+	return 0
+}
+
+// Hero reads slot's numbers.
 func (s *Snap) Hero(slot int) HeroStat {
 	h := s.hero(slot)
 	n := s.Count()
@@ -237,9 +250,7 @@ func (s *Snap) Hero(slot int) HeroStat {
 	if h == nil || slot < 0 || slot >= n {
 		return st
 	}
-	if n > 0 && slot >= n/2 {
-		st.Team = 1
-	}
+	st.Team = TeamOf(slot)
 	st.HeroID = int(h[hHeroID])
 	st.Kills = int(h[hKills])
 	st.Deaths = int(h[hDeaths])

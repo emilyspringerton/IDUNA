@@ -309,11 +309,7 @@ func (r *run) onPacket(p []byte, from *net.UDPAddr, now time.Time) {
 		owner, lobby := r.owner, r.lobby
 		r.mu.Unlock()
 		r.lastRecv = now
-		team := 0
-		if lobby > 0 && owner >= lobby/2 {
-			team = 1
-		}
-		r.send([]byte{SMatch, byte(owner), byte(lobby), byte(team), byte(r.mode)})
+		r.send([]byte{SMatch, byte(owner), byte(lobby), byte(TeamOf(owner)), byte(r.mode)})
 		r.status(StInMatch, now.Sub(r.startedAt))
 	case pArenaSnapshot:
 		if stage != stInMatch || !r.fromServer(from) || len(body) < worldLen {

@@ -14,7 +14,7 @@ import (
 
 // TestAgainstTheRealArena runs the REAL REDGARDEN matchmaker, arena server and bot pool (built from
 // github.com/emilyspringerton/REDGARDEN; point REDGARDEN_BIN_DIR at a directory holding `matchmaker`, `arena_server`
-// and `arena_bot`) and plays a real 3v3 through the gateway: the gateway's byte offsets, ticket, command packets and
+// and `arena_bot`) and plays a real 10v10 through the gateway: the gateway's byte offsets, ticket, command packets and
 // result detection are checked against the actual C implementation, not against this package's own idea of it.
 //
 //	REDGARDEN_BIN_DIR=/path go test -run TestAgainstTheRealArena -v ./internal/redgardenplay/
@@ -40,17 +40,17 @@ func TestAgainstTheRealArena(t *testing.T) {
 		t.Cleanup(func() { _ = c.Process.Kill(); _ = c.Wait() })
 		return c
 	}
-	start("matchmaker", "--listen-port", fmt.Sprint(mmPort), "--lobby-size", "6", "--server-bin", filepath.Join(dir, "arena_server"),
+	start("matchmaker", "--listen-port", fmt.Sprint(mmPort), "--lobby-size", "20", "--server-bin", filepath.Join(dir, "arena_server"),
 		"--first-game-port", fmt.Sprint(first), "--game-port-range", "10")
 	time.Sleep(300 * time.Millisecond)
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 19; i++ {
 		start("arena_bot", "--host", "127.0.0.1", "--index", fmt.Sprint(i), "--matchmaker-port", fmt.Sprint(mmPort))
 	}
-	time.Sleep(1500 * time.Millisecond)
+	time.Sleep(3000 * time.Millisecond)
 
 	rec := &memRecorder{}
 	cfg := DefaultConfig()
-	cfg.Pools = []Pool{{Name: "real-3v3", Mode: 0, Addr: fmt.Sprintf("127.0.0.1:%d", mmPort), Lobby: 6}}
+	cfg.Pools = []Pool{{Name: "real-10v10", Mode: 1, Addr: fmt.Sprintf("127.0.0.1:%d", mmPort), Lobby: 20}}
 	cfg.Secret = []byte(secret)
 	h, err := NewHub(cfg, okResolver, rec)
 	if err != nil {
@@ -61,7 +61,7 @@ func TestAgainstTheRealArena(t *testing.T) {
 	defer c.Close()
 	c.Handle(hello("good-token"))
 	waitForLong(t, "welcome", 5*time.Second, func() bool { return len(tr.of(SWelcome)) == 1 })
-	c.Handle([]byte{CQueue, 0})
+	c.Handle([]byte{CQueue, 1})
 	waitForLong(t, "MATCH from the real matchmaker + arena", 30*time.Second, func() bool { return len(tr.of(SMatch)) == 1 })
 	m := tr.of(SMatch)[0]
 	owner := int(m[1])
@@ -77,8 +77,8 @@ func TestAgainstTheRealArena(t *testing.T) {
 	}
 	waitForLong(t, "the draft", 20*time.Second, func() bool { s := last(); return s != nil && s.Phase() == PhaseDraft })
 	s := last()
-	if s.Count() != 6 {
-		t.Fatalf("lobby of %d, want 6", s.Count())
+	if s.Count() != 20 {
+		t.Fatalf("lobby of %d, want 20", s.Count())
 	}
 	c.Handle([]byte{CPick, 9})
 	waitForLong(t, "the match to go live", 20*time.Second, func() bool { s := last(); return s != nil && s.Phase() == PhaseLive })
@@ -107,7 +107,7 @@ func TestAgainstTheRealArena(t *testing.T) {
 
 	// the snapshot's other heroes are real too: 6 alive heroes with HP and distinct hero ids
 	seen := map[int]bool{}
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 20; i++ {
 		hr := last().hero(i)
 		if binary.LittleEndian.Uint16(hr[hHP:]) == 0 || hr[hAlive] != 1 {
 			t.Fatalf("hero %d is not alive with hp in a fresh match", i)
@@ -119,7 +119,7 @@ func TestAgainstTheRealArena(t *testing.T) {
 	}
 	c.Handle([]byte{CLeave})
 	waitForLong(t, "abandon record", 5*time.Second, func() bool { return len(rec.all()) == 1 })
-	if r := rec.all()[0]; r.Result != ResAbandoned || r.HeroID != 9 || r.Lobby != 6 {
+	if r := rec.all()[0]; r.Result != ResAbandoned || r.HeroID != 9 || r.Lobby != 20 {
 		t.Fatalf("leaving a live match: %+v", r)
 	}
 	_ = context.Background
