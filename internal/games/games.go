@@ -125,6 +125,12 @@ var Registry = map[string]Config{
 		Slug:     "redgarden",
 		PlayPerm: "redgarden.play",
 	},
+	// EMPIRE web (WOTAN /empire/, 2026-10-17): PlayPerm only, same narrow cut as shankpit460. The referee (internal/empire) is inside IDUNA and
+	// records matches itself, so there is no M2M match-write permission.
+	"empire": {
+		Slug:     "empire",
+		PlayPerm: "empire.play",
+	},
 	"mixforge": {
 		Slug:              "mixforge",
 		PlayPerm:          "mixforge.play",

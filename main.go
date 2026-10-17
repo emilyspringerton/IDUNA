@@ -1339,6 +1339,11 @@ func main() {
 	// D2 (DEADWEIGHT_2) web: the browser gateway in front of dw2_server, and the public match feed / profile.
 	d2Play := handlers.NewD2Play(gameOnlineH)
 	mux.Handle("/api/v1/d2/", d2Play)
+	// EMPIRE web (WOTAN /empire/, founder real-time 2026-10-17): the referee. It steps the SAME wasm the browser plays (internal/empire/empire.wasm),
+	// pairs people or seats one of the eight AIs, records the match, and plays an AI-against-AI league in real time that anyone can watch.
+	// See handlers/empire_play.go and internal/empire. EMPIRE_LEAGUE_MINUTES (default 15, 0 = off) sets how often the league plays.
+	empirePlay := handlers.NewEmpirePlay(gameOnlineH)
+	mux.Handle("/api/v1/empire/", empirePlay)
 
 	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
 	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:
