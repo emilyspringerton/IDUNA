@@ -1336,6 +1336,9 @@ func main() {
 	mux.Handle("/api/v1/redgarden/play", redgardenPlay)
 	mux.Handle("/api/v1/redgarden/status", redgardenPlay)
 	mux.Handle("/api/v1/redgarden/web-matches", redgardenPlay)
+	// D2 (DEADWEIGHT_2) web: the browser gateway in front of dw2_server, and the public match feed / profile.
+	d2Play := handlers.NewD2Play(gameOnlineH)
+	mux.Handle("/api/v1/d2/", d2Play)
 
 	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
 	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:

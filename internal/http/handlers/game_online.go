@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -1508,64 +1507,14 @@ func (h *GameOnlineHandler) matchResult(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
-	res, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO game_matches (game, match_id, seed, seat0_player_id, seat1_player_id, winner, rounds, reason, mode)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
-		cfg.Slug, req.MatchID, req.Seed, req.Seat0, req.Seat1, req.Winner, req.Rounds, req.Reason, req.Mode)
+	gm, err := applyGameMatch(ctx, tx, cfg.Slug, gameMatchReq{
+		MatchID: req.MatchID, Seed: req.Seed, Seat0: req.Seat0, Seat1: req.Seat1,
+		Winner: req.Winner, Rounds: req.Rounds, Reason: req.Reason, Mode: req.Mode})
 	if err != nil {
 		mmoWriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	dup := false
-	if n, _ := res.RowsAffected(); n == 0 {
-		dup = true
-	}
-
-	load := func(pid string) (seatStats, error) {
-		_, _ = tx.ExecContext(ctx, `INSERT OR IGNORE INTO game_player_stats (player_id, game) VALUES (?,?)`, pid, cfg.Slug)
-		var s seatStats
-		err := tx.QueryRowContext(ctx, `SELECT rating, wins, losses, draws, matches FROM game_player_stats WHERE player_id = ? AND game = ?`,
-			pid, cfg.Slug).Scan(&s.Rating, &s.Wins, &s.Losses, &s.Draws, &s.Matches)
-		return s, err
-	}
-	a, err := load(req.Seat0)
-	if err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	b, err := load(req.Seat1)
-	if err != nil {
-		mmoWriteError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if !dup {
-		scoreA := map[int]float64{0: 1, 1: 0, 2: 0.5}[req.Winner]
-		expA := 1.0 / (1.0 + math.Pow(10, (b.Rating-a.Rating)/400.0))
-		newA := a.Rating + gameEloK*(scoreA-expA)
-		newB := b.Rating + gameEloK*((1-scoreA)-(1-expA))
-		a.Rating, b.Rating = newA, newB
-		a.Matches++
-		b.Matches++
-		switch req.Winner {
-		case 0:
-			a.Wins++
-			b.Losses++
-		case 1:
-			b.Wins++
-			a.Losses++
-		default:
-			a.Draws++
-			b.Draws++
-		}
-		for pid, s := range map[string]seatStats{req.Seat0: a, req.Seat1: b} {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE game_player_stats SET rating=?, wins=?, losses=?, draws=?, matches=?, last_match_at=CURRENT_TIMESTAMP
-				 WHERE player_id=? AND game=?`, s.Rating, s.Wins, s.Losses, s.Draws, s.Matches, pid, cfg.Slug); err != nil {
-				mmoWriteError(w, http.StatusInternalServerError, "internal error")
-				return
-			}
-		}
-	}
+	dup, a, b := gm.Dup, gm.A, gm.B
 	// Uncapped Draft Run progress (S508c) -- founder real-time: "1 Ticket = 1 Draft Run... Matches
 	// do not consume tickets. The run ends, and the deck is wiped, strictly when
 	// active_run_losses == 3. There is no win cap." Mode 2 = DW_MODE_DRAFT (protocol.h). A no-op
