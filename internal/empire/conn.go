@@ -128,7 +128,8 @@ func (c *Conn) Handle(msg []byte) {
 	c.mu.Lock()
 	authed := c.authed
 	c.mu.Unlock()
-	if !authed {
+	// looking in on a match needs no account; everything else does
+	if !authed && msg[0] != CWatch && msg[0] != CPing {
 		c.send(errorFrame(ErrBadHello, "sign in first"))
 		return
 	}
@@ -150,6 +151,10 @@ func (c *Conn) Handle(msg []byte) {
 		id := binary.LittleEndian.Uint32(msg[1:])
 		if err := c.hub.watch(c, id); err != nil {
 			c.send(errorFrame(ErrNoRoom, "that match has finished"))
+			return
+		}
+		if c.authTmr != nil {
+			c.authTmr.Stop() // a watcher is welcome without signing in
 		}
 	case CPlay, CEmote, CResync, CResign:
 		c.mu.Lock()

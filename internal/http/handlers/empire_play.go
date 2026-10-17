@@ -64,6 +64,17 @@ func NewEmpirePlay(g *GameOnlineHandler) *EmpirePlay {
 			cfg.LeagueEvery = time.Duration(n) * time.Minute
 		}
 	}
+	// Operators and the browser test can quicken the table: the browsers step from the turns they are sent, so a faster server tick only makes a match shorter.
+	if v := strings.TrimSpace(os.Getenv("EMPIRE_TICK_MS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 50 {
+			cfg.TickEvery = time.Duration(n) * time.Millisecond
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("EMPIRE_LEAGUE_FIRST_SECONDS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.LeagueFirst = time.Duration(n) * time.Second
+		}
+	}
 	return NewEmpirePlayWith(g, cfg)
 }
 

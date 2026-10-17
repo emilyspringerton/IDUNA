@@ -380,9 +380,7 @@ func TestSpectatorsSeeTheLeague(t *testing.T) {
 		t.Fatalf("live: %+v", live)
 	}
 	f := newFake()
-	c := h.Connect(f)
-	auth(c, "fay")
-	f.waitFor(t, GIdent, 2*time.Second)
+	c := h.Connect(f) // no sign-in: a watcher needs none
 	id := make([]byte, 5)
 	id[0] = CWatch
 	binary.LittleEndian.PutUint32(id[1:], live[0].ID)
