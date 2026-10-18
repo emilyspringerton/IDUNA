@@ -1289,6 +1289,7 @@ func main() {
 	mux.Handle("/api/v1/games/deadweight/decks", deckStatsH)
 	mux.Handle("/api/v1/games/deadweight/decks/", deckStatsH)
 	mux.Handle("/api/v1/games/deadweight/card-stats", deckStatsH)
+	mux.Handle("/api/v1/games/deadweight/bot-decks", deckStatsH)
 	// WOTAN Hearthstone deck section (HEARTHSTONE_NORTHSTAR.md): deck-code sharing + basic socials. Public reads,
 	// token-gated writes; the handler verifies the (optional) bearer itself so one prefix serves both.
 	hsH := &handlers.HSHandler{

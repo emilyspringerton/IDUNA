@@ -653,3 +653,164 @@ func TestListFailsFastWhenTheQueryGateIsFull(t *testing.T) {
 		t.Fatalf("after the gate drains: %v %d %d", err, tot, len(l))
 	}
 }
+
+// decks k = 1..n win k games and lose one, so their Wilson scores rise strictly with k.
+func streakLog(n int) string {
+	var b strings.Builder
+	m := 0
+	for k := 1; k <= n; k++ {
+		b.WriteString(draft(k, "bot-wall-d", 1, k%100, (k+1)%100, (k+2)%100))
+		for g := 0; g < k; g++ {
+			m++
+			b.WriteString(match(k, m, "win"))
+		}
+		m++
+		b.WriteString(match(k, m, "loss"))
+	}
+	return b.String()
+}
+
+func TestTierDecksSplitTheRankingIntoStrengthBands(t *testing.T) {
+	dir := t.TempDir()
+	lp := filepath.Join(dir, "decks.ndjson")
+	appendTo(t, lp, streakLog(120))
+	s := fileStore(t, lp, "")
+	s.Refresh()
+	ctx := context.Background()
+
+	var prevMin float64 = -1
+	seen := map[uint32]int{}
+	for tier := 1; tier <= 5; tier++ {
+		r, err := s.TierDecks(ctx, tier, 5, 3, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Eligible != 119 { // decks with k=1 have 2 games: below min_games 3
+			t.Fatalf("eligible = %d, want 119", r.Eligible)
+		}
+		if len(r.Decks) == 0 || len(r.Decks) > 10 {
+			t.Fatalf("tier %d returned %d decks", tier, len(r.Decks))
+		}
+		for i, d := range r.Decks {
+			seen[d.ID]++
+			if i > 0 && d.Score > r.Decks[i-1].Score {
+				t.Fatalf("tier %d is not strongest-first", tier)
+			}
+			if d.Score < r.ScoreMin || d.Score > r.ScoreMax {
+				t.Fatalf("tier %d deck %d is outside its own band [%v, %v]", tier, d.ID, r.ScoreMin, r.ScoreMax)
+			}
+		}
+		// every deck of a stronger tier beats every deck of a weaker one
+		if r.ScoreMin < prevMin {
+			t.Fatalf("tier %d reaches below tier %d's strongest deck", tier, tier-1)
+		}
+		prevMin = r.ScoreMax
+	}
+	for id, n := range seen {
+		if n > 1 {
+			t.Fatalf("deck %d is in %d tiers", id, n)
+		}
+	}
+	// the band widths: the strongest tier is the narrow top slice, the weakest the broad bottom
+	top, _ := s.TierDecks(ctx, 5, 5, 3, 100)
+	bottom, _ := s.TierDecks(ctx, 1, 5, 3, 100)
+	if len(top.Decks) >= len(bottom.Decks) {
+		t.Fatalf("top tier (%d decks) should be narrower than the bottom tier (%d)", len(top.Decks), len(bottom.Decks))
+	}
+	if top.From < 0.95 || top.To != 1 {
+		t.Fatalf("top band: %+v", top)
+	}
+	// deterministic: asking again gives the same decks
+	a, _ := s.TierDecks(ctx, 3, 5, 3, 10)
+	b, _ := s.TierDecks(ctx, 3, 5, 3, 10)
+	for i := range a.Decks {
+		if a.Decks[i].ID != b.Decks[i].ID {
+			t.Fatal("tier picks changed between calls")
+		}
+	}
+}
+
+func TestTierDecksSpreadsEvenlyAcrossTheBand(t *testing.T) {
+	dir := t.TempDir()
+	lp := filepath.Join(dir, "decks.ndjson")
+	appendTo(t, lp, streakLog(300))
+	s := fileStore(t, lp, "")
+	s.Refresh()
+	r, err := s.TierDecks(context.Background(), 1, 5, 3, 6) // the bottom 36%: ~107 decks
+	if err != nil || len(r.Decks) != 6 {
+		t.Fatalf("%v %d", err, len(r.Decks))
+	}
+	// deck ids are the streak length here, so the picks should be roughly equally spaced
+	gap := int(r.Decks[0].ID) - int(r.Decks[1].ID)
+	for i := 2; i < len(r.Decks); i++ {
+		g := int(r.Decks[i-1].ID) - int(r.Decks[i].ID)
+		if g < gap-3 || g > gap+3 {
+			t.Fatalf("uneven spread: gaps %d then %d (ids %v)", gap, g, []uint32{r.Decks[0].ID, r.Decks[1].ID, r.Decks[2].ID, r.Decks[3].ID, r.Decks[4].ID, r.Decks[5].ID})
+		}
+	}
+}
+
+func TestTierDecksWithAHandfulOfDecks(t *testing.T) {
+	dir := t.TempDir()
+	lp := filepath.Join(dir, "decks.ndjson")
+	appendTo(t, lp, streakLog(3)) // decks 1..3 have 2, 3 and 4 games
+	s := fileStore(t, lp, "")
+	s.Refresh()
+	for tier := 1; tier <= 5; tier++ {
+		r, err := s.TierDecks(context.Background(), tier, 5, 1, 24)
+		if err != nil || len(r.Decks) == 0 {
+			t.Fatalf("tier %d of three decks: %v %d", tier, err, len(r.Decks))
+		}
+	}
+	if r, err := s.TierDecks(context.Background(), 2, 5, 99, 5); err != nil || r.Eligible != 0 || len(r.Decks) != 0 {
+		t.Fatalf("nothing eligible must be an empty, not failed, answer: %v %+v", err, r)
+	}
+	for _, bad := range [][4]int{{0, 5, 1, 5}, {6, 5, 1, 5}, {1, 11, 1, 5}, {1, 5, 0, 5}, {1, 5, 1, 0}, {1, 5, 1, 101}} {
+		if _, err := s.TierDecks(context.Background(), bad[0], bad[1], bad[2], bad[3]); err != ErrBadTier {
+			t.Fatalf("%v should be refused with ErrBadTier, got %v", bad, err)
+		}
+	}
+}
+
+func TestTierBandCutsAreNestedAndCoverTheRanking(t *testing.T) {
+	for _, tiers := range []int{1, 2, 5, 10} {
+		prev := 0.0
+		for tier := 1; tier <= tiers; tier++ {
+			from, to := TierBand(tier, tiers)
+			if from != prev || to <= from || to > 1 {
+				t.Fatalf("tiers=%d tier=%d band (%v, %v) after %v", tiers, tier, from, to, prev)
+			}
+			prev = to
+		}
+		if prev != 1 {
+			t.Fatalf("tiers=%d ends at %v", tiers, prev)
+		}
+	}
+}
+
+// TestRealLogTiers prints the strength tiers the constructed bots would get from the production log.
+func TestRealLogTiers(t *testing.T) {
+	path := os.Getenv("DECKSTATS_REAL_LOG")
+	if path == "" {
+		t.Skip("set DECKSTATS_REAL_LOG (and DECKSTATS_REAL_DB to reuse a database)")
+	}
+	s := fileStore(t, path, realDBPath(t))
+	s.Refresh()
+	for _, minGames := range []int{6, 3} {
+		for tier := 1; tier <= 5; tier++ {
+			t0 := time.Now()
+			r, err := s.TierDecks(context.Background(), tier, 5, minGames, 24)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wr float64
+			var games int
+			for _, d := range r.Decks {
+				wr += d.WinRate
+				games += d.Games
+			}
+			t.Logf("min_games=%d tier %d: band %.2f-%.2f, eligible %d, %d decks, score %.3f..%.3f, mean win rate %.3f, mean games %.1f (%s)",
+				minGames, tier, r.From, r.To, r.Eligible, len(r.Decks), r.ScoreMin, r.ScoreMax, wr/float64(len(r.Decks)), float64(games)/float64(len(r.Decks)), time.Since(t0).Round(time.Millisecond))
+		}
+	}
+}

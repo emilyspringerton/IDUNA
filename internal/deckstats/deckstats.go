@@ -131,8 +131,9 @@ type Store struct {
 	names       map[string]string // canonical name strings, so parsing a known player allocates nothing
 	gate        chan struct{}     // bounds concurrent list queries
 
-	cacheMu sync.Mutex
-	cache   map[string]cached
+	cacheMu   sync.Mutex
+	cache     map[string]cached
+	tierCache map[string]cachedTier
 }
 
 type cached struct {
@@ -177,6 +178,7 @@ func (s *Store) open() {
 		s.names = map[string]string{}
 		s.gate = make(chan struct{}, 3)
 		s.cache = map[string]cached{}
+		s.tierCache = map[string]cachedTier{}
 		if rows, err := db.Query(`SELECT id, name FROM player`); err == nil {
 			for rows.Next() {
 				var id int64
@@ -751,6 +753,7 @@ func (s *Store) reset() error {
 	}
 	s.cacheMu.Lock()
 	s.cache = map[string]cached{}
+	s.tierCache = map[string]cachedTier{}
 	s.cacheMu.Unlock()
 	return nil
 }
@@ -862,6 +865,9 @@ func (s *Store) Deck(id uint32) (Deck, bool) {
 
 // ErrBusy means too many list queries were already running; try again shortly.
 var ErrBusy = errors.New("deckstats: busy")
+
+// ErrBadTier is a tier request with impossible numbers (tier outside 1..tiers, tiers outside 1..10, n outside 1..100).
+var ErrBadTier = errors.New("deckstats: bad tier request")
 
 // where builds the filter shared by the page and the count. pids are the players the name filter resolved to.
 func (q Query) where(pids []int64) (string, []any) {
@@ -1044,4 +1050,155 @@ func (s *Store) CardStats() []CardStat {
 		out = append(out, cs)
 	}
 	return out
+}
+
+// ---- strength tiers (the constructed-mode bots' deck source) ---------------------------------------------------
+
+// TierResult is one strength tier of the draft-deck pool.
+type TierResult struct {
+	Tier     int     `json:"tier"`  // 1 = weakest ... Tiers = strongest
+	Tiers    int     `json:"tiers"` // how many tiers the pool is cut into
+	MinGames int     `json:"min_games"`
+	Eligible int     `json:"eligible"` // decks with at least MinGames games
+	From     float64 `json:"from"`     // the band, as a fraction of the eligible decks ranked weakest (0) to strongest (1)
+	To       float64 `json:"to"`
+	ScoreMin float64 `json:"score_min"` // the weakest and strongest Wilson score actually in the band
+	ScoreMax float64 `json:"score_max"`
+	Decks    []Deck  `json:"decks"` // up to n decks spread evenly across the band, strongest first
+}
+
+// TierBand is where tier t of tiers sits among the eligible decks, as fractions of the ranking (weakest 0 ... strongest 1).
+// The cut points are 1 - (1 - k/tiers)^2, so the bands get narrower toward the top: with five tiers the strongest is the top
+// 4% (the champions), then 12%, 20%, 28%, and the weakest tier is the bottom 36%. A flat split would make the top tier as
+// broad as the bottom one, and "the best decks" is the part of the ranking that carries the signal.
+func TierBand(tier, tiers int) (from, to float64) {
+	cut := func(k int) float64 { x := 1 - float64(k)/float64(tiers); return 1 - x*x }
+	return cut(tier - 1), cut(tier)
+}
+
+// TierDecks returns up to n decks from strength tier `tier` of `tiers`, ranked by the Wilson score among the decks with at
+// least minGames games. A deck's record in this log is mostly a win streak (a deck plays until its first loss), so this is
+// "how long did it keep winning, adjusted for sample size". The pick is spread evenly across the band rather than taken from
+// its edge, so a bot that draws one at random plays the whole band.
+func (s *Store) TierDecks(ctx context.Context, tier, tiers, minGames, n int) (TierResult, error) {
+	res := TierResult{Tier: tier, Tiers: tiers, MinGames: minGames, Decks: []Deck{}}
+	if tiers < 1 || tiers > 10 || tier < 1 || tier > tiers || minGames < 1 || n < 1 || n > 100 {
+		return res, ErrBadTier
+	}
+	s.maybeRefresh()
+	if s.db == nil {
+		return res, s.initErr
+	}
+	key := fmt.Sprintf("tier/%d/%d/%d/%d", tier, tiers, minGames, n)
+	s.cacheMu.Lock()
+	if c, ok := s.tierCache[key]; ok && time.Since(c.at) < 5*time.Minute {
+		s.cacheMu.Unlock()
+		return c.res, nil
+	}
+	s.cacheMu.Unlock()
+
+	select {
+	case s.gate <- struct{}{}:
+		defer func() { <-s.gate }()
+	case <-time.After(2 * time.Second):
+		return res, ErrBusy
+	case <-ctx.Done():
+		return res, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	var eligible int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deck INDEXED BY deck_games WHERE games >= ?`, minGames).Scan(&eligible); err != nil {
+		return res, err
+	}
+	res.Eligible = eligible
+	res.From, res.To = TierBand(tier, tiers)
+	if eligible == 0 {
+		return res, nil
+	}
+	// Ranks, weakest first: the band is [lo, hi). Both edges come from one rounding of the same cut points, so neighbouring
+	// tiers partition the ranking exactly. (A pool too small for a tier to own a rank still returns one deck.)
+	edge := func(k int) int {
+		if k <= 0 {
+			return 0
+		}
+		if k >= tiers {
+			return eligible
+		}
+		_, to := TierBand(k, tiers)
+		return int(math.Round(float64(eligible) * to))
+	}
+	lo, hi := edge(tier-1), edge(tier)
+	if hi <= lo {
+		if lo >= eligible {
+			lo = eligible - 1
+		}
+		hi = lo + 1
+	}
+	// counted from the strongest deck, the band is [eligible-hi, eligible-lo)
+	top, span := eligible-hi, hi-lo
+	rows, err := s.db.QueryContext(ctx, `SELECT id, score FROM deck INDEXED BY deck_score WHERE games >= ? ORDER BY score DESC, id DESC LIMIT ? OFFSET ?`, minGames, span, top)
+	if err != nil {
+		return res, err
+	}
+	ids := make([]int64, 0, span)
+	scores := make([]float64, 0, span)
+	for rows.Next() {
+		var id int64
+		var sc float64
+		if err := rows.Scan(&id, &sc); err != nil {
+			rows.Close()
+			return res, err
+		}
+		ids = append(ids, id)
+		scores = append(scores, sc)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return res, err
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return res, nil
+	}
+	res.ScoreMax, res.ScoreMin = scores[0], scores[len(scores)-1]
+	m := n
+	if m > len(ids) {
+		m = len(ids)
+	}
+	pick := make([]any, 0, m)
+	placeholders := make([]string, 0, m)
+	for j := 0; j < m; j++ {
+		i := int((float64(j) + 0.5) * float64(len(ids)) / float64(m))
+		pick = append(pick, ids[i])
+		placeholders = append(placeholders, "?")
+	}
+	drows, err := s.db.QueryContext(ctx, `SELECT `+deckCols+` FROM deck WHERE id IN (`+strings.Join(placeholders, ",")+`) ORDER BY score DESC, id DESC`, pick...)
+	if err != nil {
+		return res, err
+	}
+	defer drows.Close()
+	for drows.Next() {
+		d, err := scanDeck(drows)
+		if err != nil {
+			return res, err
+		}
+		res.Decks = append(res.Decks, d)
+	}
+	if err := drows.Err(); err != nil {
+		return res, err
+	}
+	s.cacheMu.Lock()
+	if len(s.tierCache) > 64 {
+		s.tierCache = map[string]cachedTier{}
+	}
+	s.tierCache[key] = cachedTier{at: time.Now(), res: res}
+	s.cacheMu.Unlock()
+	return res, nil
+}
+
+type cachedTier struct {
+	at  time.Time
+	res TierResult
 }

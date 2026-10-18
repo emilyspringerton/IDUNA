@@ -16,6 +16,11 @@ import (
 //	GET /api/v1/games/deadweight/decks?sort=winrate|games|recent&min_games=N&kind=bot|human&player=..&card=ID&limit=&offset=
 //	GET /api/v1/games/deadweight/decks/{deck_id}
 //	GET /api/v1/games/deadweight/card-stats
+//	GET /api/v1/games/deadweight/bot-decks?tier=N[&tiers=5][&min_games=4][&n=24]
+//
+// bot-decks is what the constructed-mode bots draw their decks from: tier 1 of `tiers` is the weakest slice of the draft-deck
+// ranking (Wilson score among decks with at least min_games games), tier `tiers` the strongest (the champions); `n` decks are
+// spread evenly across the band.
 //
 // Data comes from dw_server's decks.ndjson (see internal/deckstats), which a background loop folds into SQLite: a request
 // only ever reads the database, never the (882 MiB and growing) log. Authenticated actions (tournaments etc.) are later work.
@@ -81,6 +86,25 @@ func (h *DeckStatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, d)
+	case rest == "bot-decks":
+		q := r.URL.Query()
+		tier := atoiDefault(q.Get("tier"), 0)
+		tiers := atoiDefault(q.Get("tiers"), 5)
+		if tier < 1 || tier > tiers || tiers > 10 {
+			mmoWriteError(w, http.StatusBadRequest, "tier must be 1..tiers (tiers 1..10)")
+			return
+		}
+		res, err := h.Store.TierDecks(r.Context(), tier, tiers, atoiDefault(q.Get("min_games"), 4), atoiDefault(q.Get("n"), 24))
+		if errors.Is(err, deckstats.ErrBadTier) {
+			mmoWriteError(w, http.StatusBadRequest, "min_games must be >= 1 and n 1..100")
+			return
+		}
+		if err != nil {
+			deckStoreError(w, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		writeJSON(w, http.StatusOK, res)
 	case rest == "card-stats":
 		writeJSON(w, http.StatusOK, map[string]any{"summary": h.Store.Summary(), "cards": h.Store.CardStats()})
 	default:
