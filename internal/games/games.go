@@ -131,6 +131,12 @@ var Registry = map[string]Config{
 		Slug:     "empire",
 		PlayPerm: "empire.play",
 	},
+	// Bedrock Racers web (WOTAN /bedrockracers/, 2026-10-18): PlayPerm only, same narrow cut as shankpit460 and empire. The lockstep room
+	// (internal/bedrockracers) is inside IDUNA, steps the module itself and records matches, so there is no M2M match-write permission.
+	"bedrockracers": {
+		Slug:     "bedrockracers",
+		PlayPerm: "bedrockracers.play",
+	},
 	"mixforge": {
 		Slug:              "mixforge",
 		PlayPerm:          "mixforge.play",

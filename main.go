@@ -1357,6 +1357,11 @@ func main() {
 	// See handlers/empire_play.go and internal/empire. EMPIRE_LEAGUE_MINUTES (default 15, 0 = off) sets how often the league plays.
 	empirePlay := handlers.NewEmpirePlay(gameOnlineH)
 	mux.Handle("/api/v1/empire/", empirePlay)
+	// BEDROCK RACERS web (WOTAN /bedrockracers/, founder real-time 2026-10-18): the lockstep room. It sequences every person's commands tick by tick, steps the SAME
+	// wasm the browsers play (internal/bedrockracers/bedrockracers.wasm) as the referee, and records the match (rated ladder, per-person counts, replay). See
+	// handlers/bedrockracers_play.go and internal/bedrockracers. BEDROCKRACERS_LOBBY_SECONDS / _TICK_US / _MAX_ROOMS / _MAX_TICKS tune it.
+	bedrockracersPlay := handlers.NewBedrockRacersPlay(gameOnlineH)
+	mux.Handle("/api/v1/bedrockracers/", bedrockracersPlay)
 
 	// WOTAN S550: public basic SHANKPIT kill/death/session leaderboard -- reads the players
 	// table's existing kills/deaths/sessions columns directly (no new table, no game scoping:
