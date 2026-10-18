@@ -1,8 +1,8 @@
 // Package matchlog tails dw_server's matches.ndjson (the sibling file to decks.ndjson --
 // internal/deckstats reads that one; this package reads the other) and keeps a bounded,
 // in-memory index of the most recent matches so WOTAN's match-history/replay viewer (S547) can
-// list recent matches and fetch one match's raw record without re-scanning a 90+MB, ever-growing
-// file on every request.
+// list recent matches and fetch one match's raw record without re-scanning a 660+MiB, ever-growing
+// file on every request. It reads only the tail of the file (see tailBytes).
 //
 // One raw ndjson line, written by DEADWEIGHT/apps/server/main.c's write_match_log:
 //
@@ -18,7 +18,6 @@ package matchlog
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -27,14 +26,14 @@ import (
 
 // Summary is one match's headline fields, parsed out of its raw log line, for the recent-matches list.
 type Summary struct {
-	MatchID uint32   `json:"match_id"`
-	Seed    uint32   `json:"seed"`
+	MatchID uint32    `json:"match_id"`
+	Seed    uint32    `json:"seed"`
 	Names   [2]string `json:"names"`
-	Kinds   [2]int   `json:"kinds"` // 0 human, 1 bot
-	Result  [2]int   `json:"result"`
-	Reason  int      `json:"reason"`
-	Rounds  int      `json:"rounds"`
-	Mode    string   `json:"mode"` // "draft" or "" (random/card mode)
+	Kinds   [2]int    `json:"kinds"` // 0 human, 1 bot
+	Result  [2]int    `json:"result"`
+	Reason  int       `json:"reason"`
+	Rounds  int       `json:"rounds"`
+	Mode    string    `json:"mode"` // "draft", "constructed" or "" (random/card mode)
 }
 
 type record struct {
@@ -72,6 +71,15 @@ func (s *Store) maxRecent() int {
 	return 2000
 }
 
+// Only the newest matches are kept, so only the end of a long log is ever read. The production log is 660+ MiB and grows
+// ~26 MiB a day; reading all of it into one buffer (the first version did) is an OOM kill in a 768 MiB pod, and nothing in
+// it but the last MaxRecent matches would have survived anyway. A first load, or catching up after a long idle spell, starts
+// at most tailBytes before the end of the file; each refresh then parses at most chunkBytes.
+const (
+	tailBytes  = 8 << 20
+	chunkBytes = 4 << 20
+)
+
 // refresh reads any new complete lines. Caller holds s.mu.
 func (s *Store) refresh() {
 	if s.byID == nil {
@@ -97,24 +105,41 @@ func (s *Store) refresh() {
 	if st.Size() < s.off {
 		s.reset()
 	}
-	if st.Size() == s.off {
-		return
+	buf := make([]byte, 0, chunkBytes)
+	for pass := 0; pass < 3 && s.off < st.Size(); pass++ {
+		aligned := true
+		if st.Size()-s.off > tailBytes {
+			// Far behind (or a first load of a long log): skip to the tail. The jump lands mid-line, so drop up to the first
+			// newline.
+			s.off = st.Size() - tailBytes
+			aligned = false
+		}
+		n := st.Size() - s.off
+		if n > chunkBytes {
+			n = chunkBytes
+		}
+		buf = buf[:n]
+		if _, err := f.ReadAt(buf, s.off); err != nil {
+			return
+		}
+		data, skipped := buf, 0
+		if !aligned {
+			nl := bytes.IndexByte(data, '\n')
+			if nl < 0 {
+				return
+			}
+			skipped = nl + 1
+			data = data[skipped:]
+		}
+		end := bytes.LastIndexByte(data, '\n')
+		if end < 0 {
+			return // no complete line yet
+		}
+		for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
+			s.apply(line)
+		}
+		s.off += int64(skipped + end + 1)
 	}
-	if _, err := f.Seek(s.off, io.SeekStart); err != nil {
-		return
-	}
-	buf, err := io.ReadAll(io.LimitReader(f, st.Size()-s.off))
-	if err != nil {
-		return
-	}
-	end := bytes.LastIndexByte(buf, '\n')
-	if end < 0 {
-		return // no complete line yet
-	}
-	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
-		s.apply(line)
-	}
-	s.off += int64(end + 1)
 }
 
 func (s *Store) apply(line []byte) {

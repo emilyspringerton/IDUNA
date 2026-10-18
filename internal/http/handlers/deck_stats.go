@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,7 +17,8 @@ import (
 //	GET /api/v1/games/deadweight/decks/{deck_id}
 //	GET /api/v1/games/deadweight/card-stats
 //
-// Data comes from dw_server's decks.ndjson (see internal/deckstats). Authenticated actions (tournaments etc.) are later work.
+// Data comes from dw_server's decks.ndjson (see internal/deckstats), which a background loop folds into SQLite: a request
+// only ever reads the database, never the (882 MiB and growing) log. Authenticated actions (tournaments etc.) are later work.
 type DeckStatsHandler struct {
 	Store   *deckstats.Store
 	Limiter *middleware.IPRateLimiter // nil = unlimited (tests)
@@ -30,6 +33,10 @@ func (h *DeckStatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Limiter != nil && !h.Limiter.Allow(clientIP(r)) {
 		mmoWriteError(w, http.StatusTooManyRequests, "slow down")
+		return
+	}
+	if err := h.Store.Err(); err != nil {
+		deckStoreError(w, err)
 		return
 	}
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, deckStatsPrefix), "/")
@@ -53,7 +60,11 @@ func (h *DeckStatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if qry.Offset < 0 {
 			qry.Offset = 0
 		}
-		decks, total := h.Store.List(qry)
+		decks, total, err := h.Store.ListCtx(r.Context(), qry)
+		if err != nil {
+			deckStoreError(w, err)
+			return
+		}
 		if decks == nil {
 			decks = []deckstats.Deck{}
 		}
@@ -74,6 +85,22 @@ func (h *DeckStatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"summary": h.Store.Summary(), "cards": h.Store.CardStats()})
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+// deckStoreError says why a read failed, and keeps the failure out of every cache.
+func deckStoreError(w http.ResponseWriter, err error) {
+	w.Header().Set("Cache-Control", "no-store")
+	switch {
+	case errors.Is(err, deckstats.ErrBusy):
+		w.Header().Set("Retry-After", "2")
+		mmoWriteError(w, http.StatusServiceUnavailable, "busy -- try again in a moment")
+	case errors.Is(err, context.DeadlineExceeded):
+		mmoWriteError(w, http.StatusServiceUnavailable, "that filter took too long -- narrow it (raise min games, pick a player type)")
+	case errors.Is(err, context.Canceled):
+		mmoWriteError(w, http.StatusServiceUnavailable, "request cancelled")
+	default:
+		mmoWriteError(w, http.StatusServiceUnavailable, "the deck tracker is unavailable")
 	}
 }
 

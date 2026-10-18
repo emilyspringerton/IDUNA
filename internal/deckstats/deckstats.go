@@ -1,23 +1,37 @@
 // Package deckstats aggregates DEADWEIGHT's draft deck log (dw_server --match-log DIR/decks.ndjson) into per-deck and
-// per-card win rates for WOTAN's public deck browser. The log is append-only ndjson with two record kinds:
+// per-card win rates for WOTAN's public deck browser, and picks the strongest decks for the constructed-mode bots. The
+// log is append-only ndjson with two record kinds:
 //
 //	{"event":"draft","deck_id":N,"t":unix,"player":"..","kind":0|1,"cards":[23 ids],"names":[..]}
 //	{"event":"match","deck_id":N,"match_id":M,"player":"..","kind":0|1,"result":"win|loss|draw","rounds":R}
 //
-// The store tails the file incrementally (only new complete lines are parsed) so a growing log stays cheap, and resets if
-// the file shrinks or is replaced.
+// The log is big and keeps growing: the standing bot pool drafts ~46,000 decks and plays ~110,000 deck-games a day, so the
+// file was 882 MiB after 26 days. The first version of this package read whatever it had not seen with io.ReadAll and kept
+// every deck in memory, which turned the first request after any IDUNA start into a 900 MB allocation and an OOM kill
+// (the pod limit is 768 MiB) -- the "WOTAN draft decks tracker isn't working" bug. This version never holds more than one
+// batch of lines: it tails the file in bounded batches into a SQLite read model (deck + card_stat tables) and remembers
+// how far it got, so a restart resumes where it stopped instead of re-reading the whole file, and every query is an
+// indexed read. It resets (and re-reads) if the log shrinks or its first line changes -- a rotated or replaced log.
 package deckstats
 
 import (
-	"bytes"
-	"encoding/json"
+	"bufio"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"hash/fnv"
 	"io"
 	"math"
 	"os"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // Deck is one drafted deck and its results so far.
@@ -65,6 +79,11 @@ type Summary struct {
 	BotDecks   int   `json:"bot_decks"`
 	Matches    int   `json:"matches"`
 	Updated    int64 `json:"updated"`
+	// Warming is true while the store is still working through a large backlog of the log (a first start, or a rotated
+	// log): the numbers are correct for what has been read so far, and grow until LogBytes == IndexedBytes.
+	Warming      bool  `json:"warming,omitempty"`
+	IndexedBytes int64 `json:"indexed_bytes"`
+	LogBytes     int64 `json:"log_bytes"`
 }
 
 // Query filters and orders the deck list.
@@ -78,255 +97,951 @@ type Query struct {
 	Offset   int
 }
 
-type rec struct {
-	Event  string `json:"event"`
-	DeckID uint32 `json:"deck_id"`
-	T      int64  `json:"t"`
-	Player string `json:"player"`
-	Kind   int    `json:"kind"`
-	Cards  []int  `json:"cards"`
-	Result string `json:"result"`
-}
+const (
+	schemaVersion = 1
+	// A log line is ~700 bytes (a draft with names); anything past this is junk and skipped, not buffered.
+	maxLine = 256 << 10
+	// While the store is more than this far behind the file it reports Warming.
+	warmBytes = 16 << 20
+)
 
-// Store tails one decks.ndjson.
+// A batch is committed after this many bytes / lines: it bounds memory (the batch's decks live in a map) and how long
+// the write lock is held. Variables so tests can force many small batches.
+var (
+	batchBytes int64 = 24 << 20
+	batchLines       = 60000
+)
+
+// Store tails one decks.ndjson into SQLite.
 type Store struct {
 	Path string
-	// MinRefresh throttles file stats/reads (default 2s).
+	// DBPath is the SQLite file. Empty = a private in-memory database (tests, throwaway tools).
+	DBPath string
+	// MinRefresh throttles the file check done by reads when no background loop runs (default 2s).
 	MinRefresh time.Duration
 
-	mu          sync.Mutex
-	off         int64
-	lastRefresh time.Time
-	decks       map[uint32]*Deck
-	order       []uint32 // deck ids in log order
-	matchRecs   int
-	version     int
-	cardVer     int
-	cardStats   []CardStat
+	initOnce sync.Once
+	initErr  error
+	db       *sql.DB
+
+	mu          sync.Mutex // one ingester at a time
+	lastRefresh atomic.Int64
+	bg          atomic.Bool
+	pids        map[string]int64  // player name -> player.id (the ingester's cache of the player table)
+	names       map[string]string // canonical name strings, so parsing a known player allocates nothing
+	gate        chan struct{}     // bounds concurrent list queries
+
+	cacheMu sync.Mutex
+	cache   map[string]cached
 }
 
-func (s *Store) reset() {
-	s.off = 0
-	s.decks = map[uint32]*Deck{}
-	s.order = nil
-	s.matchRecs = 0
-	s.version++
+type cached struct {
+	at    time.Time
+	decks []Deck
+	total int
 }
 
-// refresh reads any new complete lines. Caller holds s.mu.
-func (s *Store) refresh() {
-	if s.decks == nil {
-		s.reset()
+var memDBSeq atomic.Int64
+
+// Err reports why the store cannot be used (the SQLite file could not be opened), or nil.
+func (s *Store) Err() error {
+	s.open()
+	return s.initErr
+}
+
+func (s *Store) open() {
+	s.initOnce.Do(func() {
+		var dsn string
+		maxConns := 4
+		if s.DBPath == "" {
+			dsn = fmt.Sprintf("file:deckstats_mem_%d?mode=memory&cache=shared&_pragma=busy_timeout(5000)", memDBSeq.Add(1))
+			maxConns = 1 // a shared in-memory database vanishes with its last connection, and shared-cache tables lock
+		} else {
+			dsn = "file:" + s.DBPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-8192)&_pragma=temp_store(MEMORY)"
+		}
+		db, err := sql.Open("sqlite", dsn)
+		if err != nil {
+			s.initErr = err
+			return
+		}
+		db.SetMaxOpenConns(maxConns)
+		db.SetMaxIdleConns(maxConns)
+		db.SetConnMaxLifetime(0)
+		if err := migrate(db); err != nil {
+			db.Close()
+			s.initErr = err
+			return
+		}
+		s.db = db
+		s.pids = map[string]int64{}
+		s.names = map[string]string{}
+		s.gate = make(chan struct{}, 3)
+		s.cache = map[string]cached{}
+		if rows, err := db.Query(`SELECT id, name FROM player`); err == nil {
+			for rows.Next() {
+				var id int64
+				var name string
+				if rows.Scan(&id, &name) == nil {
+					s.pids[name] = id
+				}
+			}
+			rows.Close()
+		}
+	})
+}
+
+// Close releases the database.
+func (s *Store) Close() error {
+	s.open()
+	if s.db == nil {
+		return nil
 	}
-	min := s.MinRefresh
-	if min == 0 {
-		min = 2 * time.Second
+	return s.db.Close()
+}
+
+func migrate(db *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v)`,
+		// Player names are few (the bot pool plus a handful of people) and repeat 1.2 million times, so a deck stores a small
+		// integer and the name filter becomes an integer test the indexes below can answer without reading the table.
+		`CREATE TABLE IF NOT EXISTS player (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, lname TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS deck (
+			id INTEGER PRIMARY KEY,
+			created INTEGER NOT NULL,
+			player TEXT NOT NULL,
+			pid INTEGER NOT NULL,
+			kind INTEGER NOT NULL,
+			cards BLOB NOT NULL,
+			games INTEGER NOT NULL DEFAULT 0,
+			wins INTEGER NOT NULL DEFAULT 0,
+			losses INTEGER NOT NULL DEFAULT 0,
+			draws INTEGER NOT NULL DEFAULT 0,
+			win_rate REAL NOT NULL DEFAULT 0,
+			score REAL NOT NULL DEFAULT 0)`,
+		// One index per sort order. They also carry games, kind and pid, so the min-games / drafted-by / player filters are
+		// decided from the index alone: a "players only" query over 1.2M decks walks 30 MB of index in ~0.1 s instead of
+		// reading the 150 MB table (3 s).
+		`CREATE INDEX IF NOT EXISTS deck_score ON deck (score DESC, id DESC, games, kind, pid)`,
+		`CREATE INDEX IF NOT EXISTS deck_winrate ON deck (win_rate DESC, games DESC, id DESC, kind, pid)`,
+		`CREATE INDEX IF NOT EXISTS deck_games ON deck (games DESC, id, kind, pid)`,
+		`CREATE INDEX IF NOT EXISTS deck_recent ON deck (id DESC, games, kind, pid)`,
+		`CREATE TABLE IF NOT EXISTS card_stat (
+			card INTEGER PRIMARY KEY,
+			decks INTEGER NOT NULL DEFAULT 0,
+			copies INTEGER NOT NULL DEFAULT 0,
+			games INTEGER NOT NULL DEFAULT 0,
+			wins INTEGER NOT NULL DEFAULT 0,
+			losses INTEGER NOT NULL DEFAULT 0,
+			draws INTEGER NOT NULL DEFAULT 0)`,
 	}
-	if time.Since(s.lastRefresh) < min {
-		return
+	for _, q := range stmts {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
 	}
-	s.lastRefresh = time.Now()
+	var v int
+	err := db.QueryRow(`SELECT v FROM meta WHERE k='schema'`).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = db.Exec(`INSERT OR REPLACE INTO meta (k, v) VALUES ('schema', ?)`, schemaVersion)
+	}
+	return err
+}
+
+// ---- reading the log ------------------------------------------------------------------------------------------
+
+type meta struct {
+	offset       int64
+	fp           string
+	drafts       int
+	humanDecks   int
+	botDecks     int
+	matchRecords int
+}
+
+func (s *Store) readMeta(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}) (m meta, err error) {
+	rows, err := q.Query(`SELECT k, v FROM meta`)
+	if err != nil {
+		return m, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var v any
+		if err := rows.Scan(&k, &v); err != nil {
+			return m, err
+		}
+		n := func() int64 {
+			switch x := v.(type) {
+			case int64:
+				return x
+			case float64:
+				return int64(x)
+			case string:
+				i, _ := strconv.ParseInt(x, 10, 64)
+				return i
+			}
+			return 0
+		}
+		switch k {
+		case "offset":
+			m.offset = n()
+		case "fp":
+			if x, ok := v.(string); ok {
+				m.fp = x
+			}
+		case "drafts":
+			m.drafts = int(n())
+		case "human_decks":
+			m.humanDecks = int(n())
+		case "bot_decks":
+			m.botDecks = int(n())
+		case "match_records":
+			m.matchRecords = int(n())
+		}
+	}
+	return m, rows.Err()
+}
+
+// firstLineFP identifies the log by its first complete line: a rotated or replaced log starts with different bytes even
+// when it has already grown past the old offset. "" when the file has no complete first line yet.
+func firstLineFP(f *os.File) (string, error) {
+	buf := make([]byte, 4096)
+	n, err := f.ReadAt(buf, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	buf = buf[:n]
+	nl := -1
+	for i, c := range buf {
+		if c == '\n' {
+			nl = i
+			break
+		}
+	}
+	if nl < 0 {
+		return "", nil
+	}
+	h := fnv.New64a()
+	h.Write(buf[:nl])
+	return fmt.Sprintf("%d:%x", nl, h.Sum64()), nil
+}
+
+func fpMatches(f *os.File, fp string) bool {
+	var n int
+	var sum string
+	if i := strings.IndexByte(fp, ':'); i > 0 {
+		n, _ = strconv.Atoi(fp[:i])
+		sum = fp[i+1:]
+	}
+	if n <= 0 {
+		return true
+	}
+	buf := make([]byte, n+1)
+	if _, err := f.ReadAt(buf, 0); err != nil || buf[n] != '\n' {
+		return false
+	}
+	h := fnv.New64a()
+	h.Write(buf[:n])
+	return fmt.Sprintf("%x", h.Sum64()) == sum
+}
+
+// deckRow is a deck held while its batch is open.
+type deckRow struct {
+	id                         uint32
+	created                    int64
+	player                     string
+	kind                       int
+	cards                      [maxCards]byte
+	n                          int
+	games, wins, losses, draws int
+}
+
+type delta struct{ games, wins, losses, draws int }
+
+func (d *delta) add(res byte) {
+	d.games++
+	switch res {
+	case 'w':
+		d.wins++
+	case 'l':
+		d.losses++
+	default:
+		d.draws++
+	}
+}
+
+type cardAgg struct{ decks, copies, games, wins, losses, draws int }
+
+type batch struct {
+	newDecks     map[uint32]*deckRow
+	deltas       map[uint32]*delta
+	matchRecords int
+	lines        int
+}
+
+func newBatch() *batch {
+	return &batch{newDecks: map[uint32]*deckRow{}, deltas: map[uint32]*delta{}}
+}
+
+// playerName returns the player's name as a string without allocating for names already seen (a handful of names repeat
+// a million times); only a new name is copied out of the line buffer.
+func (s *Store) playerName(b []byte) string {
+	if v, ok := s.names[string(b)]; ok {
+		return v
+	}
+	v := string(b)
+	if len(s.names) < 4096 {
+		s.names[v] = v
+	}
+	return v
+}
+
+func (b *batch) apply(s *Store, ev *event) {
+	switch ev.typ {
+	case 'd':
+		if ev.ncards == 0 || ev.badCards {
+			return
+		}
+		if _, dup := b.newDecks[ev.deckID]; dup {
+			return
+		}
+		d := &deckRow{id: ev.deckID, created: ev.t, player: s.playerName(ev.player), kind: ev.kind, n: ev.ncards}
+		copy(d.cards[:], ev.cards[:ev.ncards])
+		b.newDecks[ev.deckID] = d
+	case 'm':
+		b.matchRecords++
+		if d := b.newDecks[ev.deckID]; d != nil {
+			d.games++
+			switch ev.result {
+			case 'w':
+				d.wins++
+			case 'l':
+				d.losses++
+			default:
+				d.draws++
+			}
+			return
+		}
+		dl := b.deltas[ev.deckID]
+		if dl == nil {
+			dl = &delta{}
+			b.deltas[ev.deckID] = dl
+		}
+		dl.add(ev.result)
+	}
+}
+
+// refreshLocked reads whatever the log gained since the stored offset, in bounded batches, until it reaches the end of
+// the file or the budget (0 = none) runs out. It reports whether more remains. The caller holds s.mu.
+func (s *Store) refreshLocked(budget time.Duration, throttle bool) (more bool) {
+	s.open()
+	if s.db == nil {
+		return false
+	}
+	s.lastRefresh.Store(time.Now().UnixNano())
 	f, err := os.Open(s.Path)
 	if err != nil {
-		return
+		return false
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return
+		return false
 	}
-	if st.Size() < s.off {
-		s.reset()
-	}
-	if st.Size() == s.off {
-		return
-	}
-	if _, err := f.Seek(s.off, io.SeekStart); err != nil {
-		return
-	}
-	buf, err := io.ReadAll(io.LimitReader(f, st.Size()-s.off))
+	m, err := s.readMeta(s.db)
 	if err != nil {
-		return
+		return false
 	}
-	end := bytes.LastIndexByte(buf, '\n')
-	if end < 0 {
-		return // no complete line yet
-	}
-	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
-		s.apply(line)
-	}
-	s.off += int64(end + 1)
-	s.version++
-}
-
-func (s *Store) apply(line []byte) {
-	line = bytes.TrimSpace(line)
-	if len(line) == 0 {
-		return
-	}
-	var r rec
-	if json.Unmarshal(line, &r) != nil {
-		return
-	}
-	switch r.Event {
-	case "draft":
-		if _, dup := s.decks[r.DeckID]; dup || len(r.Cards) == 0 {
-			return
+	// A log that shrank, or whose first line changed, is a different log: forget what was read from the old one.
+	if m.offset > 0 && (st.Size() < m.offset || (m.fp != "" && !fpMatches(f, m.fp))) {
+		if err := s.reset(); err != nil {
+			return false
 		}
-		s.decks[r.DeckID] = &Deck{ID: r.DeckID, Player: r.Player, Kind: r.Kind, Created: r.T, Cards: r.Cards}
-		s.order = append(s.order, r.DeckID)
-	case "match":
-		d := s.decks[r.DeckID]
-		s.matchRecs++
-		if d == nil {
-			return
-		}
-		d.Games++
-		switch r.Result {
-		case "win":
-			d.Wins++
-		case "loss":
-			d.Losses++
-		default:
-			d.Draws++
-		}
-		d.WinRate = float64(d.Wins) / float64(d.Games)
-		d.Score = wilson(d.Wins, d.Games)
+		m = meta{}
 	}
-}
-
-// Summary returns the headline counts.
-func (s *Store) Summary() Summary {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.refresh()
-	sum := Summary{Decks: len(s.order), Matches: s.matchRecs / 2, Updated: s.lastRefresh.Unix()}
-	for _, id := range s.order {
-		if s.decks[id].Kind == 1 {
-			sum.BotDecks++
-		} else {
-			sum.HumanDecks++
+	deadline := time.Time{}
+	if budget > 0 {
+		deadline = time.Now().Add(budget)
+	}
+	for m.offset < st.Size() {
+		start := time.Now()
+		consumed, err := s.ingestBatch(f, st.Size(), &m)
+		if err != nil || consumed == 0 {
+			return false
 		}
-	}
-	return sum
-}
-
-// Deck returns one deck by id.
-func (s *Store) Deck(id uint32) (Deck, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.refresh()
-	d, ok := s.decks[id]
-	if !ok {
-		return Deck{}, false
-	}
-	return *d, true
-}
-
-// List returns the filtered, ordered page and the total number of matches before paging.
-func (s *Store) List(q Query) ([]Deck, int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.refresh()
-	var out []Deck
-	needle := strings.ToLower(q.Player)
-	for _, id := range s.order {
-		d := s.decks[id]
-		if d.Games < q.MinGames {
-			continue
+		if m.offset >= st.Size() {
+			break
 		}
-		if q.Kind == "bot" && d.Kind != 1 || q.Kind == "human" && d.Kind != 0 {
-			continue
-		}
-		if needle != "" && !strings.Contains(strings.ToLower(d.Player), needle) {
-			continue
-		}
-		if q.Card >= 0 && !hasCard(d.Cards, q.Card) {
-			continue
-		}
-		out = append(out, *d)
-	}
-	switch q.Sort {
-	case "games":
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Games > out[j].Games })
-	case "recent":
-		sort.SliceStable(out, func(i, j int) bool { return out[i].ID > out[j].ID })
-	case "score":
-		sort.SliceStable(out, func(i, j int) bool {
-			if out[i].Score != out[j].Score {
-				return out[i].Score > out[j].Score
-			}
-			return out[i].ID > out[j].ID
-		})
-	default: // winrate, ties broken by more games, then newest
-		sort.SliceStable(out, func(i, j int) bool {
-			if out[i].WinRate != out[j].WinRate {
-				return out[i].WinRate > out[j].WinRate
-			}
-			if out[i].Games != out[j].Games {
-				return out[i].Games > out[j].Games
-			}
-			return out[i].ID > out[j].ID
-		})
-	}
-	total := len(out)
-	if q.Offset > total {
-		q.Offset = total
-	}
-	out = out[q.Offset:]
-	if q.Limit > 0 && len(out) > q.Limit {
-		out = out[:q.Limit]
-	}
-	return out, total
-}
-
-func hasCard(cards []int, c int) bool {
-	for _, x := range cards {
-		if x == c {
+		if !deadline.IsZero() && time.Now().After(deadline) {
 			return true
+		}
+		if throttle {
+			// Leave the CPU to the API: sleep as long as the batch took (about a 50% duty cycle while catching up).
+			time.Sleep(time.Since(start))
 		}
 	}
 	return false
 }
 
-// CardStats returns per-card records (ordered by card id), recomputed only when the log changed.
-func (s *Store) CardStats() []CardStat {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.refresh()
-	if s.cardStats != nil && s.cardVer == s.version {
-		return s.cardStats
-	}
-	byCard := map[int]*CardStat{}
-	for _, id := range s.order {
-		d := s.decks[id]
-		seen := map[int]bool{}
-		for _, c := range d.Cards {
-			cs := byCard[c]
-			if cs == nil {
-				cs = &CardStat{Card: c}
-				byCard[c] = cs
+// ingestBatch parses up to one batch of complete lines starting at m.offset, writes them in one transaction together with
+// the new offset, and advances m. It returns how many bytes it consumed (0 = nothing complete to read).
+func (s *Store) ingestBatch(f *os.File, size int64, m *meta) (int64, error) {
+	sr := io.NewSectionReader(f, m.offset, size-m.offset)
+	br := bufio.NewReaderSize(sr, 1<<20)
+	b := newBatch()
+	var ev event
+	var consumed int64
+	for consumed < batchBytes && b.lines < batchLines {
+		line, err := br.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			// An absurdly long line: skip it without buffering the rest.
+			n := int64(len(line))
+			for errors.Is(err, bufio.ErrBufferFull) {
+				var more []byte
+				more, err = br.ReadSlice('\n')
+				n += int64(len(more))
 			}
-			cs.Copies++
-			if !seen[c] {
-				seen[c] = true
-				cs.Decks++
-				cs.Games += d.Games
-				cs.Wins += d.Wins
-				cs.Losses += d.Losses
-				cs.Draws += d.Draws
+			if err != nil { // no newline before EOF: incomplete, stop before it
+				break
+			}
+			consumed += n
+			continue
+		}
+		if err != nil { // EOF with no trailing newline: a partial line stays unread until it is complete
+			break
+		}
+		consumed += int64(len(line))
+		b.lines++
+		if len(line) > maxLine {
+			continue
+		}
+		body := line[:len(line)-1]
+		if len(body) > 0 && body[len(body)-1] == '\r' {
+			body = body[:len(body)-1]
+		}
+		if len(body) == 0 {
+			continue
+		}
+		if !parseLine(body, &ev) {
+			continue
+		}
+		b.apply(s, &ev)
+	}
+	if consumed == 0 {
+		return 0, nil
+	}
+	fp := m.fp
+	if m.offset == 0 && fp == "" {
+		if fp, _ = firstLineFP(f); fp == "" {
+			fp = m.fp
+		}
+	}
+	if err := s.flush(b, m, m.offset+consumed, fp); err != nil {
+		return 0, err
+	}
+	return consumed, nil
+}
+
+func (s *Store) flush(b *batch, m *meta, newOffset int64, fp string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	cards := map[int]*cardAgg{}
+	agg := func(c int) *cardAgg {
+		a := cards[c]
+		if a == nil {
+			a = &cardAgg{}
+			cards[c] = a
+		}
+		return a
+	}
+	// addGames credits a deck's games to every distinct card it runs.
+	addGames := func(cardBytes []byte, d delta) {
+		var seen [256]bool
+		for _, c := range cardBytes {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			a := agg(int(c))
+			a.games += d.games
+			a.wins += d.wins
+			a.losses += d.losses
+			a.draws += d.draws
+		}
+	}
+
+	ins, err := tx.Prepare(`INSERT OR IGNORE INTO deck (id, created, player, pid, kind, cards, games, wins, losses, draws, win_rate, score)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer ins.Close()
+	newPids := map[string]int64{} // players first seen in this batch: cached only once the batch commits
+	pidOf := func(name string) (int64, error) {
+		if id, ok := s.pids[name]; ok {
+			return id, nil
+		}
+		if id, ok := newPids[name]; ok {
+			return id, nil
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO player (name, lname) VALUES (?, ?)`, name, strings.ToLower(name)); err != nil {
+			return 0, err
+		}
+		var id int64
+		if err := tx.QueryRow(`SELECT id FROM player WHERE name = ?`, name).Scan(&id); err != nil {
+			return 0, err
+		}
+		newPids[name] = id
+		return id, nil
+	}
+
+	ids := make([]uint32, 0, len(b.newDecks))
+	for id := range b.newDecks {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	humans, bots, drafts := 0, 0, 0
+	for _, id := range ids {
+		d := b.newDecks[id]
+		wr := 0.0
+		if d.games > 0 {
+			wr = float64(d.wins) / float64(d.games)
+		}
+		pid, err := pidOf(d.player)
+		if err != nil {
+			return err
+		}
+		res, err := ins.Exec(d.id, d.created, d.player, pid, d.kind, d.cards[:d.n], d.games, d.wins, d.losses, d.draws, wr, wilson(d.wins, d.games))
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			// The deck is already stored (a repeated draft record): its games in this batch still count.
+			dl := b.deltas[id]
+			if dl == nil {
+				dl = &delta{}
+				b.deltas[id] = dl
+			}
+			dl.games += d.games
+			dl.wins += d.wins
+			dl.losses += d.losses
+			dl.draws += d.draws
+			continue
+		}
+		drafts++
+		if d.kind == 1 {
+			bots++
+		} else {
+			humans++
+		}
+		var count [256]int
+		for _, c := range d.cards[:d.n] {
+			count[c]++
+		}
+		for c, n := range count {
+			if n > 0 {
+				a := agg(c)
+				a.decks++
+				a.copies += n
+			}
+		}
+		addGames(d.cards[:d.n], delta{d.games, d.wins, d.losses, d.draws})
+	}
+
+	// Matches for decks that were drafted in an earlier batch: read-modify-write the stored row.
+	if len(b.deltas) > 0 {
+		dids := make([]uint32, 0, len(b.deltas))
+		for id := range b.deltas {
+			dids = append(dids, id)
+		}
+		slices.Sort(dids)
+		sel, err := tx.Prepare(`SELECT cards, games, wins, losses, draws FROM deck WHERE id = ?`)
+		if err != nil {
+			return err
+		}
+		defer sel.Close()
+		upd, err := tx.Prepare(`UPDATE deck SET games=?, wins=?, losses=?, draws=?, win_rate=?, score=? WHERE id=?`)
+		if err != nil {
+			return err
+		}
+		defer upd.Close()
+		for _, id := range dids {
+			dl := b.deltas[id]
+			var cardBlob []byte
+			var g, w, l, dr int
+			if err := sel.QueryRow(id).Scan(&cardBlob, &g, &w, &l, &dr); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue // a match for a deck we never saw drafted
+				}
+				return err
+			}
+			g += dl.games
+			w += dl.wins
+			l += dl.losses
+			dr += dl.draws
+			if _, err := upd.Exec(g, w, l, dr, float64(w)/float64(g), wilson(w, g), id); err != nil {
+				return err
+			}
+			addGames(cardBlob, *dl)
+		}
+	}
+
+	if len(cards) > 0 {
+		up, err := tx.Prepare(`INSERT INTO card_stat (card, decks, copies, games, wins, losses, draws) VALUES (?,?,?,?,?,?,?)
+			ON CONFLICT(card) DO UPDATE SET decks=decks+excluded.decks, copies=copies+excluded.copies, games=games+excluded.games,
+			wins=wins+excluded.wins, losses=losses+excluded.losses, draws=draws+excluded.draws`)
+		if err != nil {
+			return err
+		}
+		defer up.Close()
+		for c, a := range cards {
+			if _, err := up.Exec(c, a.decks, a.copies, a.games, a.wins, a.losses, a.draws); err != nil {
+				return err
 			}
 		}
 	}
-	out := make([]CardStat, 0, len(byCard))
-	for _, cs := range byCard {
+
+	m.offset = newOffset
+	m.fp = fp
+	m.drafts += drafts
+	m.humanDecks += humans
+	m.botDecks += bots
+	m.matchRecords += b.matchRecords
+	for k, v := range map[string]any{
+		"offset": m.offset, "fp": m.fp, "drafts": m.drafts, "human_decks": m.humanDecks, "bot_decks": m.botDecks,
+		"match_records": m.matchRecords,
+	} {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)`, k, v); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for name, id := range newPids {
+		s.pids[name] = id
+	}
+	if !s.bg.Load() { // with a background loop the 5 s TTL alone bounds staleness; the loop flushes every 2 s
+		s.cacheMu.Lock()
+		s.cache = map[string]cached{}
+		s.cacheMu.Unlock()
+	}
+	return nil
+}
+
+func (s *Store) reset() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{`DELETE FROM deck`, `DELETE FROM card_stat`, `DELETE FROM meta WHERE k <> 'schema'`} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cacheMu.Lock()
+	s.cache = map[string]cached{}
+	s.cacheMu.Unlock()
+	return nil
+}
+
+// Refresh reads whatever the log gained, now, however much that is (tests and one-shot tools).
+func (s *Store) Refresh() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshLocked(0, false)
+}
+
+// Start runs the ingester in the background: it checks the log every two seconds and, while it is far behind (the first
+// start reads the whole history), works through it in throttled batches. Reads then never touch the file. Stop it with ctx.
+func (s *Store) Start(ctx context.Context) {
+	if !s.bg.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		for {
+			s.mu.Lock()
+			func() {
+				defer func() { _ = recover() }() // a bad line must never take IDUNA down
+				s.refreshLocked(0, true)
+			}()
+			s.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}()
+}
+
+// maybeRefresh is the read-time refresh used when no background loop runs.
+func (s *Store) maybeRefresh() {
+	s.open()
+	if s.bg.Load() || s.db == nil {
+		return
+	}
+	min := s.MinRefresh
+	if min == 0 {
+		min = 2 * time.Second
+	}
+	if time.Since(time.Unix(0, s.lastRefresh.Load())) < min {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Another reader may have refreshed while this one waited for the lock.
+	if time.Since(time.Unix(0, s.lastRefresh.Load())) < min {
+		return
+	}
+	s.refreshLocked(0, false)
+}
+
+// ---- queries --------------------------------------------------------------------------------------------------
+
+// Summary returns the headline counts.
+func (s *Store) Summary() Summary {
+	s.maybeRefresh()
+	if s.db == nil {
+		return Summary{}
+	}
+	m, err := s.readMeta(s.db)
+	if err != nil {
+		return Summary{}
+	}
+	sum := Summary{Decks: m.drafts, HumanDecks: m.humanDecks, BotDecks: m.botDecks, Matches: m.matchRecords / 2,
+		Updated: time.Unix(0, s.lastRefresh.Load()).Unix(), IndexedBytes: m.offset}
+	if st, err := os.Stat(s.Path); err == nil {
+		sum.LogBytes = st.Size()
+		sum.Warming = st.Size()-m.offset > warmBytes
+	}
+	return sum
+}
+
+const deckCols = `id, created, player, kind, cards, games, wins, losses, draws, win_rate, score`
+
+type scanner interface{ Scan(...any) error }
+
+func scanDeck(r scanner) (Deck, error) {
+	var d Deck
+	var blob []byte
+	var id int64
+	if err := r.Scan(&id, &d.Created, &d.Player, &d.Kind, &blob, &d.Games, &d.Wins, &d.Losses, &d.Draws, &d.WinRate, &d.Score); err != nil {
+		return d, err
+	}
+	d.ID = uint32(id)
+	d.Cards = make([]int, len(blob))
+	for i, c := range blob {
+		d.Cards[i] = int(c)
+	}
+	return d, nil
+}
+
+// Deck returns one deck by id.
+func (s *Store) Deck(id uint32) (Deck, bool) {
+	s.maybeRefresh()
+	if s.db == nil {
+		return Deck{}, false
+	}
+	d, err := scanDeck(s.db.QueryRow(`SELECT `+deckCols+` FROM deck WHERE id = ?`, int64(id)))
+	if err != nil {
+		return Deck{}, false
+	}
+	return d, true
+}
+
+// ErrBusy means too many list queries were already running; try again shortly.
+var ErrBusy = errors.New("deckstats: busy")
+
+// where builds the filter shared by the page and the count. pids are the players the name filter resolved to.
+func (q Query) where(pids []int64) (string, []any) {
+	conds := []string{"games >= ?"}
+	args := []any{q.MinGames}
+	switch q.Kind {
+	case "bot":
+		conds = append(conds, "kind = 1")
+	case "human":
+		conds = append(conds, "kind = 0")
+	}
+	if strings.TrimSpace(q.Player) != "" {
+		ph := make([]string, len(pids))
+		for i, id := range pids {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		conds = append(conds, "pid IN ("+strings.Join(ph, ",")+")")
+	}
+	if q.Card >= 0 {
+		if q.Card > 255 {
+			conds = append(conds, "0")
+		} else {
+			conds = append(conds, "instr(cards, ?) > 0")
+			args = append(args, []byte{byte(q.Card)})
+		}
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+func (q Query) order() (index, orderBy string) {
+	switch q.Sort {
+	case "games":
+		return "deck_games", "games DESC, id ASC"
+	case "recent":
+		return "deck_recent", "id DESC"
+	case "score":
+		return "deck_score", "score DESC, id DESC"
+	default: // winrate, ties broken by more games, then newest
+		return "deck_winrate", "win_rate DESC, games DESC, id DESC"
+	}
+}
+
+// matchPlayers resolves a name filter to player ids.
+func (s *Store) matchPlayers(ctx context.Context, needle string) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM player WHERE instr(lname, ?) > 0 ORDER BY id LIMIT 500`, strings.ToLower(strings.TrimSpace(needle)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// List returns the filtered, ordered page and the total number of matches before paging. An error (busy, timed out, no
+// database) reads as an empty page; the HTTP handler uses ListCtx to tell the caller why.
+func (s *Store) List(q Query) ([]Deck, int) {
+	out, total, _ := s.ListCtx(context.Background(), q)
+	return out, total
+}
+
+// ListCtx is List with the reason for a failure. A page is bounded by a 4 s deadline, and at most three run at once: the
+// store serves a public page, so a pathological filter must cost a few seconds of one query, not the whole pod.
+func (s *Store) ListCtx(ctx context.Context, q Query) ([]Deck, int, error) {
+	s.maybeRefresh()
+	if s.db == nil {
+		return nil, 0, s.initErr
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	key := fmt.Sprintf("%+v", q)
+	s.cacheMu.Lock()
+	if c, ok := s.cache[key]; ok && time.Since(c.at) < 5*time.Second {
+		s.cacheMu.Unlock()
+		return append([]Deck(nil), c.decks...), c.total, nil
+	}
+	s.cacheMu.Unlock()
+
+	select {
+	case s.gate <- struct{}{}:
+		defer func() { <-s.gate }()
+	case <-time.After(2 * time.Second):
+		return nil, 0, ErrBusy
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	var pids []int64
+	if strings.TrimSpace(q.Player) != "" {
+		var err error
+		if pids, err = s.matchPlayers(ctx, q.Player); err != nil {
+			return nil, 0, err
+		}
+		if len(pids) == 0 {
+			return []Deck{}, 0, nil
+		}
+	}
+	where, args := q.where(pids)
+	index, orderBy := q.order()
+	sqlText := `SELECT ` + deckCols + ` FROM deck INDEXED BY ` + index + where + ` ORDER BY ` + orderBy
+	pageArgs := append([]any(nil), args...)
+	if q.Limit > 0 {
+		sqlText += ` LIMIT ? OFFSET ?`
+		pageArgs = append(pageArgs, q.Limit, q.Offset)
+	} else if q.Offset > 0 {
+		sqlText += ` LIMIT -1 OFFSET ?`
+		pageArgs = append(pageArgs, q.Offset)
+	}
+	rows, err := s.db.QueryContext(ctx, sqlText, pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []Deck{}
+	for rows.Next() {
+		d, err := scanDeck(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	rows.Close()
+	var total int
+	if (len(out) > 0 || q.Offset == 0) && (q.Limit <= 0 || len(out) < q.Limit) {
+		// The page ran off the end of the result set (an empty page at offset 0 is the whole, empty, set), so it tells the
+		// total: no second pass over the index. An empty page past the offset says nothing, and is counted below.
+		total = q.Offset + len(out)
+	} else {
+		countFrom := "deck INDEXED BY deck_games" // answered from the index alone, unless a card filter needs the row
+		if q.Card >= 0 {
+			countFrom = "deck"
+		}
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+countFrom+where, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	}
+	s.cacheMu.Lock()
+	if len(s.cache) > 256 {
+		s.cache = map[string]cached{}
+	}
+	s.cache[key] = cached{at: time.Now(), decks: append([]Deck(nil), out...), total: total}
+	s.cacheMu.Unlock()
+	return out, total, nil
+}
+
+// CardStats returns per-card records, ordered by card id.
+func (s *Store) CardStats() []CardStat {
+	s.maybeRefresh()
+	out := []CardStat{}
+	if s.db == nil {
+		return out
+	}
+	rows, err := s.db.Query(`SELECT card, decks, copies, games, wins, losses, draws FROM card_stat ORDER BY card`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cs CardStat
+		if err := rows.Scan(&cs.Card, &cs.Decks, &cs.Copies, &cs.Games, &cs.Wins, &cs.Losses, &cs.Draws); err != nil {
+			return out
+		}
 		if cs.Games > 0 {
 			cs.WinRate = float64(cs.Wins) / float64(cs.Games)
 			cs.Score = wilson(cs.Wins, cs.Games)
 		}
-		out = append(out, *cs)
+		out = append(out, cs)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Card < out[j].Card })
-	s.cardStats, s.cardVer = out, s.version
 	return out
 }

@@ -1270,8 +1270,20 @@ func main() {
 	// their own bucket so game traffic can't starve real logins. Config rows live in internal/games.
 	// WOTAN's public, read-only DEADWEIGHT draft-deck browser (decks + win rates from dw_server's decks.ndjson). More specific
 	// patterns than the generic /api/v1/games/ handler below, so they win.
+	// The log is 880+ MiB and grows ~35 MiB a day (the standing bot pool drafts ~46k decks a day), so it is folded into
+	// SQLite (var/deckstats.db) by a background loop and requests only read that. Reading the log in the request path took
+	// the whole pod down (OOM) on the first /decks call after any start.
+	deckStore := &deckstats.Store{
+		Path:   getenv("DEADWEIGHT_DECK_LOG", "/home/fatbaby/DEADWEIGHT/var/matches/decks.ndjson"),
+		DBPath: getenv("DEADWEIGHT_DECKSTATS_DB", "./var/deckstats.db"),
+	}
+	if err := deckStore.Err(); err != nil {
+		log.Printf("deckstats: cannot open %s: %v (the deck tracker will answer 503)", deckStore.DBPath, err)
+	} else {
+		deckStore.Start(context.Background())
+	}
 	deckStatsH := &handlers.DeckStatsHandler{
-		Store:   &deckstats.Store{Path: getenv("DEADWEIGHT_DECK_LOG", "/home/fatbaby/DEADWEIGHT/var/matches/decks.ndjson")},
+		Store:   deckStore,
 		Limiter: middleware.NewIPRateLimiter(120),
 	}
 	mux.Handle("/api/v1/games/deadweight/decks", deckStatsH)
