@@ -36,6 +36,7 @@ h4{margin:14px 0 6px;color:#71717a;font-weight:600}#err{color:#f87171;padding:4p
 </style></head><body>
 <div id="side"><a href="/admin" style="color:#7ee8a2">&larr; admin</a>
 <h4>Sessions</h4><button class="s" id="new">+ new</button><div id="sessions"></div>
+<h4>Worker</h4><button class="s" id="mint">mint worker agent</button><pre id="cred" style="white-space:pre-wrap;word-break:break-all;font-size:11px"></pre>
 <h4>Lessons <span style="font-weight:400">(feedback loop)</span></h4><div id="lessons"></div>
 <input id="lt" placeholder="teach it something" style="width:100%;margin-top:6px;box-sizing:border-box"><button class="s" id="la">add lesson</button>
 </div>
@@ -64,5 +65,8 @@ async function send(){const c=$('in').value.trim();if(!c)return;try{if(!sid){awa
  await j('/sessions/'+sid+'/messages',{method:'POST',body:JSON.stringify({content:c})});$('in').value='';poll()}catch(e){err(e.message)}}
 $('send').onclick=send;$('in').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))send()});
 $('la').onclick=async()=>{try{await j('/lessons',{method:'POST',body:JSON.stringify({text:$('lt').value})});$('lt').value='';lessons()}catch(e){err(e.message)}};
+$('mint').onclick=async()=>{if(!confirm('Mint a new worker agent? Its secret is shown once.'))return;
+ try{const d=await j('/workers',{method:'POST',body:'{}'});
+ $('cred').textContent='IDUNA_AGENT_NAME='+d.agent_name+'\nIDUNA_AGENT_SECRET='+d.agent_secret+'\n# permissions: '+d.permissions.join(', ')+'\n# shown once - copy it now';err('')}catch(e){err(e.message)}};
 sessions();lessons();
 </script></body></html>`
