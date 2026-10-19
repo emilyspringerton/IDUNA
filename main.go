@@ -30,6 +30,7 @@ import (
 	"iduna/internal/nock"
 	"iduna/internal/promptoverse"
 	"iduna/internal/shankpit"
+	"iduna/internal/coder"
 	"iduna/internal/statuspage"
 	"iduna/internal/store"
 	"iduna/internal/tenantprovision"
@@ -578,6 +579,20 @@ func main() {
 	// could drift apart.
 	backlogPath := getenv("EMILY_BACKLOG_PATH", "/home/fatbaby/EMILY/BACKLOG.md")
 	kanbanH := &handlers.KanbanHandler{DB: db, BacklogPath: backlogPath, Store: iamStore, ApplesGitDir: os.Getenv("APPLES_GIT_DIR")}
+	// Coder agent (chat sessions, worker queue, lessons). Fine-grained coder.* permissions per route
+	// (internal/coder/perms.go). Mounted twice: bearer JWT at /api/v1/coder/, admin cookie at
+	// /admin/coder/api/ (the chat page /admin/coder).
+	coderDBPath := getenv("CODER_DB_PATH", "./var/coder.db")
+	coderStore, err := coder.Open(coderDBPath)
+	if err != nil {
+		log.Fatalf("coder: failed to open store: %v", err)
+	}
+	coderAPI := middleware.RequireAuth(keys)(&handlers.CoderHandler{Store: coderStore, Prefix: "/api/v1/coder"})
+	mux.Handle("/api/v1/coder/", coderAPI)
+	coderAdminAPI := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.CoderHandler{Store: coderStore, Prefix: "/admin/coder/api"}))
+	mux.Handle("/admin/coder/api/", coderAdminAPI)
+	mux.Handle("/admin/coder", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(handlers.CoderPageHandler{})))
+
 	kanbanPageProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.KanbanPageHandler{}))
 	mux.Handle("/admin/kanban", kanbanPageProtected)
 	kanbanAdminAPIProtected := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(kanbanH))
