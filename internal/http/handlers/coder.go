@@ -15,11 +15,13 @@ import (
 
 	"iduna/internal/coder"
 	"iduna/internal/http/middleware"
+	"iduna/internal/store"
 )
 
 type CoderHandler struct {
 	Store  *coder.Store
-	Prefix string // e.g. "/api/v1/coder"
+	IAM    store.IAMStore // optional: enables POST workers (agent provisioning)
+	Prefix string         // e.g. "/api/v1/coder"
 }
 
 func (h *CoderHandler) can(r *http.Request, perm string) bool {
@@ -178,6 +180,41 @@ func (h *CoderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]string{"status": "deleted"})
+
+	case path == "workers" && method == http.MethodPost:
+		// Mints a worker agent holding exactly coder.worker.claim + coder.worker.report (no chat,
+		// no admin, no tools): the least-privilege identity `emily coder work` runs as.
+		if !require(coder.PermWorkerProvision) {
+			return
+		}
+		if h.IAM == nil {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "agent provisioning not configured"})
+			return
+		}
+		nb := make([]byte, 3)
+		rand.Read(nb)
+		name := "CODER-WORKER-" + strings.ToUpper(hex.EncodeToString(nb))
+		agent, err := h.IAM.CreateAgent(r.Context(), systemUserID, name, "service", sub)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		sb := make([]byte, 32)
+		rand.Read(sb)
+		secret := hex.EncodeToString(sb)
+		if err := h.IAM.SetAgentCredential(r.Context(), agent.ID, secret, sub); err != nil {
+			h.fail(w, err)
+			return
+		}
+		perms := []string{coder.PermWorkerClaim, coder.PermWorkerReport}
+		for _, p := range perms {
+			if err := h.IAM.GrantAgentPermission(r.Context(), agent.ID, p, sub); err != nil {
+				h.fail(w, err)
+				return
+			}
+		}
+		writeJSON(w, 201, map[string]any{"agent_id": agent.ID, "agent_name": name, "agent_secret": secret,
+			"permissions": perms, "note": "the secret is shown once"})
 
 	case path == "work/claim" && method == http.MethodPost:
 		if !require(coder.PermWorkerClaim) {

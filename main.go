@@ -587,9 +587,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("coder: failed to open store: %v", err)
 	}
-	coderAPI := middleware.RequireAuth(keys)(&handlers.CoderHandler{Store: coderStore, Prefix: "/api/v1/coder"})
+	coderAPI := middleware.RequireAuth(keys)(&handlers.CoderHandler{Store: coderStore, IAM: iamStore, Prefix: "/api/v1/coder"})
 	mux.Handle("/api/v1/coder/", coderAPI)
-	coderAdminAPI := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.CoderHandler{Store: coderStore, Prefix: "/admin/coder/api"}))
+	coderAdminAPI := middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(&handlers.CoderHandler{Store: coderStore, IAM: iamStore, Prefix: "/admin/coder/api"}))
 	mux.Handle("/admin/coder/api/", coderAdminAPI)
 	mux.Handle("/admin/coder", middleware.RequireCookieAuth(keys, iamStore, "/admin/login", handlers.AdminSessionTTL)(middleware.RequirePermission("iduna.admin")(handlers.CoderPageHandler{})))
 

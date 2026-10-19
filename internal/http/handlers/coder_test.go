@@ -81,3 +81,26 @@ func TestCoderAPI_FineGrainedIAM(t *testing.T) {
 		t.Errorf("ungranted tool: want 403 got %d", w.Code)
 	}
 }
+
+func TestCoderAPI_WorkerProvisionNeedsItsOwnPermission(t *testing.T) {
+	h, keys := coderServer(t)
+	// chat permissions do not let you mint worker agents
+	user := makeAgentToken(t, keys, "alice", []string{coder.PermChatSend, coder.PermSessionCreate})
+	if w := coderDo(h, user, "POST", "/api/v1/coder/workers", `{}`); w.Code != 403 {
+		t.Errorf("want 403 got %d", w.Code)
+	}
+	// a worker identity cannot mint more workers either
+	wk := makeAgentToken(t, keys, "w", []string{coder.PermWorkerClaim, coder.PermWorkerReport})
+	if w := coderDo(h, wk, "POST", "/api/v1/coder/workers", `{}`); w.Code != 403 {
+		t.Errorf("worker minting workers: want 403 got %d", w.Code)
+	}
+	// the permission holder reaches the handler (501 here only because this test server has no IAM store)
+	prov := makeAgentToken(t, keys, "ops", []string{coder.PermWorkerProvision})
+	if w := coderDo(h, prov, "POST", "/api/v1/coder/workers", `{}`); w.Code != 501 {
+		t.Errorf("want 501 got %d", w.Code)
+	}
+	// and a worker cannot chat
+	if w := coderDo(h, wk, "POST", "/api/v1/coder/sessions", `{}`); w.Code != 403 {
+		t.Errorf("worker creating sessions: want 403 got %d", w.Code)
+	}
+}

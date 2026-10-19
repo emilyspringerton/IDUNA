@@ -3,16 +3,17 @@ package coder
 // Fine-grained permissions. Each API route requires exactly one of these.
 // "coder.admin" and "iduna.admin" are superset roles (hold everything below).
 const (
-	PermSessionCreate  = "coder.session.create"   // POST   sessions
-	PermSessionRead    = "coder.session.read"     // GET    own sessions + messages
-	PermSessionReadAll = "coder.session.read.all" // GET    anyone's sessions + messages
-	PermChatSend       = "coder.chat.send"        // POST   sessions/{id}/messages
-	PermToolsRead      = "coder.tools.read"       // GET    tools
-	PermLessonsRead    = "coder.lessons.read"     // GET    lessons
-	PermLessonsWrite   = "coder.lessons.write"    // POST/DELETE lessons
-	PermWorkerClaim    = "coder.worker.claim"     // POST   work/claim   (agent worker M2M identity)
-	PermWorkerReport   = "coder.worker.report"    // POST   work/{id}/events, work/{id}/finish
-	PermAdmin          = "coder.admin"
+	PermSessionCreate   = "coder.session.create"   // POST   sessions
+	PermSessionRead     = "coder.session.read"     // GET    own sessions + messages
+	PermSessionReadAll  = "coder.session.read.all" // GET    anyone's sessions + messages
+	PermChatSend        = "coder.chat.send"        // POST   sessions/{id}/messages
+	PermToolsRead       = "coder.tools.read"       // GET    tools
+	PermLessonsRead     = "coder.lessons.read"     // GET    lessons
+	PermLessonsWrite    = "coder.lessons.write"    // POST/DELETE lessons
+	PermWorkerClaim     = "coder.worker.claim"     // POST   work/claim   (agent worker M2M identity)
+	PermWorkerReport    = "coder.worker.report"    // POST   work/{id}/events, work/{id}/finish
+	PermWorkerProvision = "coder.worker.provision" // POST workers: mint a least-privilege worker agent
+	PermAdmin           = "coder.admin"
 )
 
 // Tools is the agent's tool catalogue: name -> description. Each is gated by "coder.tool.<name>".
