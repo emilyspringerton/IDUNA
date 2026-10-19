@@ -50,11 +50,20 @@ type GfdMobSpawnRule struct {
 // here for the same cross-module reason GfdItemCategories duplicates itemdef.Category. Exposed
 // so the page can render a real dropdown instead of a free-text zone id a typo could break.
 var GfdZoneNames = map[int]string{
-	0: "Meadow",
-	1: "Hills",
-	2: "Caves",
-	3: "Swampville",
-	4: "New Handington",
+	0:  "Meadow",
+	1:  "Hills",
+	2:  "Caves",
+	3:  "Swampville",
+	4:  "New Handington",
+	10: "Fledgling Field",
+	11: "Wren's Perch",
+	12: "Roost Deeps",
+	13: "Pellet Marsh",
+	14: "Observation Tor",
+	15: "Eastwind Ridge",
+	16: "Cataloguer's Stacks",
+	17: "Footnote Moor",
+	18: "Protocol Wall",
 }
 
 // GfdMobSpawnsHandler serves the real CRUD API backing the Mob Spawns page. Rows are keyed by

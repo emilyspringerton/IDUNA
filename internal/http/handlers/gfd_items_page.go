@@ -113,6 +113,8 @@ Ancient Bow of the Vale"></textarea>
         <input type="number" id="f-level" value="0">
         <label>Stack Size</label>
         <input type="number" id="f-stack" value="1">
+        <label>Weapon Type <span style="font-weight:400">(sword, dagger, staff, bow, katana...; weapons only)</span></label>
+        <input type="text" id="f-wtype" placeholder="e.g. sword">
         <label>Delay <span style="font-weight:400">(weapons only -- attack speed in delay-units, 60 ≈ 1s; blank for non-weapons)</span></label>
         <input type="number" id="f-delay" placeholder="e.g. 240 for a typical 1H sword">
       </div>
@@ -184,6 +186,7 @@ function formToItem() {
     level: parseInt(document.getElementById('f-level').value || '0', 10),
     stack_size: parseInt(document.getElementById('f-stack').value || '1', 10),
     delay: delayVal ? parseInt(delayVal, 10) : 0,
+    weapon_type: document.getElementById('f-wtype').value.trim(),
     equip_slots: splitCsv(document.getElementById('f-slots').value),
     jobs: splitCsv(document.getElementById('f-jobs').value),
     model_id: document.getElementById('f-model').value.trim(),
@@ -199,6 +202,7 @@ function itemToForm(item) {
   document.getElementById('f-level').value = item.level || 0;
   document.getElementById('f-stack').value = item.stack_size || 1;
   document.getElementById('f-delay').value = item.delay || '';
+  document.getElementById('f-wtype').value = item.weapon_type || '';
   document.getElementById('f-slots').value = (item.equip_slots || []).join(', ');
   document.getElementById('f-jobs').value = (item.jobs || []).join(', ');
   document.getElementById('f-model').value = item.model_id || '';
@@ -210,7 +214,7 @@ function clearForm() {
   editingID = null;
   document.getElementById('form-title').textContent = 'Add new item';
   document.getElementById('cancel-btn').hidden = true;
-  ['f-id','f-name','f-slots','f-jobs','f-model','f-flags','f-delay'].forEach(id => document.getElementById(id).value = '');
+  ['f-id','f-name','f-slots','f-jobs','f-model','f-flags','f-delay','f-wtype'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-level').value = 0;
   document.getElementById('f-stack').value = 1;
   document.getElementById('f-stats').value = '{}';

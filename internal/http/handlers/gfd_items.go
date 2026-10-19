@@ -59,6 +59,9 @@ type GfdItemDef struct {
 	// a fixed value per weapon type (founder: "not a standard delay per item type"). Only
 	// meaningful for Category == "weapon"; 0 means "not set yet."
 	Delay int `json:"delay,omitempty"`
+	// WeaponType mirrors itemdef.ItemDef.WeaponType (sword/dagger/staff/...). Without this field the
+	// builder's read-modify-write silently stripped weapon_type from every item on any save.
+	WeaponType string `json:"weapon_type,omitempty"`
 }
 
 // GfdItemCategories is the real, fixed category set itemdef.Category itself defines --
@@ -224,6 +227,20 @@ func (h *GfdItemsHandler) update(w http.ResponseWriter, r *http.Request, idStr s
 	found := false
 	for i := range items {
 		if items[i].ID == id {
+			// PATCH is a full replace, but the page form does not send every field. Keep what the
+			// request omitted instead of wiping it (description, weapon_type, icon, disguise).
+			if def.Description == "" {
+				def.Description = items[i].Description
+			}
+			if def.WeaponType == "" {
+				def.WeaponType = items[i].WeaponType
+			}
+			if def.IconID == 0 {
+				def.IconID = items[i].IconID
+			}
+			if def.DisguiseFaction == "" {
+				def.DisguiseFaction = items[i].DisguiseFaction
+			}
 			items[i] = def
 			found = true
 			break

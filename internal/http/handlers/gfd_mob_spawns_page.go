@@ -114,7 +114,7 @@ const gfdMobSpawnsPageHTML = `<!DOCTYPE html>
   </table>
 </main>
 <script>
-const ZONES = { 0: 'Meadow', 1: 'Hills', 2: 'Caves', 3: 'Swampville', 4: 'New Handington' };
+const ZONES = { 0: 'Meadow', 1: 'Hills', 2: 'Caves', 3: 'Swampville', 4: 'New Handington', 10: 'Fledgling Field', 11: 'Wren\'s Perch', 12: 'Roost Deeps', 13: 'Pellet Marsh', 14: 'Observation Tor', 15: 'Eastwind Ridge', 16: 'Cataloguer\'s Stacks', 17: 'Footnote Moor', 18: 'Protocol Wall' };
 
 function api(path, opts) {
   opts = opts || {};

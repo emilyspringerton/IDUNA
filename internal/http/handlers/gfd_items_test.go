@@ -273,3 +273,29 @@ func TestGfdItems_Delay_OmittedForNonWeapons(t *testing.T) {
 		t.Errorf("expected no delay key for a non-weapon item, got %v", generic[0])
 	}
 }
+
+// A save from the page form (which does not send weapon_type/description) must not wipe them, and
+// editing one row must not strip weapon_type from the others.
+func TestGfdItems_Update_PreservesFieldsTheFormOmits(t *testing.T) {
+	path := newGfdItemsTestFile(t, `[
+ {"id":1,"name":"Dagger","category":"weapon","weapon_type":"dagger","description":"pointy","delay":168,"stack_size":1},
+ {"id":2,"name":"Sword","category":"weapon","weapon_type":"sword","stack_size":1}]`)
+	h := &handlers.GfdItemsHandler{ItemsJSONPath: path}
+
+	body, _ := json.Marshal(map[string]any{"name": "Dagger", "category": "weapon", "level": 3, "stack_size": 1, "delay": 170})
+	req := httptest.NewRequest(http.MethodPatch, "/admin/gfd-items/api/items/1", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	raw, _ := os.ReadFile(path)
+	var all []handlers.GfdItemDef
+	json.Unmarshal(raw, &all)
+	if all[0].WeaponType != "dagger" || all[0].Description != "pointy" || all[0].Delay != 170 {
+		t.Fatalf("edited row lost omitted fields: %+v", all[0])
+	}
+	if all[1].WeaponType != "sword" {
+		t.Fatalf("untouched row lost weapon_type: %+v", all[1])
+	}
+}
