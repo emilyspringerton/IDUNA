@@ -41,7 +41,7 @@ h4{margin:14px 0 6px;color:#71717a;font-weight:600}#err{color:#f87171;padding:4p
 <input id="lt" placeholder="teach it something" style="width:100%;margin-top:6px;box-sizing:border-box"><button class="s" id="la">add lesson</button>
 </div>
 <div id="main"><div id="err"></div><div id="log"></div>
-<div id="bar"><textarea id="in" rows="2" placeholder="Talk to the coder agent... (Ctrl+Enter to send)"></textarea><button id="send">Send</button></div></div>
+<div id="bar"><textarea id="in" rows="2" placeholder="Talk to the coder agent... (Enter to send, Shift+Enter for newline)"></textarea><button id="send">Send</button></div></div>
 <script>
 const API='/admin/coder/api';let sid=null,last=0,timer=null;
 const $=id=>document.getElementById(id);
@@ -63,7 +63,7 @@ async function lessons(){try{const d=await j('/lessons');const el=$('lessons');e
 $('new').onclick=async()=>{try{const s=await j('/sessions',{method:'POST',body:JSON.stringify({title:'chat '+new Date().toISOString().slice(5,16)})});await open(s.id)}catch(e){err(e.message)}};
 async function send(){const c=$('in').value.trim();if(!c)return;try{if(!sid){await $('new').onclick()}
  await j('/sessions/'+sid+'/messages',{method:'POST',body:JSON.stringify({content:c})});$('in').value='';poll()}catch(e){err(e.message)}}
-$('send').onclick=send;$('in').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))send()});
+$('send').onclick=send;$('in').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}});
 $('la').onclick=async()=>{try{await j('/lessons',{method:'POST',body:JSON.stringify({text:$('lt').value})});$('lt').value='';lessons()}catch(e){err(e.message)}};
 $('mint').onclick=async()=>{if(!confirm('Mint a new worker agent? Its secret is shown once.'))return;
  try{const d=await j('/workers',{method:'POST',body:'{}'});
