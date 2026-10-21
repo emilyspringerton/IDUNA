@@ -1,5 +1,9 @@
 # IDUNA Changelog
 
+## 2026-10-21
+
+- feat(bedrockracers): **online multiplayer Bedrock Racers on IDUNA** (`/api/v1/bedrockracers/{play,status,matches,replays,players,leaders}`, founder real-time: "we need to ship multiplayer bedrock racers"). A lockstep room hub (`internal/bedrockracers`) seats people into a four-team match, sequences every person's command word tick by tick, steps the same wasm the browsers run (`bedrockracers.wasm`, via wazero) as the referee with a hash check every 250 ticks, turns a dropped person into a bot at an exact tick, records the match (rated 4-team Elo in `game_player_stats`, per-person rows, replay) and serves the stats routes WOTAN reads. Additive migration `202610180001_bedrockracers_web.sql` (two new tables), a `bedrockracers` games registry row (`bedrockracers.play`). The referee wasm is the WOTAN `bedrockracers-page` build (PARENA `c5fa4b9`+, ERROR 6 leaves the room): the earlier copy differed from the browsers' in two net functions (`net_check_fail_bang`, `net_frame_bang`, 20 bytes), the sim and golden hashes are unchanged. Tested: `go test ./internal/bedrockracers` and `-run Bedrock` in `handlers` green; WOTAN's two-Chromium-pages test against this binary 10/10 (both seated, 12 s of play, hash checks pass, drop-to-bot). Wider `handlers` run: the same 9 failures as clean `main` (draft runs, guest lore name/upgrade, redeem refill, nock door scripts, identity admin merge); one run also failed `TestBedrockRacersPlay_RatedMatchIsRecordedAndShownInTheStats` while two other test suites were hogging this 2-core box, 0 failures in 23 reruns since.
+
 ## 2026-10-19
 
 - feat(coder): **"mint worker agent" button on `/admin/coder`** (admin cookie session, `iduna.admin`): creates the least-privilege worker agent and shows its secret once. Added because no identity usable from the CLI box holds `coder.worker.provision`, and minting an agent is a privileged action that belongs to the admin, not to a borrowed credential.
