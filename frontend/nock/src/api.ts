@@ -572,6 +572,34 @@ export function buggySpawnTile(id: number, at: { x: number; y: number; z: number
   return { id, x: at.x, y: 0.1, z: at.z, sx: 4, sy: 0.2, sz: 6, r: 0.95, g: 0.7, b: 0.1, friction, name: 'buggy_spawn' }
 }
 
+// vehicleSpawnTile -- the buggy tile above, generalised to the whole roster now that a level can
+// place a rocket car, a helicopter, both drones and the C-110 (IDUNA/internal/shankpit
+// vehicleSpawnsForExport -> SHANKPIT packages/world/level_boxes.h vehicle_spawns). Same name
+// convention, so widget flattening, rotation and the legacy buggy tiles all keep working:
+// vehicle_spawn_<kind> (yaw 0) or vehicle_spawn_<kind>_<deg>. Only the pad's colour differs, so a
+// garage bay reads at a glance.
+export const VEHICLE_SPAWN_KINDS = ['buggy', 'rocket', 'heli', 'recon', 'fly', 'plane'] as const
+export type VehicleSpawnKind = (typeof VEHICLE_SPAWN_KINDS)[number]
+
+const VEHICLE_SPAWN_TINT: Record<VehicleSpawnKind, [number, number, number]> = {
+  buggy: [0.95, 0.7, 0.1],
+  rocket: [0.95, 0.3, 0.2],
+  heli: [0.2, 0.75, 0.95],
+  recon: [0.35, 0.85, 0.55],
+  fly: [0.75, 0.6, 0.95],
+  plane: [0.9, 0.9, 0.95],
+}
+
+export function vehicleSpawnTile(
+  id: number,
+  kind: VehicleSpawnKind,
+  at: { x: number; y: number; z: number },
+  friction: number,
+): ShankpitWall {
+  const [r, g, b] = VEHICLE_SPAWN_TINT[kind] ?? VEHICLE_SPAWN_TINT.buggy
+  return { id, x: at.x, y: 0.1, z: at.z, sx: 4, sy: 0.2, sz: 8, r, g, b, friction, name: `vehicle_spawn_${kind}` }
+}
+
 // ShankpitMaterial mirrors IDUNA/internal/shankpit.Material exactly (S459-16, founder real-time:
 // "we will need the ability to add new materials and set their textures" / "registries for
 // everything"). shader_name is a real, named reference into SHANKPIT's own compiled-in shader
@@ -742,6 +770,15 @@ export interface ShankpitCharacter {
   // KIT_OPTIONS below; 0 = auto (SHANKPIT's existing connection-order round-robin/witness_ai pick,
   // unchanged for every character that doesn't opt in).
   kit: number
+  // EMPIRE unit layer (SHANKPIT packages/simulation/empire_units.h). archetype 0 = not an EMPIRE
+  // unit: the character spawns exactly as it did before these fields existed (its role + kit). 1..6
+  // are citizen / zombie / soldier / ally / guard / worker, and picking one picks the brain role, a
+  // default skin and a faction -- that is the editor's "spawn a soldier" affordance. faction and
+  // orders are -1 when unauthored, meaning "use the archetype's own"; orders 0 is a real value
+  // ("takes no orders, does whatever its brain does").
+  archetype?: number
+  faction?: number
+  orders?: number
   x: number
   y: number
   z: number
@@ -802,6 +839,45 @@ export const KIT_OPTIONS: { value: number; label: string }[] = [
   { value: 3, label: 'Mike' },
   { value: 4, label: 'Leela' },
   { value: 5, label: 'George' },
+]
+
+// ARCHETYPE_OPTIONS -- EMPIRE units (SHANKPIT packages/simulation/empire_units.h). Each value is a
+// complete thing to spawn: a brain role, a default skin, a faction and a set of orders. 0 keeps the
+// pre-EMPIRE behaviour exactly (the Role + Kit selects above decide everything).
+export const ARCHETYPE_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: 'None (role + kit only)' },
+  { value: 1, label: 'Citizen' },
+  { value: 2, label: 'Zombie' },
+  { value: 3, label: 'Soldier' },
+  { value: 4, label: 'Ally (Mike by default)' },
+  { value: 5, label: 'Guard' },
+  { value: 6, label: 'Worker' },
+]
+
+// Faction defaults to the archetype's own (-1), which is what makes "spawn a soldier" hostile and
+// "spawn an ally" friendly without touching anything else. Overriding it is how a level author puts a
+// soldier ON YOUR SIDE.
+export const FACTION_OPTIONS: { value: number; label: string }[] = [
+  { value: -1, label: "Archetype's own" },
+  { value: 0, label: 'Neutral' },
+  { value: 1, label: 'Ally' },
+  { value: 2, label: 'Hostile' },
+]
+
+// The order mask, in the same bit values the level JSON and SHANKPIT's EU_ORDER_* use. Add them up: an
+// ally that follows, explores, fights and gathers is 15. -1 keeps the archetype's own mask.
+export const ORDER_OPTIONS: { value: number; label: string }[] = [
+  { value: -1, label: "Archetype's own" },
+  { value: 0, label: 'None (brain only)' },
+  { value: 1, label: 'Follow' },
+  { value: 2, label: 'Explore' },
+  { value: 4, label: 'Engage' },
+  { value: 8, label: 'Gather' },
+  { value: 16, label: 'Claim' },
+  { value: 32, label: 'Guard' },
+  { value: 15, label: 'Follow + Explore + Engage + Gather (ally)' },
+  { value: 52, label: 'Engage + Claim + Guard (soldier)' },
+  { value: 63, label: 'All orders' },
 ]
 
 export type ShankpitFloorTint = { r: number; g: number; b: number; a: number }

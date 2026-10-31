@@ -566,6 +566,11 @@ type ExportDoc struct {
 	// tile wall stays in Walls as a real, visible pad; this list tells the native loader where a buggy
 	// spawns on it. y is the tile's top surface.
 	BuggySpawns []BuggySpawnExport `json:"buggy_spawns,omitempty"`
+	// VehicleSpawns -- every author-placed vehicle, one list (buggy, rocket, heli, recon, fly,
+	// plane), because the roster outgrew the single-purpose buggy tile. A legacy buggy_spawn tile
+	// is exported here as kind "buggy" as well, so both authoring routes reach the one native path
+	// (SHANKPIT packages/world/level_boxes.h vehicle_spawns).
+	VehicleSpawns []VehicleSpawnExport `json:"vehicle_spawns,omitempty"`
 	// LabStations (SECTION 592, founder real-time: LAB affordances in the INTERIOR-cloned LAB level) -- one
 	// per wall named lab_<kind> (see labStationKind), a tile in the level or in a placed widget. The wall stays
 	// as the visible machine body; this list tells the native loader where the interactive station is.
@@ -1375,7 +1380,7 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 					ID: 0, X: worldX + rx, Y: worldY + w.Y, Z: worldZ + rz,
 					SX: rsx, SY: w.SY, SZ: rsz,
 					R: w.R, G: w.G, B: w.B, Friction: w.Friction, Material: w.Material,
-					Name: rotatedBuggySpawnName(w.Name, worldRotY),
+					Name: rotatedVehicleSpawnName(w.Name, worldRotY),
 				})
 				carryOrientation(w, &outWalls[len(outWalls)-1], worldRotY)
 			}
@@ -1502,6 +1507,10 @@ func (s *LevelStore) ExportLevel(ctx context.Context, lvl *Level) (*ExportDoc, e
 	if len(buggySpawns) > MaxBuggySpawns {
 		return nil, fmt.Errorf("shankpit: composed level %d has %d buggy_spawn tiles (max %d)", id, len(buggySpawns), MaxBuggySpawns)
 	}
+	vehicleSpawns := vehicleSpawnsForExport(walls)
+	if len(vehicleSpawns) > MaxVehicleSpawns {
+		return nil, fmt.Errorf("shankpit: composed level %d has %d vehicle spawn tiles (max %d)", id, len(vehicleSpawns), MaxVehicleSpawns)
+	}
 	// S479 follow-up: a composed object's own doors (composedDoors, already-resolved final box
 	// indices into the combined `walls` above) alongside this level's own root doors -- see
 	// composedDoorRef's own doc comment for why doors previously could never survive being
@@ -1516,7 +1525,7 @@ func (s *LevelStore) ExportLevel(ctx context.Context, lvl *Level) (*ExportDoc, e
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed, FloorTint: lvl.FloorTint,
-		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, LabStations: labStationsForExport(walls), Doors: doorExports,
+		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, VehicleSpawns: vehicleSpawns, LabStations: labStationsForExport(walls), Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
 	}, nil
@@ -1741,6 +1750,109 @@ func buggySpawnsForExport(walls []Wall) []BuggySpawnExport {
 			continue
 		}
 		out = append(out, BuggySpawnExport{X: w.X, Y: w.Y + w.SY/2, Z: w.Z, Yaw: yaw})
+	}
+	return out
+}
+
+// ---- Vehicle spawns -----------------------------------------------------------------------------
+// The buggy tile's name convention, generalised to the whole roster: vehicle_spawn_<kind> (facing
+// yaw 0) or vehicle_spawn_<kind>_<deg> (vehicle_spawn_heli_90). Kinds match SHANKPIT's own
+// LEVEL_VEHICLE_* numbering (packages/world/level_boxes.h). The old buggy_spawn / buggy_spawn_<deg>
+// names still work and are exported as kind "buggy", so nothing authored before this change moves.
+
+// MaxVehicleSpawns matches SHANKPIT's LEVEL_BOXES_MAX_VEHICLE_SPAWNS.
+const MaxVehicleSpawns = 24
+
+// VehicleSpawnKinds are the kinds a wall name may carry, in SHANKPIT's numbering order.
+var VehicleSpawnKinds = []string{"buggy", "rocket", "heli", "recon", "fly", "plane"}
+
+const vehicleSpawnPrefix = "vehicle_spawn"
+
+// VehicleSpawnExport is the native-loader-facing shape of one vehicle spawn.
+type VehicleSpawnExport struct {
+	Kind string  `json:"kind"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Z    float64 `json:"z"`
+	Yaw  float64 `json:"yaw"`
+}
+
+func isVehicleSpawnKind(kind string) bool {
+	for _, k := range VehicleSpawnKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// vehicleSpawnKindYaw parses vehicle_spawn_<kind>[_<deg>], and falls back to the legacy buggy_spawn
+// form (kind "buggy"). ok is false for any other name, including "vehicle_spawner_3" (the char
+// after the prefix must be end, '_', '.', ' ' or '-').
+func vehicleSpawnKindYaw(name string) (string, float64, bool) {
+	if yaw, ok := buggySpawnYaw(name); ok {
+		return "buggy", yaw, true
+	}
+	if len(name) < len(vehicleSpawnPrefix) || !strings.EqualFold(name[:len(vehicleSpawnPrefix)], vehicleSpawnPrefix) {
+		return "", 0, false
+	}
+	rest := name[len(vehicleSpawnPrefix):]
+	if rest == "" {
+		return "", 0, false
+	}
+	switch rest[0] {
+	case '_', '.', ' ', '-':
+	default:
+		return "", 0, false
+	}
+	rest = strings.TrimLeft(rest[1:], "_. ")
+	endKind := 0
+	for endKind < len(rest) && rest[endKind] != '_' && rest[endKind] != '.' && rest[endKind] != ' ' {
+		endKind++
+	}
+	kind := strings.ToLower(rest[:endKind])
+	if !isVehicleSpawnKind(kind) {
+		return "", 0, false
+	}
+	degText := strings.TrimLeft(rest[endKind:], "_. ")
+	yaw := 0.0
+	if degText != "" {
+		end := 0
+		for end < len(degText) && (degText[end] >= '0' && degText[end] <= '9' || (end == 0 && degText[end] == '-')) {
+			end++
+		}
+		if end > 0 {
+			if deg, err := strconv.Atoi(degText[:end]); err == nil {
+				yaw = float64(((deg % 360) + 360) % 360)
+			}
+		}
+	}
+	return kind, yaw, true
+}
+
+// rotatedVehicleSpawnName leaves ordinary names alone and carries a placed widget's rotation into a
+// vehicle spawn's yaw. A legacy buggy spawn stays a legacy buggy spawn.
+func rotatedVehicleSpawnName(name string, worldRotY int) string {
+	kind, yaw, ok := vehicleSpawnKindYaw(name)
+	if !ok || worldRotY%360 == 0 {
+		return name
+	}
+	if kind == "buggy" && strings.HasPrefix(strings.ToLower(name), buggySpawnPrefix) {
+		return rotatedBuggySpawnName(name, worldRotY)
+	}
+	deg := ((int(yaw)+worldRotY)%360 + 360) % 360
+	return fmt.Sprintf("%s_%s_%d", vehicleSpawnPrefix, kind, deg)
+}
+
+// vehicleSpawnsForExport lists a spawn per tile wall, in wall order. y is the tile's top surface.
+func vehicleSpawnsForExport(walls []Wall) []VehicleSpawnExport {
+	var out []VehicleSpawnExport
+	for _, w := range walls {
+		kind, yaw, ok := vehicleSpawnKindYaw(w.Name)
+		if !ok {
+			continue
+		}
+		out = append(out, VehicleSpawnExport{Kind: kind, X: w.X, Y: w.Y + w.SY/2, Z: w.Z, Yaw: yaw})
 	}
 	return out
 }

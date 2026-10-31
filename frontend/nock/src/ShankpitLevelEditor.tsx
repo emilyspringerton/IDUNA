@@ -5,13 +5,19 @@ import './ShankpitLevelEditor.css'
 import { createWebglRenderer, WEBGL_UNAVAILABLE_MESSAGE } from './webglSupport'
 import {
   AI_ROLE_OPTIONS,
+  ARCHETYPE_OPTIONS,
+  FACTION_OPTIONS,
   KIT_OPTIONS,
+  ORDER_OPTIONS,
   SHANKPIT_GRID_CELL_SIZE,
   SPAWNER_TEAM_BLUE,
   SPAWNER_TEAM_FFA,
   SPAWNER_TEAM_RED,
   doorScripts,
   buggySpawnTile,
+  vehicleSpawnTile,
+  VEHICLE_SPAWN_KINDS,
+  type VehicleSpawnKind,
   shankpitLevels,
   shankpitMaterials,
   shankpitStyles,
@@ -2143,6 +2149,52 @@ function CharacterInspector({
           ))}
         </select>
       </label>
+      {/* EMPIRE unit (SHANKPIT packages/simulation/empire_units.h) -- spawn a citizen/zombie/soldier/
+          ally/guard/worker instead of hand-picking a brain role and a body. Choosing one also picks the
+          role and the skin, and the two selects above still override either afterwards. */}
+      <label>
+        Archetype (EMPIRE unit){' '}
+        <select
+          value={character.archetype ?? 0}
+          onChange={(e) => onChange({ ...character, archetype: Number(e.target.value) })}
+        >
+          {ARCHETYPE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {(character.archetype ?? 0) > 0 && (
+        <>
+          <label>
+            Faction{' '}
+            <select
+              value={character.faction ?? -1}
+              onChange={(e) => onChange({ ...character, faction: Number(e.target.value) })}
+            >
+              {FACTION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Orders{' '}
+            <select
+              value={character.orders ?? -1}
+              onChange={(e) => onChange({ ...character, orders: Number(e.target.value) })}
+            >
+              {ORDER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      )}
       <label>
         X <input type="number" step={0.5} value={character.x} onChange={(e) => onChange({ ...character, x: num(e.target.value) })} />
       </label>
@@ -2618,6 +2670,18 @@ export default function ShankpitLevelEditor() {
     } finally {
       setGltfBusy(false)
     }
+  }
+
+  const [vehKind, setVehKind] = useState<VehicleSpawnKind>('rocket')
+
+  // vehicleSpawnTile is the buggy tile generalised: the same thin wall, named vehicle_spawn_<kind>
+  // so export (IDUNA vehicleSpawnsForExport) can tell the loader which vehicle to place. Placed at
+  // the spawner's own position, like every other add button here.
+  const addVehicleSpawn = () => {
+    pushHistory()
+    const id = nextWallId(draft.walls)
+    setWalls([...draft.walls, vehicleSpawnTile(id, vehKind, spawner, 0.8)])
+    setSelected(id)
   }
 
   const addBuggySpawn = () => {
@@ -3275,6 +3339,25 @@ export default function ShankpitLevelEditor() {
                 title="A thin amber tile named buggy_spawn: a buggy spawns on it. Rename the wall to buggy_spawn_90 etc. to turn it. Widgets can carry one too."
               >
                 <Ic n="car" /> Add buggy spawn
+              </button>
+              <select
+                value={vehKind}
+                onChange={(e) => setVehKind(e.target.value as VehicleSpawnKind)}
+                title="Which vehicle the next spawn tile places."
+              >
+                {VEHICLE_SPAWN_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn--add"
+                onClick={addVehicleSpawn}
+                title="A thin tile named vehicle_spawn_<kind>: that vehicle spawns on it (rocket car, helicopter, recon/fly drone, C-110). Rename the wall to vehicle_spawn_<kind>_90 etc. to turn it. Widgets can carry one too."
+              >
+                <Ic n="car" /> Add vehicle spawn
               </button>
             </div>
           </div>

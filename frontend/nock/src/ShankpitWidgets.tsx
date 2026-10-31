@@ -4,6 +4,9 @@ import {
   doorScripts,
   shankpitMaterials,
   buggySpawnTile,
+  vehicleSpawnTile,
+  VEHICLE_SPAWN_KINDS,
+  type VehicleSpawnKind,
   shankpitWidgets,
   type DoorScriptSummary,
   type ShankpitDoor,
@@ -364,6 +367,14 @@ export default function ShankpitWidgets() {
     refresh()
   }
 
+  const [vehKind, setVehKind] = useState<VehicleSpawnKind>('heli')
+
+  const addVehicleSpawn = () => {
+    const id = nextWallId(walls)
+    setWalls([...walls, vehicleSpawnTile(id, vehKind, { x: 0, y: 0, z: 0 }, 0.3)])
+    setSelected(id)
+  }
+
   const addBuggySpawn = () => {
     const id = nextWallId(walls)
     setWalls([...walls, buggySpawnTile(id, { x: 0, y: 0, z: 0 }, 0.3)])
@@ -474,6 +485,16 @@ export default function ShankpitWidgets() {
               </button>
               <button type="button" onClick={addBuggySpawn} title="A thin tile named buggy_spawn: a buggy spawns on it wherever this widget is placed. Rename to buggy_spawn_90 etc. to turn it.">
                 + Add buggy spawn
+              </button>
+              <select value={vehKind} onChange={(e) => setVehKind(e.target.value as VehicleSpawnKind)} title="Which vehicle this spawn tile places when the widget is used in a level.">
+                {VEHICLE_SPAWN_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              <button type="button" onClick={addVehicleSpawn} title="A tile named vehicle_spawn_<kind>: that vehicle spawns there wherever this widget is placed. Rename to vehicle_spawn_<kind>_90 etc. to turn it.">
+                + Add vehicle spawn
               </button>
               <button type="button" onClick={save} disabled={!dirty}>
                 {dirty ? 'Save*' : 'Saved'}
