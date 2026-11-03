@@ -18,12 +18,13 @@ trap cleanup EXIT
 echo "build (CGO_ENABLED=1, as the image does)..."
 ( cd "$root" && CGO_ENABLED=1 go build -o "$work/iduna" . )
 
-# Mirrors the image's ENTRYPOINT: IDUNA opens optional stores by relative path (./var/...), and without the
-# directory it dies before binding the port. Found by running this, so the mirror keeps it covered.
-mkdir -p "$work/var"
+# Mirrors the image's layout: IDUNA_ROOT is the base for BOTH migrations/truestore and var/ (eventlog,
+# user-events, agent-secrets), so it must be writable. /app-equivalent: nothing here writes to the repo.
+mkdir -p "$work/root/var"
+cp -r "$root/migrations" "$work/root/migrations"
 echo "boot with the image's own environment, cwd $work (the image's /data)..."
-( cd "$work" && IDUNA_ADDR="0.0.0.0:$port" IDUNA_ROOT="$root" \
-    SQLITE_PATH="$work/iduna.db" KEY_FILE="$work/iduna-key.json" \
+( cd "$work/root" && IDUNA_ADDR="0.0.0.0:$port" IDUNA_ROOT="$work/root" \
+    SQLITE_PATH="$work/root/iduna.db" KEY_FILE="$work/root/iduna-key.json" \
     SHANKPIT_TICKET_SECRET="space-check-secret" JWT_ISSUER="http://127.0.0.1:$port" \
     BASE_URL="http://127.0.0.1:$port" exec "$work/iduna" >"$work/log" 2>&1 ) &
 pid=$!

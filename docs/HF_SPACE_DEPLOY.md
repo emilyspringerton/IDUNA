@@ -32,32 +32,70 @@ one codec (S417-03). Hand-porting that to Go to dodge a compiler would undo that
 format, so the build stage installs `gcc`/`musl-dev` and the runtime stage does not. This was found by
 running the build, not by reading the Dockerfile.
 
-## The failure that only a real boot finds
+## The two failures only a real boot finds
 
-The first boot with this environment died before it bound the port:
+Both of these would have shipped a Space that never serves a request, and neither is visible in the
+Dockerfile.
+
+**1. A fresh working directory has no `var/`.**
 
 ```
 mailinglist: failed to open store: migrate mailinglist db: unable to open database file (14)
 ```
 
-IDUNA opens its optional per-feature stores by **relative** path (`./var/mailinglist.db`, vault, kanban…), and
-a fresh working directory has no `var/`. No amount of reading the Dockerfile surfaces that. So the image
-creates `/data/var` at build time **and** re-creates it in the `ENTRYPOINT`, because a Space can mount an empty
-volume over `/data` and shadow whatever the image baked in. `verify.sh` mirrors the same `mkdir` for the same
-reason — it is a one-line mirror of a real outage, not decoration.
+**2. `IDUNA_ROOT` is the base for BOTH migrations and `var/`.** This is the one that mattered. The first
+layout put the binary and migrations in a read-only `/app` and `IDUNA_ROOT=/app`, with `/data` only holding
+`iduna.db`. As an unprivileged uid it died:
 
-## Why a bundle instead of pushing the repo
+```
+userlog: write seq tmp: open /app/var/user-events/state/latest-seq.tmp: permission denied
+```
 
-1. A Space's repo root **is** the app: it needs `Dockerfile` and a `README.md` with frontmatter at the root,
-   and IDUNA's root is already busy.
-2. **`iduna.db` is tracked in this repo.** Verified with `git ls-files`: a straight push would publish a
-   database to a public Space. `push.sh` deletes `*.db`, `*.db-wal`, `*.db-shm`, `.env*`, `webmaster.json`,
-   `*key.json` and `agent-secrets.env` from the bundle and reports how many it removed.
-3. `git archive HEAD` makes the Space exactly one commit — no uncommitted drift between what was tested and
-   what is deployed.
+`IDUNA_ROOT` is not a migrations-only path: `main.go` derives `migrations/truestore` **and** `var/` —
+`var/eventlog/`, `var/user-events/`, `var/agent-secrets.env` — from it, and those are written on every
+Apple and every user event. So it has to be writable, which means the split is:
 
-The bundle is also checked for standalone buildability (`GOWORK=off go list ./...`) because the Space builds
-without the monorepo's `go.work` or any sibling modules. Verified: `go.mod` has **no** local `replace`s.
+| Path | Role |
+|---|---|
+| `/app` | read-only: `iduna`, plus a **pristine** `migrations/` (a source, never written) |
+| `/data` | `IDUNA_ROOT` and cwd: `iduna.db`, `iduna-key.json`, `var/`, working `migrations/` |
+
+The `ENTRYPOINT` re-seeds `/data` from `/app` on every start (`mkdir -p $IDUNA_ROOT/var`, `cp -a
+/app/migrations $IDUNA_ROOT/`), because a Space can mount an empty volume over `/data` and shadow whatever the
+image baked in — including a directory the app must write to.
+
+## A real instance, running on this box
+
+`docker` is absent here, so the image is never built locally — but Hugging Face builds it from the pushed
+Dockerfile, so that was never the blocker. The runtime contract was made real instead, in the exact shape
+above, as an unprivileged UID:
+
+```
+var/space/app/    iduna + migrations, NO write permission on any entry (0 writable after a full run)
+var/space/data/   owned by uid 65534 -> var/, iduna.db, iduna-key.json, migrations/
+  process uid , port :7860
+  health                                              -> 200
+  guest-register                                      -> player <uuid>
+  ticket                                              -> HTTP 200, 36 bytes, MAC verified
+  kill + restart, same token                          -> HTTP 200, SAME player_id
+```
+
+The `0` is the point: after registering a player, minting a ticket and restarting, the
+read-only tree is *still* free of write bits, so nothing leaked a write into `/app`. The account surviving the
+restart is real here because the disk is real; a **free Space will not** give you that, since its storage is
+ephemeral and a restart is a fresh database plus a fresh ES256 key.
+
+### One command left, and it needs a credential
+
+```
+deploy/huggingface/push.sh --check      # exits 3 naming what to do -- verified
+echo '<token>' > IDUNA/var/hf-token     # gitignored; or export HF_TOKEN
+HF_SPACE=<user>/iduna deploy/huggingface/push.sh
+```
+
+`push.sh` creates the Space itself on a first push (`POST /api/repos/create`, `sdk: docker`), so there is no
+UI step, and the token is never echoed or written into the bundle. Watch the build at
+`https://huggingface.co/spaces/<user>/iduna?logs=container`.
 
 ## Corrections to the pasted plan
 

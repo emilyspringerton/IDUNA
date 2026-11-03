@@ -1,20 +1,23 @@
 # IDUNA on a Hugging Face Space (custom Docker SDK).
 #
-# WHY THIS SHAPE:
-#   * CGO IS ON, and not by preference. SQLite itself is pure Go here (modernc.org/sqlite, no gcc needed),
-#     but internal/brawlpit/lz4.go is a deliberate cgo binding over PARENA's own stdlib/compress/lz4.prn
-#     compiled to lz4_gen.c -- the same codec BRAWLPIT's native client links, so the wire format matches.
-#     `CGO_ENABLED=0 go build .` fails with "undefined: brawlpit.CompressLZ4" (found by running it, not by
-#     reading this file). Hand-porting that codec to Go to avoid gcc would undo S417-03's own decision, so
-#     the image carries gcc in the build stage instead and the runtime stays gcc-free.
-#   * Hugging Face routes traffic to the container's port 7860, so IDUNA_ADDR binds 0.0.0.0:7860 (main.go
-#     reads IDUNA_ADDR; it defaults to :8080, which is wrong on a Space).
-#   * Hugging Face runs the container as a non-root, arbitrary UID, so nothing here may write inside the
-#     image. State goes to /data: SQLITE_PATH and KEY_FILE, and WORKDIR /data so the optional per-feature
-#     SQLite files (blog/vault/kanban/...) that main.go opens with relative paths also land somewhere
-#     writable instead of failing on a read-only /app.
-#   * /data is EPHEMERAL on free hardware. Every restart is a fresh identity database and a fresh signing
-#     key. That is stated in the Space README and in docs/HF_SPACE_DEPLOY.md, not hidden.
+# THE LAYOUT IS DICTATED BY ONE FACT, FOUND BY RUNNING IT: IDUNA_ROOT is the base for BOTH
+# `migrations/truestore` (read) AND `var/` -- the user event log, the Apples eventlog and
+# `var/agent-secrets.env` (write). So IDUNA_ROOT must be WRITABLE. An earlier version of this file pointed
+# IDUNA_ROOT at a read-only /app; as uid 1000 that dies on
+#   userlog: write seq tmp: open /app/var/user-events/state/latest-seq.tmp: permission denied
+# which no amount of reading the Dockerfile shows you.
+#
+#   /app   read-only: the binary, plus a PRISTINE copy of migrations (a source, never written)
+#   /data  IDUNA_ROOT and cwd: iduna.db, iduna-key.json, var/, and the working migrations copy
+#
+# The entrypoint seeds /data from /app every start, because Hugging Face can mount an empty volume over
+# /data and shadow whatever the image baked in.
+#
+# CGO IS ON, and not by preference. SQLite is pure Go here (modernc.org/sqlite, no gcc needed), but
+# internal/brawlpit/lz4.go is a cgo binding over PARENA's own stdlib/compress/lz4.prn compiled to lz4_gen.c --
+# the same codec BRAWLPIT's native client links, so the wire format matches. `CGO_ENABLED=0 go build .` fails
+# with "undefined: brawlpit.CompressLZ4". Hand-porting that to Go to avoid gcc would undo S417-03's decision,
+# so gcc lives in the build stage only and the runtime image stays gcc-free.
 FROM golang:1.25-alpine AS build
 RUN apk add --no-cache gcc musl-dev
 WORKDIR /src
@@ -34,16 +37,10 @@ COPY --from=build /out/iduna /app/iduna
 COPY --from=build /src/migrations /app/migrations
 USER iduna
 ENV IDUNA_ADDR=0.0.0.0:7860 \
-    IDUNA_ROOT=/app \
+    IDUNA_ROOT=/data \
     SQLITE_PATH=/data/iduna.db \
     KEY_FILE=/data/iduna-key.json
 EXPOSE 7860
-# No HEALTHCHECK: Hugging Face's own proxy decides liveness from the port, and a failing healthcheck on a
+# No HEALTHCHECK: Hugging Face's own proxy decides liveness from the port, and a failing healthcheck during a
 # cold start reads as a broken Space rather than a slow one.
-#
-# The dirs are recreated at start, not trusted from build time: Hugging Face can mount an empty volume over
-# /data, and IDUNA opens its optional stores by relative path (./var/mailinglist.db, vault, kanban, ...),
-# which is fatal if the directory is missing. Found by actually booting this environment -- the failure was
-# "mailinglist: failed to open store: migrate mailinglist db: unable to open database file (14)" and the
-# process died before it ever bound the port.
-ENTRYPOINT ["/bin/sh", "-c", "mkdir -p \"$PWD/var\" && exec /app/iduna"]
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p \"$IDUNA_ROOT/var\" && cp -a /app/migrations \"$IDUNA_ROOT/\" && exec /app/iduna"]
