@@ -1,41 +1,50 @@
 # Shipping IDUNA to a Hugging Face Space
 
-Founder, 2026-11-03: *"we ship iduna to hugging face."* This is the engineering spec and the honest state of
-it. It supersedes a pasted plan that was written for a hypothetical `src/stats_hub.c` rather than this repo;
-where that plan was wrong about the platform, the correction is named here.
+Founder, 2026-11-03: *"we ship iduna to hugging face."* This supersedes a pasted plan written for a
+hypothetical `src/stats_hub.c` rather than this repo; where that plan was wrong about the platform, the
+correction is named at the end.
 
-## What actually ships
+## What ships
 
-`deploy/huggingface/` — three files, no new runtime code:
+`deploy/huggingface/`, four files and no new runtime code:
 
 | File | Does |
 |---|---|
-| `Dockerfile` | two stages, cgo build (gcc in the build stage only), `IDUNA_ADDR=0.0.0.0:7860`, state in `/data`, migrations in `/app`, `ENTRYPOINT` recreates `var/` |
-| `README.md` | the Space's own frontmatter (`sdk: docker`, `app_port: 7860`) and what the Space honestly is |
-| `push.sh` | assembles a bundle from `git archive HEAD`, **refuses DBs and secrets**, force-pushes it as the Space |
+| `Dockerfile` | two stages; cgo in the build stage, gcc-free runtime; `/app` read-only, `/data` writable |
+| `README.md` | the Space's own frontmatter (`sdk: docker`, `app_port: 7860`) and an honest account of what it is |
+| `push.sh` | bundles `git archive HEAD`, refuses DBs/secrets/credentials, creates the Space, pushes |
+| `verify.sh` | proves the runtime contract on a box with no container runtime |
 
-Plus `verify.sh`, which proves the container contract on this box without docker.
+## Why a bundle and not `git push origin`
+
+1. A Space's repo root **is** the app: it needs `Dockerfile` + frontmatter `README.md` at the root, and IDUNA's
+   root is already busy.
+2. A Space repo is **public**. `iduna.db` was tracked in this repo until today — verified: the only committed
+   blob is **0 bytes with 0 tables**, so nothing leaked, but any local run writes real accounts into it and the
+   next `git add -A` would have published them. It is untracked and ignored now.
+3. `git archive HEAD` makes the Space exactly one commit of this repo.
+
+`push.sh` deletes `*.db*`, `.env*`, `webmaster.json`, `*key.json` and `agent-secrets.env` from every bundle, and
+then **refuses to publish** if any credential-shaped string survives (PEM header at line start, `hf_`,
+`ghp_`, `github_pat_`, `sk-`, `AKIA`, `xox[baprs]-`). Both directions are checked: a real PEM header is caught,
+while `internal/drive/client.go`'s prose *about* PKCS#8 is not.
 
 ## Why the image carries gcc
 
-First attempt was `CGO_ENABLED=0` — SQLite here is `modernc.org/sqlite`, pure Go, so it looked free. It does
-not build:
+`CGO_ENABLED=0` looked free (SQLite is `modernc.org/sqlite`, pure Go). It does not build:
 
 ```
 internal/http/handlers/brawlpit_checkpoints.go:237:25: undefined: brawlpit.CompressLZ4
-internal/http/handlers/brawlpit_levels_public.go:103:26: undefined: brawlpit.CompressLZ4
+interface conversion: ... internal/http/handlers/brawlpit_levels_public.go:103:26: undefined: brawlpit.CompressLZ4
 ```
 
-`internal/brawlpit/lz4.go` is a deliberate cgo binding over `lz4_gen.c`, which is PARENA's own
-`stdlib/compress/lz4.prn` compiled to C — the same bytes BRAWLPIT's native client links, so both ends speak
-one codec (S417-03). Hand-porting that to Go to dodge a compiler would undo that decision and risk the wire
-format, so the build stage installs `gcc`/`musl-dev` and the runtime stage does not. This was found by
-running the build, not by reading the Dockerfile.
+`internal/brawlpit/lz4.go` is a deliberate cgo binding over `lz4_gen.c` — PARENA's own
+`stdlib/compress/lz4.prn` compiled to C, the same bytes BRAWLPIT's native client links (S417-03). Hand-porting
+that codec to Go to avoid a compiler would undo that decision, so gcc is in the build stage only.
 
-## The two failures only a real boot finds
+## The four failures only a real boot finds
 
-Both of these would have shipped a Space that never serves a request, and neither is visible in the
-Dockerfile.
+None of these is visible by reading the Dockerfile, and each would have shipped a Space that never answers.
 
 **1. A fresh working directory has no `var/`.**
 
@@ -43,177 +52,115 @@ Dockerfile.
 mailinglist: failed to open store: migrate mailinglist db: unable to open database file (14)
 ```
 
-**2. `IDUNA_ROOT` is the base for BOTH migrations and `var/`.** This is the one that mattered. The first
-layout put the binary and migrations in a read-only `/app` and `IDUNA_ROOT=/app`, with `/data` only holding
-`iduna.db`. As an unprivileged uid it died:
+**2. `IDUNA_ROOT` is the base for BOTH migrations and `var/`.** `main.go` derives `migrations/truestore` *and*
+`var/` (Apples eventlog, user-events, `agent-secrets.env`) from it and writes the latter constantly, so it must
+be writable. Pointing it at a read-only `/app` dies:
 
 ```
 userlog: write seq tmp: open /app/var/user-events/state/latest-seq.tmp: permission denied
 ```
 
-`IDUNA_ROOT` is not a migrations-only path: `main.go` derives `migrations/truestore` **and** `var/` —
-`var/eventlog/`, `var/user-events/`, `var/agent-secrets.env` — from it, and those are written on every
-Apple and every user event. So it has to be writable, which means the split is:
+**3. `cp -a` cannot preserve ownership as a non-root uid** — and chained with `&&`, the failed copy skipped
+`exec /app/iduna`. The server never started at all.
+
+**4. A seeded `/data` can already hold files the app cannot overwrite** (a mounted volume, a re-used Space).
+Failing the boot over present-but-stale migrations is absurd, so the seed is best-effort and the exec
+unconditional.
+
+The resulting split:
 
 | Path | Role |
 |---|---|
-| `/app` | read-only: `iduna`, plus a **pristine** `migrations/` (a source, never written) |
+| `/app` | read-only: `iduna` + a pristine `migrations/` (a source, never written) |
 | `/data` | `IDUNA_ROOT` and cwd: `iduna.db`, `iduna-key.json`, `var/`, working `migrations/` |
 
-The `ENTRYPOINT` re-seeds `/data` from `/app` on every start (`mkdir -p $IDUNA_ROOT/var`, `cp -a
-/app/migrations $IDUNA_ROOT/`), because a Space can mount an empty volume over `/data` and shadow whatever the
-image baked in — including a directory the app must write to.
+The `ENTRYPOINT` creates `$IDUNA_ROOT/var` and `$IDUNA_ROOT/migrations`, copies only newer migrations
+(`cp -R -u`), says so on stderr if that is refused, and starts regardless — because a Space can mount an empty
+volume over `/data` and shadow anything the image baked in.
 
 ## A real instance, running on this box
 
-`docker` is absent here, so the image is never built locally — but Hugging Face builds it from the pushed
-Dockerfile, so that was never the blocker. The runtime contract was made real instead, in the exact shape
-above, as an unprivileged UID:
+`docker` is absent here (and so are podman, buildah, nerdctl — checked, not assumed). But Hugging Face builds
+the image from the pushed Dockerfile, so that was never the blocker. The runtime contract was made real in
+exactly this shape, as an unprivileged UID:
 
 ```
-var/space/app/    iduna + migrations, NO write permission on any entry (0 writable after a full run)
-var/space/data/   owned by uid 65534 -> var/, iduna.db, iduna-key.json, migrations/
-  process uid , port :7860
+var/space/app/    iduna + migrations, mode bits carry NO write permission   (0 writable entries)
+var/space/root/   owned by uid 65534 -> var/, iduna.db, iduna-key.json, migrations/
+  serving uid 65534, port :7860
   health                                              -> 200
   guest-register                                      -> player <uuid>
-  ticket                                              -> HTTP 200, 36 bytes, MAC verified
+  ticket                                              -> 36 bytes, MAC verified, same player
   kill + restart, same token                          -> HTTP 200, SAME player_id
 ```
 
-The zero is the point: after registering a player, minting a ticket and restarting, the
-read-only tree is *still* free of write bits, so nothing leaked a write into `/app`. The account surviving the
-restart is real here because the disk is real; a **free Space will not** give you that, since its storage is
-ephemeral and a restart is a fresh database plus a fresh ES256 key.
+Registering a player, minting a ticket and restarting leaves **0 writable entries** in the read-only tree:
+nothing leaked a write into `/app`. The account surviving the restart is real here because the disk is real —
+a **free Space will not** give you that, since its storage is ephemeral and a restart is also a fresh ES256 key.
 
 ### Two ways this verification lied before it was fixed
 
-- **Root ignores write bits.** The first read-only check ran as root and used `[ -w ]`, which is true for root
-  regardless of mode, so it "proved" the app tree read-only while proving nothing. The claim now rests on mode
-  bits plus a process running as uid 65534.
-- **`verify.sh` measured someone else.** With a live instance already on :7860, the script's boot failed to bind
-  and its `curl` silently talked to the *other* server, which minted the ticket with a different secret — surfacing
-  as `MAC mismatch`. It now refuses an occupied port instead of trusting whatever answers.
+Both looked green, which is why they are written down:
 
-### One command left, and it needs a credential
-
-```
-deploy/huggingface/push.sh --check      # exits 3 naming what to do -- verified
-echo '<token>' > IDUNA/var/hf-token     # gitignored; or export HF_TOKEN
-HF_SPACE=<user>/iduna deploy/huggingface/push.sh
-```
-
-`push.sh` creates the Space itself on a first push (`POST /api/repos/create`, `sdk: docker`), so there is no
-UI step, and the token is never echoed or written into the bundle. Watch the build at
-`https://huggingface.co/spaces/<user>/iduna?logs=container`.
-
-## Corrections to the pasted plan
-
-| Claim it made | Reality |
-|---|---|
-| "point `docker_image:` at GHCR and Spaces pull it" | No documentation for that frontmatter on Spaces; Spaces build from the repo's Dockerfile. `push.sh` uses that path only. |
-| `curl -X POST https://huggingface.co` to set a secret | Not an endpoint. Secrets are set in the Space's settings, or via `huggingface_hub.add_space_secret` (which posts to `/api/spaces/{repo_id}/secrets`). |
-| "free tier, permanent public URL, persistent storage options" | Free hardware **sleeps** after idle and the disk is **ephemeral**; a restart wipes SQLite *and* the ES256 key. Persistent storage is a paid Space feature. |
-| `gcc ... src/stats_hub.c` | No such file. IDUNA is one Go binary built from `main.go` + `internal/`. |
-| "bundle events every 30–60 s" | Correct for Roblox's outbound limits, and irrelevant to IDUNA: the Space answers *requests*, the world pushes. |
+- **Root ignores write bits.** The first read-only check ran as root with `[ -w ]`, true for root regardless of
+  mode: it "proved" the tree read-only while proving nothing. The claim now rests on mode bits *and* uid 65534.
+- **`verify.sh` measured someone else.** With a live instance already on :7860, its boot failed to bind and its
+  `curl` answered from the *other* server, whose ticket MAC used a different secret — surfacing as
+  `MAC mismatch`. It refuses an occupied port now; tested against a stub that answers `/health` (exit 1).
 
 ## Deploying
 
 ```bash
 cd IDUNA
-deploy/huggingface/verify.sh                       # local proof, no docker, no account
-deploy/huggingface/push.sh --dry-run               # show the bundle, confirm 0 DBs, push nothing
-HF_TOKEN=hf_xxx HF_SPACE=emilyspringerton/iduna deploy/huggingface/push.sh
-```
-
-Then, in the Space's settings, add one secret:
-
-| Secret | Must equal |
-|---|---|
-| `SHANKPIT_TICKET_SECRET` | the game server's value, or every ticket this mints is refused at `PACKET_CONNECT` |
-
-## The database that was tracked in git
-
-`iduna.db` **was** tracked in this repo (seen by `git ls-files iduna.db`). Inspected before deciding: it is
-**0 bytes with 0 tables**, so nothing — no email, no password hash, no token, no signing key — has leaked.
-It is an empty file that a local run created and a commit picked up.
-
-The risk is not what it holds today, it is what it becomes: any local run writes real rows into a tracked
-file, and the next `git add -A` publishes accounts. So it is now untracked (`git rm --cached`) and ignored.
-History keeps only the empty blob; there is nothing to scrub, and no rotation is needed.
-
-`push.sh` refuses `*.db*`, `.env*`, `webmaster.json`, `*key.json` and `agent-secrets.env` regardless, because
-a Space is public and a future tracked database should not become a published one.
-
-## Verification actually run here
-
-```
-deploy/huggingface/verify.sh
-  build (CGO_ENABLED=1)                              -> ok
-  health                                             -> 200
-  guest-register route (invalid body)                -> 400   (route + shankpit row present)
-  ticket without a token                             -> 401
-  sign-up -> ticket on the Space's port              -> 36 bytes, MAC verified
-```
-
-Not run, and why: **the image has never been built** (no `docker` on this box), the push has never happened
-(no `HF_TOKEN`), and nothing has been fetched from `huggingface.co` (this sandbox's egress reaches github.com
-but resets TLS against okemily.com, so an HF round trip would be unproven either way).
-
-## A real instance, running on this box
-
-`docker` is absent here, so the image is never built locally -- but Hugging Face builds it from the pushed
-Dockerfile, so that was never the blocker. What was made real instead is the *runtime contract*, split the
-way the image splits it (`/app` read-only, `/data` writable), and run as an **unprivileged UID**:
-
-```
-var/space/app/    iduna + migrations, mode bits carry NO write permission   (0 writable entries)
-var/space/data/   owned by uid 65534: iduna.db, iduna-key.json, var/
-  run as uid 65534 (setpriv), port :7860
-  health                                                -> 200
-  guest-register                                        -> player <uuid>
-  ticket                                                -> HTTP 200, 36 bytes, MAC verified
-  kill + restart, same token                            -> HTTP 200, SAME player_id
-```
-
-Two things worth being precise about, because both were got wrong first:
-
-- The first read-only check ran as **root**, which ignores write bits -- it reported "not writable" no matter
-  what the mode was, so it proved nothing. The claim rests on the mode bits carrying no write permission
-  *and* the process running as uid 65534, which is what a Space does.
-- The account surviving a restart is real here because the disk is real. A **free Space will not** give you
-  that: its storage is ephemeral, so the same restart is a fresh identity database and a fresh ES256 key.
-  The wiring is right; the durability is a paid plan.
-
-### Two ways this verification lied before it was fixed
-
-- **Root ignores write bits.** The first read-only check ran as root and used `[ -w ]`, which is true for root
-  regardless of mode, so it "proved" the app tree read-only while proving nothing. The claim now rests on mode
-  bits plus a process running as uid 65534.
-- **`verify.sh` measured someone else.** With a live instance already on :7860, the script's boot failed to bind
-  and its `curl` silently talked to the *other* server, which minted the ticket with a different secret — surfacing
-  as `MAC mismatch`. It now refuses an occupied port instead of trusting whatever answers.
-
-### One command left, and it needs a credential
-
-```
-deploy/huggingface/push.sh --check      # exits 3 naming what to do -- verified
-echo '<token>' > IDUNA/var/hf-token     # gitignored; or export HF_TOKEN
+deploy/huggingface/verify.sh                # no docker, no account; picks a free port or refuses
+deploy/huggingface/push.sh --dry-run        # bundle report + credential scan, pushes nothing
+deploy/huggingface/push.sh --check          # authenticates, reports whether the Space exists (exit 3 without a token)
+echo '<token>' > IDUNA/var/hf-token         # gitignored under var/; or export HF_TOKEN
 HF_SPACE=<user>/iduna deploy/huggingface/push.sh
 ```
 
-`push.sh` creates the Space itself on a first push (`POST /api/repos/create`, `sdk: docker`), so there is no
-UI step. The token is never echoed and never written into the bundle. Hugging Face then builds the image from
-the Dockerfile; watch it at `https://huggingface.co/spaces/<user>/iduna?logs=container`.
+`push.sh` creates the Space itself on a first push (`POST /api/repos/create`, `sdk: docker`), so there is no UI
+step, and the token is never echoed or written into the bundle. Watch the image build at
+`https://huggingface.co/spaces/<user>/iduna?logs=container`.
+
+Then set one Space secret:
+
+| Secret | Must equal |
+|---|---|
+| `SHANKPIT_TICKET_SECRET` | the game server's value, or every minted ticket is refused at `PACKET_CONNECT` |
+
+## What has and has not been exercised
+
+Run here: the Space-contract boot (`verify.sh` — health 200, `guest-register` route present, ticket 401 without
+a token, sign-up → ticket with an independently recomputed MAC), the rootless run above, the bundle dry-run
+(819 files, ~11.6 MiB, clean scan), and `--check` without a token (exit 3, instructions, no silent skip).
+
+Not run: **the image has never been built** (no container runtime on this box) and **nothing has been pushed**
+(no `HF_TOKEN`; `whoami-v2` answers 401 from here). `huggingface.co` itself is reachable — TLS 1.3 to
+`3.170.185.14`, `GET /api/spaces` → 200 — so the publish path is blocked on a credential, not on the network.
+
+Also not done: the `GOLDEN_DOCS` snapshot cannot be resynced from a box that has not cloned it, and the
+completion Apple for this work could not be filed because no `IDUNA_AGENT_SECRET` exists here
+(`emily apples post` answered `IDUNA_AGENT_SECRET not set`).
 
 ## Limits this Space has by construction
 
-- **Ephemeral identity.** A restart is a new database and a new ES256 key: accounts vanish and tokens minted
-  before it stop verifying. For integration testing and for the Roblox 460 layer that is acceptable; for real
-  accounts it is not, which is why production stays in the cluster.
-- **Public login surface.** No default credentials ship (`webmaster.json` is excluded), but anyone can
-  register a guest account, exactly as against production.
-- **Cold starts.** A sleeping Space adds tens of seconds to the first request; a lobby that polls keeps it
-  warm.
-- **Not the stats hub.** The esports ladder feed is `tools/shankpit_netd.c` in SHANKPIT, which serves a file
-  the world writes — a Space has no filesystem from the world, so hosting it there would need a new ingest
-  endpoint, not a copy of this Dockerfile.
+- **Ephemeral identity.** A restart, sleep-wake or rebuild is a fresh database and a fresh ES256 key: guest
+  accounts vanish and tokens minted before it stop verifying. Fine for the Roblox 460 integration testing it is
+  for; not a home for real accounts, which is why production stays in the cluster.
+- **Sleeps when idle.** The next request after a quiet spell pays a cold start. A lobby or ladder that polls
+  keeps it warm.
+- **Public login surface.** No default credentials ship (`webmaster.json` is excluded), but anyone can register
+  a guest account here, exactly as against production.
+- **Not the esports stats hub.** `SHANKPIT/tools/shankpit_netd.c` serves a file the running world writes; a
+  Space has no path to that file, so hosting the ladder there needs a real ingest endpoint, not this Dockerfile.
+
+## Corrections to the pasted plan
+
+| It claimed | Reality |
+|---|---|
+| "point `docker_image:` at GHCR and Spaces pull it" | No documentation for that frontmatter on Spaces; they build from the repo's Dockerfile. `push.sh` uses only that path. |
+| `curl -X POST https://huggingface.co` to set a secret | Not an endpoint. Secrets are Space settings, or `huggingface_hub.add_space_secret` (`/api/spaces/{repo_id}/secrets`). |
+| "free tier, permanent URL, persistent storage options" | Free hardware sleeps and its disk is ephemeral; persistent storage is paid. |
+| `gcc ... src/stats_hub.c` | No such file. IDUNA is one Go binary from `main.go` + `internal/`. |
+| "bundle events every 30–60 s" | Right for Roblox's outbound limits, irrelevant to IDUNA: the Space answers requests, the world pushes. |

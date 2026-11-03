@@ -43,4 +43,10 @@ ENV IDUNA_ADDR=0.0.0.0:7860 \
 EXPOSE 7860
 # No HEALTHCHECK: Hugging Face's own proxy decides liveness from the port, and a failing healthcheck during a
 # cold start reads as a broken Space rather than a slow one.
-ENTRYPOINT ["/bin/sh", "-c", "mkdir -p \"$IDUNA_ROOT/var\" && cp -a /app/migrations \"$IDUNA_ROOT/\" && exec /app/iduna"]
+# The seed must be best-effort, and the exec must be unconditional. Two failures taught this:
+#   * `cp -a` preserves ownership, which a non-root uid cannot do -- the copy failed and, because it was
+#     chained with `&&`, the server never started at all.
+#   * a /data that already holds root-owned migrations (a mounted volume, a re-used Space) cannot be
+#     overwritten by uid 1000 either, and failing the boot over stale-but-present migrations is absurd.
+# So: create what is missing, copy only newer files, say so if that is refused, and start regardless.
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p \"$IDUNA_ROOT/var\" \"$IDUNA_ROOT/migrations\"; cp -R -u /app/migrations/. \"$IDUNA_ROOT/migrations/\" 2>/dev/null || echo 'iduna: migrations seed skipped (existing files not writable) -- using what is in $IDUNA_ROOT' >&2; exec /app/iduna"]
