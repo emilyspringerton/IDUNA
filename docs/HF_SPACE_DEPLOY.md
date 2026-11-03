@@ -115,21 +115,39 @@ but resets TLS against okemily.com, so an HF round trip would be unproven either
 ## A real instance, running on this box
 
 `docker` is absent here, so the image is never built locally -- but Hugging Face builds it from the pushed
-Dockerfile, so that was never the blocker. What was made real instead is the *runtime contract*, on the
-Space's port, with the image's own layout:
+Dockerfile, so that was never the blocker. What was made real instead is the *runtime contract*, split the
+way the image splits it (`/app` read-only, `/data` writable), and run as an **unprivileged UID**:
 
 ```
-/deploy/huggingface/push.sh --check     -> "no token: ..." exit 3   (fails cleanly, no silent skip)
-var/space/app/   read-only, holds iduna + migrations   (proves /app needs no writes)
-var/space/data/  writable: iduna.db, iduna-key.json, var/
-  health on :7860                                       -> 200
+var/space/app/    iduna + migrations, mode bits carry NO write permission   (0 writable entries)
+var/space/data/   owned by uid 65534: iduna.db, iduna-key.json, var/
+  run as uid 65534 (setpriv), port :7860
+  health                                                -> 200
   guest-register                                        -> player <uuid>
-  ticket                                                -> 36 bytes, MAC verified
+  ticket                                                -> HTTP 200, 36 bytes, MAC verified
   kill + restart, same token                            -> HTTP 200, SAME player_id
 ```
 
-That last line is the one worth having: the account survives a process restart, which a **free Space will
-not** give you (its disk is ephemeral). The wiring is right; the durability is a paid plan.
+Two things worth being precise about, because both were got wrong first:
+
+- The first read-only check ran as **root**, which ignores write bits -- it reported "not writable" no matter
+  what the mode was, so it proved nothing. The claim rests on the mode bits carrying no write permission
+  *and* the process running as uid 65534, which is what a Space does.
+- The account surviving a restart is real here because the disk is real. A **free Space will not** give you
+  that: its storage is ephemeral, so the same restart is a fresh identity database and a fresh ES256 key.
+  The wiring is right; the durability is a paid plan.
+
+### One command left, and it needs a credential
+
+```
+deploy/huggingface/push.sh --check      # exits 3 naming what to do -- verified
+echo '<token>' > IDUNA/var/hf-token     # gitignored; or export HF_TOKEN
+HF_SPACE=<user>/iduna deploy/huggingface/push.sh
+```
+
+`push.sh` creates the Space itself on a first push (`POST /api/repos/create`, `sdk: docker`), so there is no
+UI step. The token is never echoed and never written into the bundle. Hugging Face then builds the image from
+the Dockerfile; watch it at `https://huggingface.co/spaces/<user>/iduna?logs=container`.
 
 ## Limits this Space has by construction
 
