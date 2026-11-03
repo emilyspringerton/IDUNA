@@ -77,6 +77,17 @@ var Registry = map[string]Config{
 	// only, same narrow cut as big_o/brawlpit: the human lobby (internal/shankpit460, GET /api/v1/shankpit460/play)
 	// identifies players through the generic account path (ssoGamePlayer), so this row exists for the per-game
 	// player row, guest accounts and, in the stats pass, match results -- not for a game server of its own.
+	// SHANKPIT itself (the C server, and the Roblox 460 layer that queues players for it). Distinct
+	// from "shankpit460" below, which is the separate browser deathmatch with its own permission.
+	// This row exists so a SHANKPIT player can have a real IDUNA identity WITHOUT Google OAuth:
+	// guest-register/guest-login/email-login/sso-exchange issue a player token whose player_id claim
+	// /api/v1/shankpit/ticket now reads (see shankpit_ticket.go's ticketPlayerID). PlayPerm only,
+	// same narrow cut as big_o/brawlpit/shankpit460 -- the C server reports nothing to IDUNA yet, so
+	// there is no match-write permission for it to hold.
+	"shankpit": {
+		Slug:     "shankpit",
+		PlayPerm: "shankpit.play",
+	},
 	"shankpit460": {
 		Slug:     "shankpit460",
 		PlayPerm: "shankpit460.play",

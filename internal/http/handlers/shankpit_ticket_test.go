@@ -168,3 +168,105 @@ func TestShankpitTicket_RequiresSecretConfigured(t *testing.T) {
 		t.Fatalf("status = %d, want 503 (secret not configured)", rec.Code)
 	}
 }
+
+// gamePlayerToken is the token shape /api/v1/games/{game}/guest-register actually returns
+// (game_online.go's playerToken): subject "<provider>:<uuid>", identity in the player_id claim.
+func gamePlayerToken(t *testing.T, keys *jwt.Keys, playerID, game, provider string) string {
+	t.Helper()
+	tok, err := jwt.Sign(keys, map[string]any{
+		"sub":       provider + ":" + playerID,
+		"player_id": playerID,
+		"game":      game,
+		"iss":       "https://iam.farthq.internal",
+		"aud":       "farthq-ecosystem",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign game player token: %v", err)
+	}
+	return tok
+}
+
+// TestShankpitTicket_MintsForGamePlayerToken -- the real Roblox 460 login path. A guest account is
+// the only sign-in a Roblox player can perform (no OAuth and no password form inside the engine),
+// and before this it minted a token this endpoint refused, because the handler only read `sub`
+// while a game token's subject is "guest:<uuid>".
+func TestShankpitTicket_MintsForGamePlayerToken(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	playerID := uuid.New().String()
+	token := gamePlayerToken(t, keys, playerID, "shankpit", "guest")
+
+	h := ticketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/shankpit/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a guest player token, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Ticket   string `json:"ticket"`
+		PlayerID string `json:"player_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The ticket must be for the CLAIM's player, not for the literal string "guest:<uuid>".
+	if resp.PlayerID != playerID {
+		t.Errorf("player_id = %q, want the claim's %q", resp.PlayerID, playerID)
+	}
+	raw, err := hex.DecodeString(resp.Ticket)
+	if err != nil || len(raw) != 36 {
+		t.Fatalf("ticket = %q (len %d) not 36 hex-encoded bytes: %v", resp.Ticket, len(raw), err)
+	}
+	var gotID uuid.UUID
+	copy(gotID[:], raw[:16])
+	if gotID.String() != playerID {
+		t.Errorf("ticket payload uuid = %s, want %s", gotID, playerID)
+	}
+}
+
+// TestShankpitTicket_RejectsLocalAccountSubject -- "local:7" is a real IDUNA account but not a
+// player: /api/v1/auth/local's tokens must not buy a game seat.
+func TestShankpitTicket_RejectsLocalAccountSubject(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	tok, err := jwt.Sign(keys, map[string]any{
+		"sub": "local:7", "local_uid": 7, "iss": "https://iam.farthq.internal",
+		"aud": "farthq-ecosystem", "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	h := ticketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/shankpit/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a non-player account, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestShankpitTicket_PlayerIDClaimDisagreesWithNothing -- a provider-prefixed subject with NO
+// player_id claim still resolves through its subject, so nothing already working breaks.
+func TestShankpitTicket_ProviderPrefixedSubjectWithoutClaim(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	playerID := uuid.New().String()
+	tok, err := jwt.Sign(keys, map[string]any{
+		"sub": "email:" + playerID, "game": "shankpit",
+		"iss": "https://iam.farthq.internal", "aud": "farthq-ecosystem",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	h := ticketHandlerWithAuth(keys, []byte("secret"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/shankpit/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for an email-prefixed subject, body = %s", rec.Code, rec.Body.String())
+	}
+}

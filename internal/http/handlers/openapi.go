@@ -555,7 +555,7 @@ var idunaOpenAPISpec = map[string]any{
 			"post": map[string]any{
 				"summary":     "Mint a short-lived HMAC connect ticket for the shankpit-460 game server",
 				"tags":        []string{"shankpit"},
-				"description": "The caller's JWT subject must be a player_id UUID. Ticket is a 5-minute HMAC-SHA256-signed token (player_id + expiry + truncated MAC over SHANKPIT_TICKET_SECRET) the C game server verifies locally on PACKET_CONNECT, with no crypto library and no I/O on the C side.",
+				"description": "The caller's token must resolve to a player id: the player_id claim (game player tokens) or a UUID subject (Google player JWTs). Ticket is a 5-minute HMAC-SHA256-signed token (player_id + expiry + truncated MAC over SHANKPIT_TICKET_SECRET) the C game server verifies locally on PACKET_CONNECT, with no crypto library and no I/O on the C side.",
 				"security":    []map[string]any{{"bearerAuth": []string{}}},
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Ticket minted", "content": map[string]any{
