@@ -129,6 +129,19 @@ Then set one Space secret:
 |---|---|
 | `SHANKPIT_TICKET_SECRET` | the game server's value, or every minted ticket is refused at `PACKET_CONNECT` |
 
+## What the builder does first, checked without a builder
+
+Hugging Face's first attempt fails on one of three things, all of which were checked from here:
+
+| Risk | Result |
+|---|---|
+| base tag missing (`golang:1.25-alpine`, `alpine:3.21`) | both resolve on Docker Hub (`HTTP 200`, real manifest digests) |
+| cold module cache, no `go.work` above the bundle | `GOWORK=off` + empty `GOMODCACHE` builds the bundle from `git archive HEAD` alone |
+| no CA trust store in the runtime image | `alpine` ships none, and Go reads `/etc/ssl/certs` on Linux — the runtime stage now installs `ca-certificates` |
+
+The third one is a build that looks green and then dies at runtime with `x509: certificate signed by unknown
+authority` on the first outbound call (OAuth/JWKS), which is why it is in the image rather than in a ticket.
+
 ## What has and has not been exercised
 
 Run here: the Space-contract boot (`verify.sh` — health 200, `guest-register` route present, ticket 401 without

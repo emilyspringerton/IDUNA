@@ -28,6 +28,10 @@ COPY . .
 RUN go build -ldflags="-s -w" -o /out/iduna .
 
 FROM alpine:3.21
+# ca-certificates: the alpine base ships no system trust store, and Go on Linux reads /etc/ssl/certs for every
+# outbound TLS call (Google OAuth/JWKS, Apple filings). Without it the failure is a runtime
+# "x509: certificate signed by unknown authority" long after the build looked fine.
+RUN apk add --no-cache ca-certificates
 RUN addgroup -g 1000 -S iduna \
  && adduser -u 1000 -S -G iduna iduna \
  && mkdir -p /data/var /app \
