@@ -112,6 +112,25 @@ Not run, and why: **the image has never been built** (no `docker` on this box), 
 (no `HF_TOKEN`), and nothing has been fetched from `huggingface.co` (this sandbox's egress reaches github.com
 but resets TLS against okemily.com, so an HF round trip would be unproven either way).
 
+## A real instance, running on this box
+
+`docker` is absent here, so the image is never built locally -- but Hugging Face builds it from the pushed
+Dockerfile, so that was never the blocker. What was made real instead is the *runtime contract*, on the
+Space's port, with the image's own layout:
+
+```
+/deploy/huggingface/push.sh --check     -> "no token: ..." exit 3   (fails cleanly, no silent skip)
+var/space/app/   read-only, holds iduna + migrations   (proves /app needs no writes)
+var/space/data/  writable: iduna.db, iduna-key.json, var/
+  health on :7860                                       -> 200
+  guest-register                                        -> player <uuid>
+  ticket                                                -> 36 bytes, MAC verified
+  kill + restart, same token                            -> HTTP 200, SAME player_id
+```
+
+That last line is the one worth having: the account survives a process restart, which a **free Space will
+not** give you (its disk is ephemeral). The wiring is right; the durability is a paid plan.
+
 ## Limits this Space has by construction
 
 - **Ephemeral identity.** A restart is a new database and a new ES256 key: accounts vanish and tokens minted
