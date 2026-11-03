@@ -25,7 +25,15 @@ ENV CGO_ENABLED=1 GOFLAGS=-trimpath GOTOOLCHAIN=local
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -ldflags="-s -w" -o /out/iduna .
+# The build stage and the runtime stage must agree on libc: alpine builds a musl binary, and a glibc-linked one
+# (what you get by building on this dev box, or by switching the build image to something -bookworm) simply does
+# not exec under alpine -- the error is a bare "not found", which reads like a missing file, not a wrong libc.
+# So the build refuses to hand over a glibc binary instead of failing at runtime.
+RUN go build -ldflags="-s -w" -o /out/iduna . \
+ && if grep -qa 'libc\.so\.6' /out/iduna; then \
+        echo "BUILD: /out/iduna is glibc-linked but the runtime stage is alpine/musl -- it would not exec" >&2; \
+        exit 1; \
+    fi
 
 FROM alpine:3.21
 # ca-certificates: the alpine base ships no system trust store, and Go on Linux reads /etc/ssl/certs for every

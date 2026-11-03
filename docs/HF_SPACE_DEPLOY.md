@@ -129,6 +129,17 @@ Then set one Space secret:
 |---|---|
 | `SHANKPIT_TICKET_SECRET` | the game server's value, or every minted ticket is refused at `PACKET_CONNECT` |
 
+## The build stage and the runtime stage must agree on libc
+
+The binary built on *this* box is glibc-linked (`ldd` → `/lib/x86_64-linux-gnu/libc.so.6`). That is not what
+ships: the image builds inside `golang:1.25-alpine`, so the artifact is musl-linked and the `alpine:3.21`
+runtime has the matching loader. Both stages being alpine is a requirement, not a style choice — a glibc binary
+under alpine fails to exec with a bare `not found`, which reads like a missing file rather than a wrong libc.
+
+Rather than remember that, the build asserts it: after `go build`, the stage greps the artifact for
+`libc.so.6` and fails with an explicit message if it is there. Verified in the direction that matters — the
+host's own build contains that string, so the check would reject it.
+
 ## What the builder does first, checked without a builder
 
 Hugging Face's first attempt fails on one of three things, all of which were checked from here:
