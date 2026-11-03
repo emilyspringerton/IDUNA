@@ -22,3 +22,9 @@ var-backups/
 # Never committed; the founder uploads these directly to Itch's own key-upload feature.
 batch_*_keys.txt
 *_keys.txt
+
+# The local identity database. Was tracked as an empty file until 2026-11-03; a local run writes
+# real accounts into it, so it must never be committed again.
+iduna.db
+iduna.db-wal
+iduna.db-shm

@@ -4,6 +4,21 @@
 
 # IDUNA Changelog
 
+## 2026-11-03
+
+- **feat(deploy): IDUNA ships to a Hugging Face Space.** New `deploy/huggingface/` (Dockerfile, Space
+  `README.md` frontmatter, `push.sh`, `verify.sh`) plus `docs/HF_SPACE_DEPLOY.md`. The Space is assembled
+  from `git archive HEAD` rather than pushed as this repo's history, because a Space repo is public. The
+  Dockerfile builds with cgo (`internal/brawlpit/lz4.go` is a cgo binding over PARENA-compiled LZ4, so
+  `CGO_ENABLED=0` fails with `undefined: brawlpit.CompressLZ4` — found by building, not reading), binds
+  `0.0.0.0:7860` from `IDUNA_ADDR`, keeps state in `/data`, and re-creates `var/` in its entrypoint because
+  IDUNA's optional stores open by relative path and a fresh cwd killed the first real boot. Verified locally
+  against the real server on the Space's own port: health 200, `guest-register` route present, ticket route
+  401s without a token, and a full sign-up -> 36-byte connect ticket with a verified MAC.
+- **fix(repo): `iduna.db` is no longer tracked.** It was an empty, 0-table file a local run created, so
+  nothing leaked — but any run writes real accounts into it, and the next `git add -A` would have published
+  them. Untracked (`git rm --cached`) and ignored.
+
 ## 2026-10-21
 
 - feat(bedrockracers): **online multiplayer Bedrock Racers on IDUNA** (`/api/v1/bedrockracers/{play,status,matches,replays,players,leaders}`, founder real-time: "we need to ship multiplayer bedrock racers"). A lockstep room hub (`internal/bedrockracers`) seats people into a four-team match, sequences every person's command word tick by tick, steps the same wasm the browsers run (`bedrockracers.wasm`, via wazero) as the referee with a hash check every 250 ticks, turns a dropped person into a bot at an exact tick, records the match (rated 4-team Elo in `game_player_stats`, per-person rows, replay) and serves the stats routes WOTAN reads. Additive migration `202610180001_bedrockracers_web.sql` (two new tables), a `bedrockracers` games registry row (`bedrockracers.play`). The referee wasm is the WOTAN `bedrockracers-page` build (PARENA `c5fa4b9`+, ERROR 6 leaves the room): the earlier copy differed from the browsers' in two net functions (`net_check_fail_bang`, `net_frame_bang`, 20 bytes), the sim and golden hashes are unchanged. Tested: `go test ./internal/bedrockracers` and `-run Bedrock` in `handlers` green; WOTAN's two-Chromium-pages test against this binary 10/10 (both seated, 12 s of play, hash checks pass, drop-to-bot). Wider `handlers` run: the same 9 failures as clean `main` (draft runs, guest lore name/upgrade, redeem refill, nock door scripts, identity admin merge); one run also failed `TestBedrockRacersPlay_RatedMatchIsRecordedAndShownInTheStats` while two other test suites were hogging this 2-core box, 0 failures in 23 reruns since.
