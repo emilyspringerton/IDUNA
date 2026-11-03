@@ -80,10 +80,19 @@ var/space/data/   owned by uid 65534 -> var/, iduna.db, iduna-key.json, migratio
   kill + restart, same token                          -> HTTP 200, SAME player_id
 ```
 
-The `0` is the point: after registering a player, minting a ticket and restarting, the
+The zero is the point: after registering a player, minting a ticket and restarting, the
 read-only tree is *still* free of write bits, so nothing leaked a write into `/app`. The account surviving the
 restart is real here because the disk is real; a **free Space will not** give you that, since its storage is
 ephemeral and a restart is a fresh database plus a fresh ES256 key.
+
+### Two ways this verification lied before it was fixed
+
+- **Root ignores write bits.** The first read-only check ran as root and used `[ -w ]`, which is true for root
+  regardless of mode, so it "proved" the app tree read-only while proving nothing. The claim now rests on mode
+  bits plus a process running as uid 65534.
+- **`verify.sh` measured someone else.** With a live instance already on :7860, the script's boot failed to bind
+  and its `curl` silently talked to the *other* server, which minted the ticket with a different secret — surfacing
+  as `MAC mismatch`. It now refuses an occupied port instead of trusting whatever answers.
 
 ### One command left, and it needs a credential
 
@@ -174,6 +183,15 @@ Two things worth being precise about, because both were got wrong first:
 - The account surviving a restart is real here because the disk is real. A **free Space will not** give you
   that: its storage is ephemeral, so the same restart is a fresh identity database and a fresh ES256 key.
   The wiring is right; the durability is a paid plan.
+
+### Two ways this verification lied before it was fixed
+
+- **Root ignores write bits.** The first read-only check ran as root and used `[ -w ]`, which is true for root
+  regardless of mode, so it "proved" the app tree read-only while proving nothing. The claim now rests on mode
+  bits plus a process running as uid 65534.
+- **`verify.sh` measured someone else.** With a live instance already on :7860, the script's boot failed to bind
+  and its `curl` silently talked to the *other* server, which minted the ticket with a different secret — surfacing
+  as `MAC mismatch`. It now refuses an occupied port instead of trusting whatever answers.
 
 ### One command left, and it needs a credential
 

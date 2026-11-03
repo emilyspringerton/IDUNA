@@ -15,6 +15,15 @@ pid=""
 cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null || true; rm -rf "$work"; }
 trap cleanup EXIT
 
+# A boot check is worthless if something ELSE already answers on the port: the first version of this script
+# silently measured a live instance on :7860 and failed with "MAC mismatch", because that instance minted the
+# ticket with ITS secret. Refuse to run into an occupied port.
+if curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:$port/health"; then
+    echo "verify.sh: something is already serving http://127.0.0.1:$port -- refusing to test against it." >&2
+    echo "           stop it, or pick another port: SPACE_PORT=7861 $0" >&2
+    exit 1
+fi
+
 echo "build (CGO_ENABLED=1, as the image does)..."
 ( cd "$root" && CGO_ENABLED=1 go build -o "$work/iduna" . )
 
