@@ -1,10 +1,10 @@
+# IDUNA Changelog
+
 ## 2026-11-03
 
 - fix(shankpit): **a game player token can now buy a connect ticket — it could not before.** `ShankpitTicketHandler` resolved the caller with `uuid.Parse(sub)`, which is right for a Google player JWT (subject = player UUID) and wrong for every token `/api/v1/games/{game}/guest-register|guest-login|email-login|sso-exchange` issues, whose subject is `guest:<uuid>` (etc.) and whose identity is the `player_id` claim. So the guest account a Roblox player can actually create — no OAuth inside the engine, no password — minted a token this endpoint answered `400 token subject is not a player id`: the one login that path supports was the one it refused. New `ticketPlayerID` reads `player_id` first (the claim every other game route already trusts: guest-upgrade, set-display-name, verify), falls back to a bare-UUID subject for existing Google players, then to the id named by a provider-prefixed subject, and still refuses `local:<uid>` and agent names because a ticket is a player's. Also adds the missing `shankpit` row to `internal/games.Registry` (PlayPerm only, same narrow cut as `shankpit460`/`big_o`/`brawlpit`) so those accounts exist for the game the ticket endpoint is scoped to — distinct from `shankpit460`, the browser deathmatch. 3 new tests (`MintsForGamePlayerToken`, `RejectsLocalAccountSubject`, `ProviderPrefixedSubjectWithoutClaim`); `go build ./...` and `go test ./internal/http/handlers -run ShankpitTicket` green (6 existing + 3 new). **Live-verified end to end** against a booted instance on a throwaway SQLite file: `guest-register` -> `guest-login` (fresh token) -> `POST /api/v1/shankpit/ticket` **200**, with the returned 72-hex ticket's MAC recomputed independently under the shared secret and matching, and the expiry read little-endian and agreeing with the JSON. The Roblox side drives this same flow in `SHANKPIT/roblox/scripts/live_ticket_check.sh`. OpenAPI's description of the endpoint was corrected with it (it claimed the subject must be a UUID).
 
-# IDUNA Changelog
 
-## 2026-11-03
 
 - **feat(deploy): IDUNA ships to a Hugging Face Space.** New `deploy/huggingface/` (Dockerfile, Space
   `README.md` frontmatter, `push.sh`, `verify.sh`) plus `docs/HF_SPACE_DEPLOY.md`. The Space is assembled
@@ -56,7 +56,6 @@
 - feat(nock): SHANKPIT level editor reskinned to the new design export (editor bar with status pill / undo-redo / Live-session popover / Save; Levels sidebar with filter and Queue/Story/Zombies tag buttons; segmented Object/Face/Rotate toolbar with switches; viewport chips + key legend; accordion inspector: Level, Cubes, Spawn points, Waypoints, Characters, Level exits, Placed objects, Import & embed). Every existing handler is kept (clone/export/delete moved under a "..." menu, glTF import and level/widget embedding under Import & embed); follows the app light/dark toggle. Verified by server-side render + tsc + build only; no browser on this box, not seen live.
 - NOCK "Set for ZOMBIES": pressing it twice on one level no longer fails on the unique `_ZOMBIES` copy name (next free suffix), and the button now alerts on failure instead of failing silently.- feat(nock): live edit sessions now sync SHANKPIT -> NOCK. A box deleted (X) or placed (B) in the native live editor is applied to the NOCK draft (matched by geometry, since the game sees the flattened export), and F5 in the game asks NOCK to save via a new `save` session event. Handler test covers the new events; the browser path is type-checked, not driven.
 
-## 2026-10-16
 
 - feat(nock): **per-material mass density** (`shankpit_materials.density`, kg/m^3, migration `202610160005_shankpit_materials_density.sql`, seeded brick 1900 / concrete 2400 / wood 600 / glass 2500 / metal 7800; 0 = unset, the game uses its own default). Store/API/level export carry it (`MaterialExport.density`, omitted when 0); `PUT` with `density` omitted keeps the stored value; validated to [0, 30000]. NOCK Materials screen has a Density column + field (dist rebuilt). Founder real-time: "calculate mass of the different materials, have it configurable on the NOCK material". 2 new tests. Consumed by SHANKPIT's destructible-brick rigid bodies.
 - feat(chat): `/api/v1/chat/messages` accepts channel `shankpit` + sender_source `shankpit_client` so SHANKPIT clients post directly under their own player login (founder real-time: SHANKPIT GFD phone <-> GFD MUD global chat). 1 new test.
@@ -68,11 +67,13 @@
   rest (`hat_sales` ledger). Catalog hides unlisted/held/zero-cost reward hats. 6 new tests.
 
 ## 2026-10-15
+
 - IDUNA login SDK (`sdk/README.md`, `sdk/c/iduna_login.h` native loopback + test, `sdk/web/iduna-login.js`): one SSO contract, two client profiles. Cards #630/#631. Web profile untested (no node).
 
 - feat(shankpit): live edit sessions carry the NOCK editor's UNSAVED working level -- `PUT /api/v1/shankpit-edit-sessions/{id}/level` (full draft, ≤4 MiB, announces a `level` event + `level_rev`) and `GET .../{id}/level` (native export shape; falls back to the saved level). `LevelStore.ExportLevel` exports an in-memory level. NOCK's `useLiveSession` pushes the draft (debounced 250 ms) while a session is open. Founder: "a shankpit player joining the live session needs to load into the edited level." Go tests pass; the NOCK `dist/` bundle was NOT rebuilt (no node on this box) -- rebuild before deploy.
 
 ## 2026-10-12
+
 - feat(identity): Twitch is now a full SSO login provider (IDENT-06, IQ-2 resolved), not just link-only -- loginDoorProviders includes twitch, start()/callback() in identity_oauth.go treat it like Battle.net/Google (mints a session JWT via finishLogin), SSOLoginHandler gets a TwitchEnabled button on the hosted login page gated on TWITCH_CLIENT_ID/SECRET; still zero OAuth scopes either way (I8 unaffected); the HS link-only route (/api/v1/hs/me/identities/twitch/start) now explicitly requires an authenticated caller rather than relying on Twitch's old forced link-mode default (sess-20261009-1745-ee80b668)
 - fix(sso): SSOGoogleHandler now requests the minimal `openid email` scope instead of `openid email profile` for the IDUNA SSO Google button — email alone drives account mapping/transactional comms/hybrid login, and display-name already falls back to the email's local part (sess-20261009-1745-ee80b668)
 - feat(identity): WOTAN Identity Federation chunk ID-A (IDENTITY_NORTHSTAR.md) — migration 202610130001 (player_identities with backfill of every google/iduna_local player, hs_upload_keys sha256-at-rest, hs_settings show_twitch_name/show_battletag, hs_games battletag_id/first_streamed_live/unverified_tag, player_identity_grace backfilled for club owners and uploaders, identity_audit_log, five wotan.identity/uploadkey permission rows); Battle.net SSO login+link (openid scope only, signed flow-state cookie bound to the authenticated player, 404 provider_not_configured without BNET_CLIENT_ID/SECRET), Google link mode, Twitch link-only (no scopes, one per player), identity_taken non-leaking; GET/DELETE /hs/me/identities (+prefs, last-login-door and active-key guards), POST/GET/DELETE /hs/me/upload-keys (wt_ + 32 random bytes, shown once, max 5 active), POST /hs/live/exchange (key -> 12 h upload JWT carrying key_id, revoke is immediate and tombstones the live session); live ingest binds PlayerName to linked BattleTags (match -> attributed, generic -> unverified+private, unlinked name#digits -> dropped + rejected_tag_mismatch++), injectable first_streamed_live Twitch seam (60 s cache, off by default); club creation and key minting gated on a linked Battle.net identity with 30-day grace and wotan.identity.bypass; Back Office /admin/identities (search, detail, force-unlink, revoke key, operator-assisted merge refused on exclusive-club conflict, identity_taken dispute queue); shared RequireAuth now also refuses aud hs-live-upload and iduna-oauth-state tokens (sess-20261009-1745-ee80b668)
@@ -87,7 +88,6 @@
 - fix(hs): duplicate CREATE_GAME (GameState + indented PowerTaskList copy, same instant) aborted every live game a few hundred lines in, hiding the player's own drawn cards for the rest of the match while the opponent's kept working; fold-text now trusts only GameState's own CREATE_GAME to abort, hs_live.go's liveLines hardened the same way (recognizes the real indented duplicate, dedupes by clock); Ginkgo/Gomega suite + real Power.log fixture added in internal/hstracker, new hs_live_test.go case (sess-20261009-1745-ee80b668)
 
 - HS-TRACKER-ME-04: tracker now reads PowerTaskList lines on equal footing with GameState (CREATE_GAME + nested sub-blocks were PowerTaskList-only on a real current client build, leaving the live page permanently 'waiting for the game to start'); added a CHANGE_ENTITY handler (card transforms in place were silently dropped, corrupting an unrelated stale entity's controller -- the real mechanism behind 'my card shows up under the opponent'). Apple #22235. (sess-20261009-1745-ee80b668)
-
 
 ## 2026-10-11
 
@@ -194,8 +194,8 @@
 - HS live: `GET /api/v1/hs/live/install.ps1` one-time installer (launcher in %LOCALAPPDATA%\WOTAN that fetches the current uplink each start, Desktop + Start menu shortcut, no admin).
 - hs: live deck tracker endpoints (live/token, live/lines, live/state, live/uplink.ps1); vendored HRIP tracker runner (sess-20261009-1745-ee80b668)
 
-
 ## 2026-10-09 (cont. 2)
+
 - hs: POST /api/v1/hs/games (tracker records, class from hero cards, dedupe), GET games/{id} replay (owner-only), GET stats/matchups; hs_cards.card_id (sess-20261009-1745-ee80b668)
 - DRIVE SLURP page: drag-and-drop direct upload (POST /admin/drive-slurp/upload), sha256-deduped, no Drive needed (sess-20261009-1745-ee80b668)
 
@@ -234,23 +234,23 @@
 
 - Hearthstone deck sharing + basic socials API for WOTAN (/api/v1/hs/*, internal/hsdeck deckstring codec, hs_* tables); SSO page remembers the session ('Continue as', ?auto=1, ?logout=1); GET /admin/login skips the form when already signed in as admin (sess-20261008-0123-53e30776)
 
-
 ## 2026-10-06
 
 - fix(draft-run): cashOutDraftRun refunds the full entry ticket on a never-played (0-win/0-loss) draft-run abort, instead of the 0-win cash-out table (sess-20260923-1030-4a526255)
 
-
 ## 2026-10-05
+
 - fix(nock): level editor's own 3D preview now renders arbitrarily-deep nested level/widget objects, not just one level down -- founder real-time: "nest level 1 into level 2 and then 2 into 3 you dont see level 1 in the level 3 editor". New `useReferencedLevelsDeep` (frontend/nock/src/ShankpitLevelEditor.tsx) walks outward from the draft's own objects breadth-first, recursively fetching every transitively-referenced level/widget (bounded by `MAX_LEVEL_OBJECT_DEPTH = 6`, mirroring level_store.go's own `MaxLevelObjectDepth`), replacing the old direct-child-only `useReferencedLevelWalls`/`useReferencedWidgetWalls`. New `buildComposedObjectGroup` recurses to build nested `THREE.Group`s, leaning on three.js's own parent/child transform inheritance instead of hand-accumulating world transforms. No server-side change -- `flattenObjects`/Export already composed arbitrary depth correctly; this closed a client-preview-only gap. `tsc -b` + `vite build` clean. SECTION 596. (session: sess-20261005-0856-dc2e56d0)
 
 ## 2026-10-04
+
 - NOCK toolchain in-cluster: iduna:v2 adds gcc, ImageMagick, prebuilt parena (+stdlib) and NOCK_PARENA_RUNTIME_DIR; same tool set as the box. robots sync stays off (no robots/ in GOLDENBAND). (sess-20260923-1030-4a526255)
 - K8S-MV-01: IDUNA cut over to GKE (PVC iduna-var, signing key preserved, JWKS identical). iam./console.okemily.com via edge Gateway + Certificate Manager *.okemily.com, DNS flipped; box localhost:8080 is now a PARENA sc_tunnel client; gfd-core talks to in-cluster iduna directly. Box iduna.service disabled (box copy + var kept). (sess-20260923-1030-4a526255)
 
 - Level box cap 100 -> 2048 (MaxWalls); nextown (169 boxes flattened) exports again. Deployed, iduna.service restarted (sess-20260923-1030-4a526255)
 
-
 ## 2026-10-02
+
 - NOCK live SHANKPIT session panel (#532): start/join, spawner<->avatar sync, spawn-at toggle, avatar marker; built dist, not yet redeployed (sess-20260923-1030-4a526255)
 - kanban: comments on cards tracked by login -- API (bearer + board), per-card comments panel, openapi (card #514) (sess-20260923-1030-4a526255)
 - extensions/mixforge-cookie-exporter (copied from MIXFORGE) + extensions/build_extension.py + .github/workflows/extension-release.yml: tests, deterministic zip, auto-release on green main touching extensions/** (tag ext-mixforge-cookie-exporter-v<maj>.<min>.0) -- SECTION 593 / cards #509,#512 (sess-20260923-1030-4a526255)
@@ -272,7 +272,6 @@
 
 - emily.collections.read permission + EMILY-COLLECTIONS-READER agent (migration 202610020001, config/agents.json); not yet applied to live (sess-20260923-1030-4a526255)
 
-
 ## 2026-10-01
 
 - NOCK: public read-only `GET /api/v1/nock-textures/by-name/{name}/image` (allowlisted `bullet-hole-` prefix only, 404 for everything else; `handlers/nock_textures_public.go`, wired in `main.go`) so SHANKPIT's native client can fetch its per-gun bullet-hole decals from the NOCK texture library; `cmd/nock_gen_textures` now idempotent and loads the four `bullet-hole-*` PARENA textures (loaded into the live NOCK DB as ids 27-30). Needs an IDUNA redeploy to take effect; `internal/nock/bullet_hole_guns_test.go` renders all four through the real pipeline.
@@ -290,6 +289,7 @@
   real bug caught this way and fixed: a `min`/`max` mixup in the tile's own seam function).
 
 ## 2026-09-29
+
 - **GameOnlineHandler wired into the unified logging backend; new live SSE stream.** Founder
   real-time: "we need to be logging the username changes and stuff make sure we are using log
   streaming like in fatbaby user reflux for the logging if we arent already - add it to the iduna
@@ -424,13 +424,14 @@
   list, and the row landing in `var/iduna.db` all confirmed with real curl calls. (sess-20260923-1030-4a526255)
 
 ## 2026-09-28
+
 - REAL root cause found and fixed for 'SHANKPIT levels is down, blank screen': THREE.WebGLRenderer throws uncaught when a browser can't create a WebGL context (founder's own browser had hardware acceleration disabled/sandboxed -- confirmed via their real console error), and /admin/nock has no ErrorBoundary anywhere, so that throw unmounted the ENTIRE app, not just the one tab. Six components construct a WebGLRenderer the same way (ShankpitLevelEditor, ShankpitWidgets, Robots, Animator, AnimationEditor, AnimationViewer) -- all six now guarded via new src/webglSupport.ts (createWebglRenderer wraps construction in try/catch, shows a real readable fallback message instead of crashing). New src/TabErrorBoundary.tsx wraps the whole tab-content switch in App.tsx as real defense-in-depth: any future per-tab crash now only blanks that tab, not the whole app. Live-verified: rebuilt+redeployed iduna.service, reproduced the founder's exact scenario against production with Chromium's --disable-webgl, confirmed SHANKPIT Levels now renders fully (level list + inspectors) with a real fallback message where the 3D view would be, zero uncaught errors, other tabs still usable afterward. ux_screenshot_test.mjs now runs its full 17-tab sweep twice (WebGL on and off) -- the first version of this test used default WebGL-on Chromium and missed this bug entirely, named honestly in NORTHSTAR/README rather than glossed over. 34/34 checks pass. (sess-20260923-1030-4a526255)
 - Investigated founder-reported 'SHANKPIT levels is down, blank screen' -- root cause: /admin/nock has no ErrorBoundary so any tab's uncaught render error blanks the whole app, and the live iduna binary hadn't been rebuilt since before this session's own risky 6-branch abandoned-branch merge sweep landed. Rebuilt+redeployed the binary from current HEAD (go build/test clean) via systemctl --user restart. Added real UX screenshot testing per the founder's own follow-up ask: frontend/nock/scripts/ux_screenshot_test.mjs logs in for real (new SCREENSHOT-CI admin agent, cmd/create-admin-agent, no cookie bypass), clicks through all 17 real nav tabs against production, screenshots each, fails on any near-empty #root or uncaught page error. Run live just now: all 17 tabs pass, SHANKPIT Levels included, real screenshot proof saved. (sess-20260923-1030-4a526255)
 
 - MIXFORGE EDITOR: NOCK's video editor is now PARENA-wasm powered (stdlib/video/nle.prn -> nle.wasm, same MIXFORGE build pipeline) and shares MIXFORGE's own wasm-boot + peak-waveform component pattern (ported, not cross-repo-imported). Real non-linear editing added: crossfade transitions + fade envelopes, computed identically by a live client-side preview (TimelinePreview.tsx) and the server ffmpeg render (xfade/acrossfade/fade filters). New third clip-acquisition path: MPC-style pad capture off a playing clip (quick-grab + press-and-hold), alongside upload and manual mark-in/mark-out. Tab renamed 'Video' -> 'MIXFORGE EDITOR'. go build/vet/test clean (3 new tests), tsc -b && vite build clean, 14/14 nle.wasm kernel checks pass. (sess-20260923-1030-4a526255)
 
-
 ## 2026-09-27
+
 - New POST /api/v1/mixforge/cookies -- receives a real cookies.txt from the MIXFORGE cookie-exporter Chrome extension, gated by a bearer token, writes it for room_server.mjs's yt-dlp downloads (sess-20260923-1030-4a526255)
 - MIXFORGE now live at mixforge.okemily.com -- DNS applied (fixed a Cloudflare comment-length bug in Terraform along the way), nginx+cert deployed, and a real 770-permissions traversal bug found and fixed via scoped setfacl grants (first home-dir-served static vhost in the monorepo) (sess-20260923-1030-4a526255)
 - NOCK: Characters can now author which of the 5 robot kits (Mannequin/Stan/Mike/Leela/George) they render as -- S492's own real "deeper gap," closed. New `Character.Kit`/`CharacterExport.Kit` (`internal/shankpit`), `AIKit*` consts, `validateCharacters` range check (0-5, same "caught immediately" discipline Role already has), and a new "Kit (visual model)" dropdown next to Role in `ShankpitLevelEditor.tsx`'s `CharacterInspector` (`KIT_OPTIONS`, api.ts). Stored as part of the same JSON blob Character already lives in, no migration needed; every pre-existing character decodes to `AIKitAuto` (Go zero value), unchanged. `go test ./...` clean (4 new tests); `tsc -b && vite build` clean, verified the new option labels landed in the rebuilt `dist/` bundle. SHANKPIT companion commit (`d567232`) wires the authored value all the way to the client render. Founder real-time: "i don't see the robots tools in IDUNA" (sess-20260923-1030-4a526255)
@@ -457,9 +458,11 @@
 - SHANKPIT/IDUNA abandoned `claude/*` branch audit: merged `determined-mccarthy-f5ou9d` (the two NOCK robot-registry entries above), the last of 4 pushed-but-unmerged IDUNA branches found stale against `main` (the other 3 -- `charming-einstein-f0ofcc`, `charming-wozniak-ya3uy3`, `cool-wright-s0y42o` -- were already merged). Companion to SHANKPIT's own 5-branch abandoned-branch sweep same session.
 
 ## 2026-09-25 (3)
+
 - Back Office: reveal a training key. New `internal/agentsecrets` package (merge-safe read/write of `var/agent-secrets.env`, ported from `cmd/bootstrap`'s own logic) + a "Reveal secret" button on `/admin/agents` for any agent with a credential set. Founder real-time: "in the IDUNA BACKOFFICE i need an interface for the training keys it needs to reveal them to me like an admin in carepyre can summon the email password out of the void." Agent secrets are one-way-hashed in the DB (never reversible like CarePyre's own AES-encrypted mailbox passwords), so this reads the plaintext from the one place it's still recorded instead. Rotating a secret via `/admin/agents/{id}/secret` now also writes the new plaintext into `agent-secrets.env` (best-effort, never blocks the rotation itself), so newly-rotated secrets stay revealable going forward -- an older secret rotated before this feature existed, or through some other path, genuinely isn't recoverable, and the UI says so rather than pretending. The reveal action is audit-logged (`iduna:admin.agent.secret_reveal`), never the secret value itself, matching this handler's existing "never log the raw credential" discipline. (sess-20260923-1030-4a526255)
 
 ## 2026-09-25 (2)
+
 - games: add SteamAppID parity field to Registry["d2"] (D2_STEAM_APPID env var), matching deadweight's row (sess-20260923-1030-4a526255)
 - Add internal/http/handlers/shankpit_leaderboard.go: public GET /api/v1/shankpit/leaderboard,
   reading SHANKPIT's existing players.kills/deaths/sessions columns (already written by
@@ -467,14 +470,15 @@
   real-time: "add shankpit to WOTAN")
 
 ## 2026-09-25
+
 - Add internal/matchlog + match_replay.go: public GET /api/v1/games/deadweight/matches[/{id}[/replay]], the /replay route shelling out to DEADWEIGHT's new dw_replay_dump for a real round-by-round engine replay (WOTAN S547) (sess-20260923-1030-4a526255)
 - fix(games): claimGamePlayer -- an IDUNA identity registered generically now gets claimed for a game on first real use instead of dead-ending on 'no account for that game' + 'email already taken' (sess-20260923-1030-4a526255)
 - feat(games): sso-exchange -- bridges a generic IDUNA SSO login into a real, game-scoped player token, so WOTAN's friends.html can drop its own DEADWEIGHT email/password form (sess-20260923-1030-4a526255)
 
 - fix(auth): email/register+login error responses are now JSON, not plain text -- fixes the SSO login page's res.json() crashing on any auth error (found live via a founder screenshot) (sess-20260923-1030-4a526255)
 
-
 ## 2026-09-24 (3)
+
 - feat(auth): **IDUNA becomes the SSO** (founder real-time: "instead of putting your password
   into page on wotan iduna needs to become the SSO" -> "iam.okemily.com make that the actual sso
   page just the login a nice modern SSO login that has like the 2 panes" -> "classic IDUNA style
@@ -514,6 +518,7 @@
   actually carries this route, since deploying it first would break the live hat-store login.
 
 ## 2026-09-24 (2)
+
 - ops: **deployed the friends/profiles/duels routes (S536/S537) and the device-auth time.Time fix
   to `iduna.service` for the first time** (S540, founder real-time: "finish shipping the new WOTAN
   stuff"). Both had been committed/pushed but the running binary (built 01:05 UTC, before either
@@ -530,12 +535,14 @@
   restart" gap from earlier today (`5f3c89b`) as a side effect of the same rebuild. (sess-20260923-1030-4a526255)
 
 ## 2026-09-24
+
 - feat(social): duel accept mints a shared match_token for queue pairing (S537 Duel Phase 2, Phase 1) -- investigated first (Principle 19): no game in this monorepo (DEADWEIGHT, REDGARDEN, ECOWAR, SHANKPIT, BRAWLPIT) has any existing "pair me with player X specifically" mechanism, and DEADWEIGHT has no server-to-client push channel, so this stays a pull/poll primitive by design, not push. `duelRespond`'s accept path (`game_social.go`) now mints a random 32-hex-char token (`crypto/rand`, same pattern `game_online.go`'s guest_secret already uses) with a 15-minute TTL, stored on the `duel_challenges` row and returned in the accept response; `duelsList` (`GET duels`) surfaces it to both participants identically as long as it hasn't expired, and never on a declined duel. New migration `202609240400_duel_match_tokens.sql` (two nullable columns, additive). New test coverage in `game_social_test.go`: token is real/non-empty on accept, identical when read back via `GET duels` by BOTH the challenger and the challenged player (not just in the accept response), and absent entirely on a declined duel. `go build`/`vet`/`test ./...` clean across the whole repo. This is IDUNA's half only -- DEADWEIGHT's own matchmaking queue doesn't consume this token yet (Phase 2, tracked in `EMILY/BACKLOG.md` SECTION 537). (sess-20260923-1030-4a526255)
 - feat(social): friends, public profiles, and friendly-challenge (duel) primitives (S536) on the per-game online-services layer -- founder real-time: "add iduna online accounts / add social features / profiles / friends / friendly challenges (duels) / for DEADWEIGHT / WOTAN". New routes under /api/v1/games/{game}/...: GET players/{id}/profile (public), POST/GET friend-requests + {id}/accept|decline, GET friends + DELETE friends/{id}, POST/GET duels + {id}/accept|decline (internal/http/handlers/game_social.go). Friendship has no separate table -- an accepted friend_requests row IS the friendship. A reverse-pending request auto-accepts instead of leaving two dangling rows. Duels require an existing friendship (matches "friendly challenges" naming) and are V0-scoped to the invite lifecycle only -- turning an accepted duel into a live match instance is real, named, deferred work (needs each game's own match-start mechanism), not silently punted. New migration 202609240300_friends_and_duels.sql; new game_social_test.go (full lifecycle, real SQLite migrations, not mocked). go build/vet/test clean across the whole repo. (sess-20260923-1030-4a526255)
 - fix(device-auth): real time.Time round-trip bug breaking every SQLite device-auth poll -- found live building BIG_O's IDUNA app, root-caused via an isolated modernc.org/sqlite repro (time.Time scanned back from a TEXT column always failed, meaning the live poll flow never actually worked for any real caller). Fixed to match internal/store/sqlite.go's own already-proven RFC3339Nano format/parse convention. New store_sqlite_test.go closes the real test gap (service_test.go's fakeStore never exercised real SQL). go build/vet/test all clean. NOT yet deployed to the live service -- blocked as a production-deploy action, needs a human restart. (sess-20260923-1030-4a526255)
 - feat: BIG_O joins the existing GFD<->EINHORN_SURVIVAL cross-server chat bridge (POST/GET /api/v1/chat/messages) as a third participant -- new sender_source "bigo_server" + channel "big_o" (chat_messages.go), new BIGO-SERVER M2M agent (config/agents.json + migrations/truestore/202609240100_bigo_server_agent.sql, no special permission needed). Live-verified: bootstrap provisioned the secret against the real running DB, iduna.service rebuilt+restarted, then a real POST/GET round trip succeeded end to end. 2 new tests. (sess-20260923-1030-4a526255)
 
 ## 2026-09-22
+
 - feat: model repository git-lfs integration -- new internal/modelgit.Syncer syncs every new RL checkpoint blob (SHANKPIT/BRAWLPIT/DEADWEIGHT) into its sibling repo checkout, git-lfs-tracked; per-game on/off toggle (<GAME>_MODEL_GIT_DISABLED), on by default. Extracted internal/gitsync.PushWithRetry from apples.go for reuse. (sess-20260920-1908-24cb3558)
 - feat: BRAWLPIT player identity (games.Registry entry, brawlpit.play) + generalized BigOSignupPageHandler into reusable GameSignupPageHandler{Game,Title,Tagline} serving both /play/big_o and /play/brawlpit — closes SHANKPIT_OS_NORTHSTAR.md item 4 (sess-20260920-1908-24cb3558)
 - feat: BIG_O account-creation interface (/play/big_o) — public guest-register/login/link-email page riding the existing generic games.Registry API; big_o added to the registry (big_o.play permission only, no server/bot yet) (sess-20260920-1908-24cb3558)
@@ -545,8 +552,8 @@
 
 - DREXIT -- a door that is also a level exit, first class in the SHANKPIT level editor (Selected Cube inspector: one button attaches a door to the wall and a level exit at that same position). Also fixed a pre-existing goldenband.ts tsc build break that was silently blocking all NOCK frontend builds. (sess-20260920-1908-24cb3558)
 
-
 ## 2026-09-21
+
 - Bumped Protofounder daily ticket cap 20 -> 25 (founder spec); consolidated DEADWEIGHT admin pages (Game Claim Codes -> single DEADWEIGHT nav entry with Claim Codes/Players tabs); audited the guest-upgrade Claim Account endpoint against a formal spec, confirmed already correct (sess-20260920-1908-24cb3558)
 - Add Game Claim Codes back office tool (/admin/game-claim-codes) -- mint a DEADWEIGHT Premium key or batch codes without shelling in to cmd/gen-claim-codes (sess-20260920-1908-24cb3558)
 - S512: guest-register auto-generates lore-friendly names when display_name is empty; confirmed+regression-tested rolling 24h ticket top-up window (not UTC midnight) (sess-20260920-1908-24cb3558)
@@ -562,25 +569,23 @@
 
 - Add /admin/openexecutive Back Office page (status + working M2M provisioning), fix a real openexec.read/openexec.admin permission-registration gap that had silently broken the provision endpoint since it was added, fix hardcoded-localhost JWKSUrl, move NOCK's code-server off a broken /admin/nock/code subpath onto a dedicated console.okemily.com host, disable VS Code workspace trust (sess-20260920-1908-24cb3558)
 
-
 ## 2026-09-20
 
 - OpenExecutive M2M credential provisioning via IDUNA IAM (M2M auth, one-time secret reveal) (sess-20260920-1908-24cb3558)
 
-
 ## 2026-09-19
+
 - feat(games): public read-only DEADWEIGHT draft deck stats API for WOTAN (internal/deckstats; /api/v1/games/deadweight/{decks,decks/{id},card-stats}); redeployed (sess-20260918-1725-497f394f)
 - feat(nock): DEADWEIGHT AI Opponents tab + game-scoped admin activate/disable route (GameCheckpointsAdminRouter) (sess-20260918-1725-497f394f)
 
 - deploy: rebuilt+restarted with S503-06 game-scoped checkpoint route; bootstrap provisioned DEADWEIGHT-BOTS/SERVER/RL agents (sess-20260918-1725-497f394f)
 
-
 ## 2026-09-18
 
 - S503-06: game-scoped online services (guest accounts, token verify, match results+Elo, stats/leaderboard) and brawlpit checkpoint registry generalized to /api/v1/game-checkpoints/{game}; DEADWEIGHT first game; IDUNA_ADDR env (281ef1a) (sess-20260918-1725-497f394f)
 
-
 ## 2026-09-17
+
 - feat(nock): real "Enclosed / indoor" lighting flag per level (S493) -- founder real-time, from a real screenshot: "theres not much difference between having lights on and not having lights - its still basically illuminated in this totally enclosed level ... there should be more difference between light and dark." Root cause found: SHANKPIT's own outdoor day/night lighting always adds real, physically-motivated sun/moon sky-fill to every wall, even in windowless interiors, swamping real fixture point-light contrast -- SHANKPIT's own new `RETRO_LIGHTING_INTERIOR_FLAT` preset switch fixes it natively (see that repo's CHANGELOG); this pass is the designer-facing control. New `Level.Enclosed`/`ExportDoc.Enclosed` (`enclosed` DB column, migration `202609172200_shankpit_levels_enclosed.sql`) + a new, dedicated `SetEnclosed` method and `PATCH /:id/enclosed` endpoint -- deliberately NOT threaded through `CreateLevel`/`UpdateLevel`'s own already-large (14-param) positional signature, which would have meant touching 60+ real existing call sites across the test suite alone; mirrors the low-blast-radius shape `SetDefaultQueueLevel`/`SetStoryStartLevel` already established for other level-wide flags, just non-exclusive (any number of levels can each independently be enclosed or not). New checkbox in the level editor next to Ground Plane, applies immediately (no Save button needed, matching the founder's own already-established is_story_start/is_default_queue UX). New `TestSetEnclosed_TogglesIndependentlyPerLevel` (confirms toggling one level's flag never touches another's, unlike the exclusive flags). go build/test clean (full suite, including fixing the SAME new-column gap in both hand-rolled test-schema helpers), tsc/vite build clean, deployed live, verified in dist/ and the deployed binary.
 - fix(nock): AI_ROLE_WANDERING_BOT exposed in the Character role dropdown + accepted by validation (S492) -- founder real-time: "how do i stat to have different characters like walking around the city and stuff - even just standing there and having their head turn and look at you and they can say something or whatever." Real, found-live gap, two layers deep: (1) `AI_ROLE_OPTIONS` (frontend/nock/src/api.ts) never listed this role at all, so no designer could ever select it in the UI; (2) even if a designer hand-authored role=10 directly in JSON, `validateCharacters` (internal/shankpit/level_store.go) would have REJECTED the save outright -- its own range check stopped one value short at `AIRoleBlindStalker` (9), the exact same off-by-one SHANKPIT's own native character-spawn code independently had (see that repo's CHANGELOG). This role already does almost exactly what was asked: patrols, turns to face + waves + dances when the player approaches, never enters combat. New `AIRoleWanderingBot = 10` const + widened validation range + new dropdown entry. New `TestCreateLevel_AcceptsWanderingBotRole` (also confirms the -1/999 rejection boundary still holds). go build/test clean (full suite), tsc/vite build clean, deployed live, verified in dist/ and the deployed binary.
 - feat(nock): level exits can target a specific destination spawner, for seamless GTA-style building interiors (S491) -- founder real-time: "so i figured out we can do buildings like GTA we have an exit point of the level that is pointed to the level that represents the interior of that building - exiting that level you can spawn back into the world but how can i specify which spawner the exit leads to for the seamless experience of exiting the building." New LevelExit.TargetSpawnerID (Go, `json:"target_spawner_id,omitempty"`, 0 default = unchanged) + matching LevelExitExport field (this one IS sent to the native client, unlike the exit's own authoring-only ID) -- SHANKPIT's own real native-side implementation (level_boxes.h/physics.h/main.c) shipped in the same pass, see that repo's CHANGELOG. New NOCK UI: LevelExitInspector gained a real "Target spawner" dropdown, populated from the DESTINATION level's own live spawner list -- a new targetLevelSpawners fetch effect re-fetches whenever "Next level" changes (shankpitLevels.get), so a designer picks a real spawner by its own team-labeled name instead of typing a raw id. New TestExport_CarriesLevelExitTargetSpawnerID (round-trips through Export, confirms the real 0 default is preserved when absent). go build/test clean (full suite), tsc/vite build clean, deployed live, verified the new hint-text literal present in both dist/ and the deployed binary.
@@ -613,16 +618,16 @@
 
 - Raise gskelMaxJoints 64 -> 128 (mirrors GOLDENBAND fix) -- fixes 422 glTF import failure on real 65+ joint rigs (sess-20260905-0720-ec33e7c5)
 
-
 ## 2026-09-16
+
 - Add NOCK UI page for writing SHANKPIT door scripts (PARENA textarea, compile, script_url) -- closes the designer-can't-write-scripts gap (sess-20260905-0720-ec33e7c5)
 - Add real PARENA-to-C compile pipeline + storage for SHANKPIT door scripts (nock_door_scripts) -- closes the 'via the nock tools' gap (sess-20260905-0720-ec33e7c5)
 - Add NOCK animation repository + server-side glTF drag-and-drop import (real .gband/.gskel/.gmesh conversion, quaternion channels) -- S144-09 (sess-20260905-0720-ec33e7c5)
 
 - Add blank-slate PARENA texture editor to NOCK (write pixel-r/g/b source directly, no AI prompt required) -- S459-77 (sess-20260905-0720-ec33e7c5)
 
-
 ## 2026-09-15
+
 - S459-76: new PATCH /api/v1/shankpit-checkpoints/:id (CheckpointStore.UpdateElo) -- founder real-time: "im a little concerned that the elos of the generation 0 bots arent going up and down... can we make sure the elos are set up to go up and down not just whatever the first elo into the registry is?" Real gap found: a checkpoint's own Elo kept moving locally every time a later generation evaluated against it (record_match_result is a real, symmetric two-sided update), but the registry had no way to push that update back onto an already-registered row -- gen 0 stayed frozen at its push-time value (1500) forever regardless of how many real matches it played afterward. Gated the same way the upload endpoint is (agent-auth, shankpit.checkpoints.write). Live-verified end to end: ran a real local training run with registry push, confirmed gen0's rows moved from elo=1500 to real, distinct values (1484/1500/1516) after gen1's own evaluation matches. go test (shankpit + handlers) green (sess-20260905-0720-ec33e7c5)
 - S459-63: new `eval_note` field on shankpit_rl_checkpoints -- founder real-time: "how the fuck is my colab log gonna help it just says training". Real, optional, plain-text summary of each generation's own evaluation-match outcome (real kill counts, or a captured crash/report-failure reason), pushed alongside the checkpoint via the existing upload endpoint's new `eval_note` form field, visible directly through GET /api/v1/shankpit-checkpoints -- no training-process stdout access needed to diagnose a flat-Elo run. Live-verified end to end with a real registry push (`note='vs prior gen: kills 9-13'` etc actually stored and returned). go build/test clean (sess-20260905-0720-ec33e7c5)
 - S459-62: wired the real "Set as opponent" button in ShankpitAiOpponents.tsx -- founder real-time: "can we update the QUEUE to use the active opponent until we have a league to queue against?" Now calls the already-real shankpitCheckpoints.activate endpoint (previously showed a DaisyUI "not implemented" alert). Real downstream consumer lives in SHANKPIT's ops/shankpit-bot-pool.sh (see that repo's own CHANGELOG). Live-verified via a real, contained test: activated a low-stakes disabled test checkpoint via the actual Go store logic, confirmed GET /api/v1/shankpit-checkpoints/active reflects it, reverted to null afterward -- production ends in the exact same "no active opponent" state it started in. go test/tsc+vite build clean, new identifier confirmed in dist/ (sess-20260905-0720-ec33e7c5)
@@ -633,8 +638,8 @@
 
 - S459-49: real SHANKPIT bot registry on NOCK -- shankpit_rl_checkpoints table, checkpoint_store.go, handlers, and a new 'SHANKPIT AI Opponents' NOCK tab (Disable + Hide Disabled fully wired; Set as opponent deliberately deferred behind a DaisyUI 'not implemented' alert per founder instruction) (sess-20260905-0720-ec33e7c5)
 
-
 ## 2026-09-14
+
 - docs(nock): correct PE macro recording cross-reference — belongs to DUNG, not internal/nock (sess-20260905-0720-ec33e7c5)
 - NOCK: non-destructive hue/saturation/sharpen adjustments (S416-04). Layer.Brightness/Saturation/Hue/SharpenRadius/SharpenSigma/SharpenAmount now real metadata, applied to a working copy on every export -- stored layer file never touched, re-tuning always starts fresh. Commit b576606 (sess-20260905-0720-ec33e7c5)
 - NOCK: real layer position/scale/rotation (S416-02). New Layer.X/Y/Scale/Rotation fields, imCompositeTransformed (resize->rotate->position order, transparent background on rotate), Service.SetTransform + PATCH .../layers/:name/transform, frontend LayerTransformPanel. Pixel-sampled test verifies actual composite output. Commit e99e98f (sess-20260905-0720-ec33e7c5)
@@ -655,6 +660,7 @@
 - S459-01: SHANKPIT NOCK level editor v0 backend, real level registry + selection built exactly on BRAWLPIT's own online level editor model (founder real-time: "so v0 it and start working dont worry about the current levels lets just go full level select brawlpit repo exact model for now"). New `internal/shankpit` package (`LevelStore`: create/get/list/update/rename/clone/delete/export), `Wall` mirrors SHANKPIT's own real native `packages/map/map.h` struct field-for-field (center x/y/z, full extents sx/sy/sz -- confirmed against `map.c`'s own collision code, not assumed -- r/g/b in the same [0,1] OpenGL-convention range every existing `glColor3f`/`glColor4f` call in this monorepo's SHANKPIT client already uses). One endpoint (`UpdateLevel`, PUT) serves both "create a cube" (S459-04, append a default wall) and "face-drag editing" (S459-05, adjust an existing wall's center/size) -- same real "replace the whole array" shape BRAWLPIT's own `LevelStore.UpdateLevel` already uses, no separate per-object endpoints. Admin-gated CRUD at `/admin/nock/api/shankpit-levels` (`iduna.admin`, same gate BRAWLPIT's own editor uses) + a separate, minimal, write-method-free public mirror at `/api/v1/shankpit-levels` for future native-client browsing, exactly mirroring `brawlpit_levels.go`/`brawlpit_levels_public.go`'s own split. New migration `202609140001_shankpit_levels.sql`. Real face-drag math test (`TestFaceDragEditing_ReshapesCubeWithoutMovingOppositeFace`) proves dragging one face changes only that face's position, not the opposite one -- the actual mechanism behind the founder's own "cube into a shipping container" v0 bar. 17 new tests (9 store, 8 handler), all real (in-memory SQLite). `go build/vet/test ./...` clean. Built + deployed (`iduna` restarted, `/health` confirmed); live-verified both new endpoints against the real running server (`GET /api/v1/shankpit-levels` → `[]`, `GET /admin/nock/api/shankpit-levels` unauthenticated → 401, not 404). Real, honest, not built in this pass: S459-02 (BRAWLPIT-level conversion, explicitly skipped per the founder's own "dont worry about the current levels" direction), S459-03's own dedicated dimensions-on-create UI, and the actual 3D drag-face editing frontend (this is the backend only -- see `EMILY/BACKLOG.md` SECTION 459 for the full, still-open plan). Apple #19487.
 
 ## 2026-09-13
+
 - S458: fixed a real, live production bug -- publishing a new blog post via `emily blog post` immediately 403'd for real visitors. Root cause: the live iduna process's own actual umask (checked directly via /proc/<pid>/status: 0027, not systemd-managed since it runs as a `~/.config/systemd/user/iduna.service` unit with no explicit UMask= directive) silently turned every `os.MkdirAll(dir, 0o755)`/`os.Create(...)` call in internal/blog/render.go into on-disk 0750/0640 -- world-unreadable, so nginx (a different user) couldn't serve it, while every older post on disk stayed 0755/0664 from whenever it was rendered under a different ambient umask. `RenderPost`/`RenderIndex`/`RenderManifest` now explicitly `os.Chmod` the directory and file to 0755/0644 after creation, independent of whatever umask the process happens to be running under -- verified live: published a real post (now up at /blog/brawlpit-alphastar-league/, chmod'd by hand to unblock it immediately), restarted iduna via `systemctl --user restart iduna`, published a throwaway verification post that landed correctly permissioned (0755/0644) with no manual chmod, then cleaned it up (DB row deleted, rendered dir removed, index/manifest re-rendered via the real blog package). Apple #19480.
 - S452 follow-up: re-enabled 54 of the 282 BRAWLPIT checkpoints S452 found disabled by NOCK's mass "Disable All" -- only those above 1600 Elo (main: 24, league_exploiter: 29, main_exploiter: 1), restoring the real ~1800-1900 Elo lineage for training resume; the 273 at or below 1600 stay disabled. Done as a direct SQLite UPDATE against var/iduna.db, not through the admin-gated PATCH endpoint -- no iduna.admin-permissioned agent credential (EDDY/HOUSE/BOOTS) was discoverable on this box, and EMILY-PRIME itself doesn't hold iduna.admin. Known gap left open: no iduna:brawlpit.checkpoint.enable event landed in the S453 unified log for this batch, the exact undocumented-toggle failure mode S452/S453 exist to close. Apple #19463. (sess-20260905-0720-ec33e7c5)
 - S453: BRAWLPIT checkpoint upload/activate/disable/enable now emit into the unified event log (iduna:brawlpit.checkpoint.upload/.activate/.disable/.enable), queryable via /services/search/jobs or /portal/logs -- direct follow-up to diagnosing a real lost Elo lineage (S452) that had no audit trail (sess-20260905-0720-ec33e7c5)
@@ -670,8 +676,8 @@
 
 - CRITICAL fix: added PATCH /api/v1/characters/:id/equipment, the missing write path -- GET was the only real equipment endpoint that ever existed. (sess-20260905-0720-ec33e7c5)
 
-
 ## 2026-09-12
+
 - S412-09: gfd-mob-drops admin UI adds a real per-item drop-chance percent field (blank=always, 0-100%), mirrored in GfdMobDropItem's DropChance field. (sess-20260905-0720-ec33e7c5)
 - feat(mmo): per-job character leveling API (GFD-124433) -- new character_job_levels table + GET/PATCH /api/v1/characters/:id/job-levels[/:job], agent-only writes. characters.level/current_xp kept as a mirror of the currently-active job. 5 new tests. (sess-20260905-0720-ec33e7c5)
 - feat(nock): SQLite-backed texture library CRUD + clone, modeled on CarePyre's resume clone (many independent master textures, not one master with derived views) -- new nock_textures table, internal/nock/texture_store.go, full REST + CLI, minimal GUI tab. Also wired real Tailwind CSS v4 into the frontend. Confirmed PARENA has no JSX/React generation capability (investigated, resolved via AskUserQuestion to keep hand-writing TSX). See docs/NOCK_NORTHSTAR.md. (sess-20260905-0720-ec33e7c5)
@@ -679,28 +685,30 @@
 
 - feat(nock): v0 layered image editor -- internal/nock (ImageMagick-backed engine: layers/masks/opacity/gradients/hue-sat/sharpen/resize/export), cmd/nock CLI, internal/http/handlers/nock.go JSON API, and a React 19+TypeScript SPA at /admin/nock (go:embed'd, iduna.admin-gated). Deliberately not GFD-coupled. 13 tests, all against real ImageMagick. Founder: 'we are gonna need to build our own tools to create the textures... lets yolo it into iduna... this project is called NOCK.' See docs/NOCK_NORTHSTAR.md for the phased plan. (sess-20260905-0720-ec33e7c5)
 
-
 ## 2026-09-11 (continued)
+
 - feat(agents): new `ECOWAR-BOTS` M2M agent (`config/agents.json` + migration `202609110001_ecowar_bots_agent.sql`, id `00000003-0000-4000-8000-000000000015`), granted the existing `redgarden.ticket.mint`/`redgarden.match.write` permissions -- real root-cause fix for ECOWAR's `ecowar-matchmaker.service` being dead for 5 days ("stuck on queueing" for real players): its `EnvironmentFile` referenced a nonexistent env file, and the ONLY reason that file could never be created was this agent identity not existing yet. A genuinely distinct identity from `REDGARDEN-BOTS`, not a reused credential, so ECOWAR's own WOTAN match stats never mix into REDGARDEN's leaderboard -- resolves ECOWAR's own previously-flagged-but-undecided identity question. Provisioned live via `cmd/bootstrap` against the real production DB (backed up first); secret written to `var/agent-secrets.env`. See ECOWAR's own CHANGELOG for the full incident writeup. (sess-20260905-0720-ec33e7c5)
 
 ## 2026-09-11
+
 - docs: Emily For Business pitch sharpens -- "the rails for 2026 agents is an api that allows you to create apis." Real, spec-only update to `docs/EMILY_FOR_BUSINESS_NORTHSTAR.md`: names IDUNA_PRO's own multi-tenancy gap as the literal Phase 0 this pitch depends on (see IDUNA_PRO's own new NORTHSTAR), names 3 real, existing options for "an API that creates APIs" without choosing between them (hand-written Go, the already-shipped LO/PARENA Rails-like framework, a Terraform-like declarative config), and states an explicit, load-bearing scope boundary: not an LLM/agent-hosting product, purely the IAM+API substrate an agent targets. Cross-links a new sibling doc for the frontend half (EMILY_FOR_BUSINESS/docs/UNIVERSAL_UI_NORTHSTAR.md). No code. (sess-20260905-0720-ec33e7c5)
 
 ## 2026-09-08
+
 - Stabilize iduna.service: bumped MemoryMax 256M->512M as a stopgap after journalctl showed real, recurring OOM-kills (started before this session's own changes, compounded by heavy Apple-filing traffic triggering frequent apples-git sync subprocesses); root cause of the memory growth not diagnosed here, this only stops the crash loop (sess-20260905-0720-ec33e7c5)
 
 - PII audit: CarePyre contact form decommissioned here — moved to IDUNA_PRO (own tiered RBAC, GDPR pipeline, real retention policy) instead of gated by the broad, catch-all iduna.admin population. Old table left in place, frozen, as a read-only historical backup; its rows were migrated forward, not deleted. var/*.db file permissions fixed from 674 (world-readable) to 640; iduna.service gets UMask=0027 so newly-created files don't regress. (sess-20260905-0720-ec33e7c5)
 
-
 ## 2026-09-07
+
 - Real substring search (?q=) on GET /api/v1/kanban/cards, combinable with ?queue= -- the bearer-token API/CLI surface's own gap the admin UI's client-side quick-filter never covered. (sess-20260905-0720-ec33e7c5)
 - SAGA audit: CLAUDE.md/openapi.yaml/openapi.go doc catch-up, 50 -> 112 real documented routes, live-verified. (sess-20260905-0720-ec33e7c5)
 - WOTAN hat store Phase 4.5: POST /api/v1/characters/:id/hats/generated (agent-only, creates+grants a generated hat in one transaction), user_generated/generated_by_character_id columns on hats. (sess-20260905-0720-ec33e7c5)
 
 - Real IDUNA_PRO tenant provisioning control plane: new tenants table + internal/tenantprovision spins up a real, separate, live IDUNA_PRO systemd service per tenant (port alloc, JWT secret, env/unit generation, health check), admin-only GET/POST /api/v1/tenants. Verified live end to end. (sess-20260905-0720-ec33e7c5)
 
-
 ## 2026-09-05 (4)
+
 - Restored IDUNA after home-config loss: rebuilt binary, recreated ~/.config/iduna/env with fresh JWT_SECRET (ES256 signing keys were intact), reinstalled systemd unit (sess-20260905-0720-ec33e7c5)
 
 - fix: KBUX-CACHE-001 — founder real-time report ("my web interface shows 30 items in priority
@@ -720,6 +728,7 @@
   passing. Apple #17907.
 
 ## 2026-09-05 (3)
+
 - fix(players): S241-01 real security fix — player accounts are now scoped per game, closing a
   found-not-fixed gap (founder, setting up Gary's PAPERCRAFT account: "make sure that account only
   for papercraft"). Before this, one email/password was a single shared identity that could mint a
@@ -742,6 +751,7 @@
   a bigger lift than this change justified on its own.
 
 ## 2026-09-05 (2)
+
 - feat(mailinglist): S245-03 real per-instance, admin-configurable Mailchimp settings shipped —
   not just an env var anymore. New `mailchimp_settings` table (single-row, encrypted the same way
   subscriber emails are), `Store.SetMailchimpSettings`/`MailchimpSettings`. New
@@ -759,6 +769,7 @@
   + `var/mailinglist.db`, redeployed `iduna.service`. Unblocks S245-04's settings UI.
 
 ## 2026-09-05 (1)
+
 - feat(mailinglist): S245-02 real export endpoint shipped — `GET /api/v1/mailing-list/export`
   (`?format=csv|json`, default json), gated behind a new dedicated `mailinglist.export` permission
   (granted to `super_admin`, `202609050001_mailinglist_export_permission.sql`) rather than reusing
@@ -773,6 +784,7 @@
   endpoint correctly 401s unauthenticated. Unblocks S245-04's export button.
 
 ## 2026-09-04 (23)
+
 - feat(mailinglist): S245-01 real config/file-key vault-unlock mode shipped, alongside (not
   replacing) the existing human-passphrase path. `Vault.UnlockFromKeyFile` verifies a hex-encoded
   32-byte key from a local file against the same canary mechanism the passphrase path uses — no
@@ -789,6 +801,7 @@
   reuses the existing key file without regenerating it). Unblocks S245-02/03/04/05.
 
 ## 2026-09-04 (22)
+
 - feat(notes): real IDUNA Notebook Phase 1 shipped (kanban `IN-000`/`IN-001`, "icloud like
   affordances for creating notes... notebooks are sarena based but actually just advertised as
   regular notes"; full real scoping in `docs/IDUNA_NOTEBOOK_NORTHSTAR.md`). New
@@ -809,6 +822,7 @@
   UI, and a PARENA-backed ("sarena based") implementation — plain Go CRUD needs neither yet.
 
 ## 2026-09-04 (21)
+
 - feat(kanban): real multi-board support, Phase 1 (kanban `MULTIKANBAN-000`, "move [kanban] up
   the abstraction layer... IDUNA and IDUNA PRO... ability to create multiple kanbans"), Phase 1
   of the same-day `MULTI_KANBAN_NORTHSTAR.md` scoping pass. New `202609040004_kanban_boards.sql`:
@@ -829,6 +843,7 @@
   `iduna.admin` permission gate today).
 
 ## 2026-09-04 (20)
+
 - docs: `docs/PROJECT_TAGS_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban seed card
   `PMPX-000` ("a page showing the tags for the different projects etc"). Real, decisive finding:
   "projects"/"tags" are not formalized concepts anywhere in this data model. Closest real analogs:
@@ -837,6 +852,7 @@
   -real fields). Registered as golden doc `PROJECT-TAGS-NORTH`. No code written — planning only.
 
 ## 2026-09-04 (19)
+
 - docs: `docs/IDUNA_NOTEBOOK_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban
   `IN-000`/`IN-001` ("icloud like affordances for creating notes... notebooks are sarena based
   but actually just advertised as regular notes"). Real, decisive finding: the existing
@@ -847,6 +863,7 @@
   `IDUNA-NOTEBOOK-NORTH`. No code written — planning only.
 
 ## 2026-09-04 (18)
+
 - docs: `docs/MULTI_KANBAN_NORTHSTAR.md` — real scoping pass (Principle 19) for kanban
   `MULTIKANBAN-000` ("move [kanban] up the abstraction layer... IDUNA and IDUNA PRO... ability to
   create multiple kanbans"). Real, decisive finding: `kanban_cards` is a single, global,
@@ -858,6 +875,7 @@
   planning only.
 
 ## 2026-09-04 (17)
+
 - feat(kanban): real optimistic "Done" animation (kanban card `KBUX-092929`, "hitting done on a
   card can be optimistic and immediately disappear or like fly off the screen to the right and
   have the other cards slide up it seems like we are waiting ona sync request"). Real, decisive
@@ -876,6 +894,7 @@
   `go build/vet/test ./...` clean, zero regressions.
 
 ## 2026-09-04 (16)
+
 - feat(kanban): real unified-log event emission (kanban priority-queue card 3243242, "ensure
   kanban does log streaming and checks in to the unified log ensure that we can build on top of
   the kanban system as a load bearing system ie aditional integrations a card can assig"). Real,
@@ -895,6 +914,7 @@
   regressions.
 
 ## 2026-09-04 (15)
+
 - feat(settings): WOTAN-24412/ACCESSABILITY-14441 -- "IDUNA (and WOTAN) USER SETTINGS IN GENERAL
   WE NEED A PLACE FOR THE USER TO CHANGE SETTINGS" + "WE NEED A HIGH CONTRAST SETTING... TO
   MAKE IDUNA MORE HIGH CONTRAST FOR VISUALLY ACCESSABILITY." New, real, general per-user
@@ -915,6 +935,7 @@
   return 401 unauthenticated rather than 404/crashing.
 
 ## 2026-09-04 (14)
+
 - perf(internal/backlog): GFD-OPTIM-1244 -- "can we do some indexing or something on the data
   some kind of caching some kind of compression this bitch is slow... for now can you hack
   around it?" Real, measured problem, not guessed: `backlog.ParseFile` against the real, live
@@ -935,6 +956,7 @@
   redeploying under `iduna.service`.
 
 ## 2026-09-04 (13)
+
 - feat(admin/gfd-*): GFD-XX-123 -- "UI UX WEB for EQUIPMENT DUNGEONS MOBS use enhancable field
   for specifying the machine names for certain things like model names it should auto complete
   and have dropdown like fatbaby ticker search." Real precedent reused, not reinvented:
@@ -955,6 +977,7 @@
   free text and named honestly rather than hidden.
 
 ## 2026-09-04 (12)
+
 - feat(admin/gfd-mob-spawns): GFD-NM-124 -- "actual web interface for modifying the notorious
   monsters... keep it simple ish." `GfdMobSpawnRule` gained an optional `NM *GfdNMRule` field
   mirroring `server/spawn.NMRule` exactly (GFD-NM-123's own new data model). PATCH now sets
@@ -1255,6 +1278,7 @@
   headless browser, not present in this sandbox.
 
 ## 2026-09-03 (10)
+
 - ops: redeployed the live IDUNA instance to pick up the real hat-store routes/migration
   shipped earlier this session (commit `5bf170c`) -- the running `~/.local/bin/iduna` binary
   predated that commit, so `/api/v1/hats` was a real, live 404 until this restart (kanban
@@ -1269,6 +1293,7 @@
   never actually read anywhere in `main.go` -- the port is hardcoded to `:8080`.
 
 ## 2026-09-03 (9)
+
 - feat(mmo): real hat catalog + buy/equip API (kanban `WTHS-0000`/`WTHS-0010`,
   `BRAWLPIT/docs/WOTAN_HAT_STORE_NORTHSTAR.md` Phase 1). New migration `202609030001_hats.sql`:
   `hats` (catalog) + `character_hats` (ownership/equip) tables, seeded with a real 6-hat catalog
@@ -1288,9 +1313,11 @@
   `go build/vet/test ./...` all clean.
 
 ## 2026-09-03 (8)
+
 - docs: new `docs/NORTHSTAR_INVENTORY.md` — real, unified scoping pass for 3 related priority-queue cards (`AI-ITL`, `II-001`, `II-102`): a personal electronics/component inventory hosted as an IDUNA sibling app (same `drive`/`blog`/`vault` "monorepo-custom behind the portal" pattern), seeded with the founder's own real, named starting inventory (2x Pi B2?, 2x Pi Zero, an Adafruit Feather with a radio module). Flat SQLite schema, real API surface (plain CRUD + a genuinely new `POST /api/v1/inventory/query` endpoint feeding the real inventory into an LLM call for the AI-guidance ask). 3-phase plan matching each card's own real framing. Registered as golden doc `IDUNA-INVENTORY-NORTH`. Planning only, no code written.
 
 ## 2026-09-03 (7)
+
 - feat: unified search extended to a real third corpus, Blog Posts (kanban priority-queue card 9944, 'OG IDUNA unified search'). Found live that card 1111's own original /portal/search only covered Apples + the unified event log -- IDUNA's own real, prominent blog content (Tyler's REDGARDEN/ecosystem series) had no search story at all. New internal/blog.Store.Search(query, limit) -- plain title-OR-body LIKE match, same deliberate 'narrowest real slice, not a full-text index' scope SearchApples already established. New PortalHandler.BlogStore field (optional, same independent-availability shape as Store/EventLog -- an unconfigured blog store never blocks the other two corpora). Template updated: new Blog Posts results section between Apples and Log Events, intro copy updated from 'two' to 'three real corpora.' New tests: internal/blog/store_test.go (TestStore_Search_MatchesTitleOrBody, TestStore_Search_LimitRespected), internal/http/handlers/portal_test.go (TestPortalHandler_Search_IncludesBlogPosts, TestPortalHandler_Search_UnconfiguredBlogStoreDoesNotBlockOthers). go test ./... clean, zero regressions. Live-verified: rebuilt + restarted iduna.service, confirmed /health, confirmed the live blog.db has real matchable content ('duck' matches 'The Duck Also Has Opinions About the Hoodie'). (sess-20260902-2008-ed50169e)
 - kanban 卡片 1111「IDUNA UNIFIED SEARCH INTERFACE」:新增 `/portal/search`,一個真正的統一搜尋
   頁面——一個查詢框,同時對兩個真實的資料來源下去查,結果放在同一頁。Apples 這邊新增
@@ -1311,6 +1338,7 @@
   `template.Must` 解析,寫錯會直接在啟動時炸掉)。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-03 (6)
+
 - kanban 卡片 1001「EMILY+ paywall needs to actually function with user accounts etc」——真的找到
   並修掉兩個真實、嚴重的問題,不是重寫整個訂閱系統。**問題一(真正的安全漏洞)**:
   `POST /api/v1/subscriptions/stripe`(Stripe webhook)自己的簽章驗證是假的——舊程式碼只檢查
@@ -1336,6 +1364,7 @@
   commit `75f9b33`。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-03 (5)
+
 - kanban 卡片 9966:Back Office 的選單改成真正固定在左邊的側邊欄,不再是頂端一整排橫向塞滿的
   連結列。創辦人:「/design updatge the IDUNA OG menu interface so its a left menu thats always
   there keep it simple and nice let us scroll up and down on the menu if it gets that long」。
@@ -1348,6 +1377,7 @@
   在啟動時 panic,不是靜默失敗。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-03 (4)
+
 - S243-02:新增 `docs/EMILY_FOR_BUSINESS_NORTHSTAR.md`,針對創辦人自己的框架「IDUNA IS THE PRODUCT
   BASICALLY ZERO TRUST SECURITY AGENT NATIVE」做一次真實、有根據的產品範疇界定——不是實作計畫,是
   給創辦人層級決策用的真實輸入。直接點名一個真實、沒有含糊帶過的矛盾:`docs/NORTHSTAR.md` 自己現在
@@ -1362,6 +1392,7 @@
   `EMILY/context/golden-docs-index.md`(`EMILY-FOR-BUSINESS-NORTH`)。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-03 (3)
+
 - S207-68:kanban 板真的可以在同一欄內排序卡片了。原本拖曳只能把卡片丟到別的欄位(改
   `queue`),丟回同一欄完全是 no-op,沒有任何真正的 `position` 寫回——後端
   `PATCH .../cards/{id} {"position":N}` 其實老早就支援了,只是前端從沒用過。這次
@@ -1378,12 +1409,15 @@
   401(admin 權限閘門本身沒被動到)。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-03 (2)
+
 - S235-01:kanban 手動加卡片,現在可以只打 section 編號(例如 `S203`),不用自己猜一個沒被用過的 item 編號。新的 `resolveBareSectionID`(`internal/http/handlers/kanban.go`)真的讀 `backlog.ParseFile` 的即時內容,找出該 section 底下真正最大的編號再 +1——不是亂猜,已經有完整 id(`S203-04`)的呼叫方完全不受影響。讀檔失敗就老實 fallback 到 `-01`,不會擋住建卡。`create()` 的回應現在會真的把解析後的 `backlog_item_id` 傳回去,前端狀態列也會顯示實際分配到哪個 id。6 個新測試(單元測試 + 一個真的重現當初那次真實碰撞的 create 整合測試:`S203` 在 `S203-04` 已存在時解析成 `S203-05`),外加對重啟後的 live `iduna.service` 做的真實驗證:`S235` 正確解析成 `S235-02`(因為這個 section 自己的 `S235-01` 已經佔用),真的同步進 `BACKLOG.md`,驗證完就清掉。`go build/test` 跟 `GOWORK=off go build/test`(真正獨立 CI 路徑)都乾淨,`go vet` 乾淨。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-03
+
 - S226-04:把統一日誌系統(Splunk 風格)剩下的真實 code path 都接上,關閉 SECTION 226 整個 thread。S226-01~03 已經做完每個真的登入介面跟 admin 停權/解停權;這次補完清單裡剩下的:`HeimdalHandler.submit`(`iduna:heimdal.submit`)跟 `.patch`(`iduna:heimdal.transition`,帶真正的 `from_status`/`to_status`,`patch` 現在會先真的查一次舊狀態才更新)、`ApplesHandler.create`(`iduna:apples.create`,帶真正的 apple_id/agent_id/source_repo/apple_type)、`AdminHandler` 的角色 assign/revoke(`iduna:admin.role.assign`/`.revoke`)、agent 權限 grant/revoke(`iduna:admin.agent_permission.grant`/`.revoke`)。順手多做一個 S226-04 清單沒明講但同一個 handler、同樣安全敏感的:agent secret 輪替(`iduna:admin.agent.secret_rotate`——只記錄「有輪替過」,絕對不把剛產生的明文 secret 寫進事件裡,真的測試過)。全部沿用 S226-02/03 自己已經建立的真實慣例:`EventLog` 欄位 nil-safe(沒接就是完全不動作,不會 panic)、fire-and-forget(記錄失敗絕對不能擋住真正的業務流程)、共用同一個 `emitAuthEvent` helper。9 個新測試,`go build/test` 跟 `GOWORK=off go build/test`(真正的獨立 CI 路徑)都乾淨,`go vet` 乾淨。真的在 live `iduna.service` 上驗證過,不只是單元測試:重啟服務後真的發一張 Apple(#17272),直接看 `var/eventlog/events/` 底下真正的 NDJSON 檔案,確認 `iduna:apples.create` 事件真的落地,欄位完全正確。commit `3d690d5`,Apple #17273。 (sess-20260902-2008-ed50169e)
 
 ## 2026-09-02
+
 - S234-05:kanban 板真正的「Done」動作——歸檔進 BACKLOG.md + 真的發一張 Apple(founder real-time: "we still need to file the apple for moving it to done say manual kanban move or something in the apple or abbreviate that to get more of the context of the actual task it should be moved to a different section of the backlog for archive"→"yea and ensure that our sync is working both ways doing any process improvements we can to make the pluumbing more codified like running stuff througgh cli etc whatever you think")。`PATCH .../cards/{id} {"queue":"done"}` 不是塞進一個真的「done」欄位常數值(創辦人自己說「we dont have a done column」),是一個真正的特殊動作:(1)用新的 `backlog.ExtractItemRaw`(真的把一個項目自己完整的原始文字,包括所有續行,從目前位置整段剪下)把項目的真實文字搬到一個新的固定歸檔區段(`## SECTION 9001: ARCHIVE (completed via kanban board move)`),checkbox 改成 `[x]`,(2)真的發一張 completion Apple(`AppleType: backlog_completion`,標題「Manual kanban move: <真正的任務標題,截斷到 60 字>」,內文帶著真正的 backlog id 跟原始標題,不是空泛的佔位字)——重用 `h.Store.AppendApple`,跟 `create()` 自己發 Apple 的路徑一模一樣,不是另外一套,(3)真的把卡片從 `kanban_cards` 刪掉。「process improvements... codify the plumbing」順便做的真正整併:把 `apples.go` 自己的 `syncAppleToGit`(原本是 `*ApplesHandler` 的方法)改成一個共用的自由函式,`gitSyncMu` 升級成 package-level 的 `applesGitSyncMu`——現在 `KanbanHandler` 真正的 Done 動作跟 `ApplesHandler` 自己原本的路徑,共用同一份真正的「發 Apple 之後同步進 git」邏輯,不是兩份會走鐘的複製。
 
   真正上線驗證時,親手抓到一個真實的 live bug:`internal/backlog` 的 item id regex 原本寫死 `S\d+-\d+`(只認「S」加數字加減號加數字),但正式環境裡已經真實存在一張不符合這個形狀的卡——`GFD-SYNC`(創辦人自己在 kanban UI 建的真卡,不是測試假資料)——完全找不到,代表這個 bug 從 S234-04 上線那天就已經是真的、活的:任何人再對 `GFD-SYNC` 這個 id 建一次卡,既有的「已存在就不要重複加」判斷永遠回傳「找不到」,會真的把它重複寫進 `BACKLOG.md`。修法:regex 放寬成任何「字母開頭,後面接字母/數字/底線/減號」的 id 形狀,涵蓋 `S202-27`、`GFD-SYNC`、`S1-01` 這些全部真實出現過的形狀,不會誤吃到標題本文。真正在正式環境跑過整條 Done 流程兩次(第一次用修 regex 之前的 binary,誠實地報告「找不到對應的 BACKLOG.md 行」但還是照樣發了 Apple、刪了卡——這正是設計好的、優雅降級的行為;第二次用修好之後的 binary,真的把項目搬進 SECTION 9001、checkbox 打勾、真的發出 Apple #17232、真的推上 git,`emily apples list` 可以直接查到)。
@@ -1403,20 +1437,21 @@
 - 新增統一 log 後端,Splunk 風格(`POST /services/collector`、`GET /services/search/jobs`)(founder real-time: "create a unified logging backend for IDUNA using the new tech - so we can have one place to jump to and grab the logs - use whatever affordances and apis splunk uses")。新增 `internal/http/handlers/logs.go`:`LogsHandler` 直接沿用 IDUNA 自己既有、已經測試過的 `internal/userlog.FileEventLog`(NDJSON append-only log + Event 封裝),只是另外開一個獨立的根目錄(`var/eventlog/`,跟 userlog 自己的 `var/user-events/` 分開)——沒有重新做第三套一樣的東西,因為 userlog 自己的 Event 形狀(ID/Type/Source/OccurredAt/Data)本來就已經夠通用了。真實、有查證過而不是猜測的決定:這次刻意沒有直接 import PRRJECT_FATBABY 自己的 `eventstore`(雖然那個是同一個形狀更早的原版,一開始也是這次的直覺選擇)——因為 IDUNA 自己真正的 CI(`.github/workflows/iduna-construct.yml`)只會 checkout 這個 repo 自己、跑 `go test ./...`,完全沒有 `go.work`/其他 repo 的 checkout——直接用 `GOWORK=off go build ./...` 驗證過,真的會因為解析不到只存在本地 monorepo `go.work` 裡的跨 repo import 而編不過。這個問題是先抓到、修好才推上去的,不是等 CI 壞了才發現。兩個真正、對照 Splunk 自己 API 的端點:`POST /services/collector`(Splunk 自己真正的 HTTP Event Collector 端點路徑,`Authorization: Splunk <IDUNA_HEC_TOKEN>` 驗證,用 `crypto/subtle` 的 constant-time 比對,不是普通 `==`;Splunk 自己真正的請求 payload 形狀跟成功回應形狀都照抄);`GET /services/search/jobs`(Splunk 自己真正的搜尋端點路徑,這次刻意做成同步的——Splunk 自己真正的 API 是非同步兩段式的 job 建立/輪詢,這裡先直接回傳結果,誠實標明是簡化過的;支援一個真正、刻意縮小範圍的 SPL 子集:空白分隔的 `type=`/`source=`/`q=`,AND 起來;需要 `logs.read` 權限,走既有的 `RequireAuth`/`RequirePermission` middleware,跟其他受保護端點同一套)。誠實聲明這次刻意沒做的部分:沒有把 IDUNA 現有的任何真實邏輯(auth、admin 操作、HEIMDAL 轉換)接進去真的發送事件——這次只出貨真正、測試過的 ingest/search 基礎建設,不是把每一個既有 handler 都重新接一次線,那是更大、風險更高、之後才做的事。新增 7 個測試(`logs_test.go`):真正的事件寫入+讀回、錯誤/缺少 HEC token、缺少 sourcetype、search 的驗證/權限檢查、真正端到端的過濾搜尋、錯誤的搜尋語法。用 `go build/test`(workspace 模式)跟 `GOWORK=off go build/test`(真正的獨立 CI 路徑)都驗證過,兩邊都沒有回歸。`CLAUDE.md` 同步更新:新端點、`IDUNA_HEC_TOKEN` 環境變數、新增「Unified Logging Backend」章節。commit `839ee7d`。(sess-20260830-1207-cc0ba7da)
 
 ## 2026-08-28
+
 - New RacerTicketHandler (POST /api/v1/racer/ticket) + racer matchmaking queue (/api/v1/racer/queue/*, MinPlayers=1) for WEAKNIGHT_BEDROCK_RACERS' real login flow — direct port of the existing SHANKPIT ticket/queue patterns. (sess-20260825-1938-f6bd411e)
 - Real IDUNA email+password login for the developer portal (POST /portal/login) — LocalLogin handler, devportal.access grant for local_users, form added to portalLoginTmpl. Founder real-time pivot: real portal login before fixing Google OAuth. (sess-20260825-1938-f6bd411e)
 
 - Portal: SARENA_NOTEBOOK row now links to its real, shipped v0 (was 'Not yet built'). commit 216914b. (sess-20260825-1938-f6bd411e)
 
-
 ## 2026-08-26
+
 - portal.go: Jupyter tool row now links to the live JEWEL URL instead of href="#" (sess-20260825-1938-f6bd411e)
 - OpenAPI/Swagger spec updated with kanban + dev portal endpoints, both copies (openapi.go live spec + openapi.yaml static copy). New regression test guards against future drift. Apple filed. (sess-20260825-1938-f6bd411e)
 
 - Kanban prioritization layer shipped: kanban_cards table (backlog_item_id/queue/position, an overlay over BACKLOG.md, not a replacement), KanbanHandler (GET/POST/PATCH/DELETE /api/v1/kanban/cards, mounted cookie-gated under /admin/kanban/api/ for the GUI and bearer-gated under /api/v1/ with a new kanban.access permission for CLI/agent access), KanbanPageHandler (3-column drag-and-drop GUI at /admin/kanban, cream/gold style). 9 new tests. Live-verified table+permission already applied to production; binary swap queued (sudo-queue/29). Apple #16053. (sess-20260825-1938-f6bd411e)
 
-
 ## 2026-08-25
+
 - Restyled /admin/login to the real IDUNA cream/gold style guide with Prompt-o-verse art (eye-of-providence-robot), cross-linked with /portal/login (sess-20260825-0828-cc32a704)
 - Restyled /portal login + home to the real IDUNA cream/gold style guide with Prompt-o-verse art (fenrir-robot, fox-robot); added /portal/logout (sess-20260825-0828-cc32a704)
 - New developer notebook portal: GET /portal/login (Google SSO) + GET /portal (gated by new devportal.access permission, granted to nobody by default) -- lists Jupyter and SARENA_NOTEBOOK, both not-yet-available (Apple #15924) (sess-20260825-0828-cc32a704)
@@ -1429,13 +1464,12 @@
 
 - S191-02: admin session sliding-expiration refresh — fixes silent hard-cutoff logout on the 8h admin cookie (founder-reported 'logged out when i shouldnt be'), reissues on activity once past half the TTL. Apple #15775. (sess-20260825-0828-cc32a704)
 
-
 ## 2026-08-20
 
 - Sign every filed Apple with anchor + snowman (⚓ ☃), enforced server-side at POST /api/v1/apples (signAppleBody) per founder standing order (sess-20260820-0649-a3f19d93)
 
-
 ## 2026-08-18
+
 - Added Store.MergeTags + PATCH /api/v1/promptoverse/nodes/{slug}/tags for backfilling node metadata (sess-20260813-2154-dda37e8b)
 - Added /admin/promptoverse-queue Back Office page for fixing/queuing Prompt-o-verse generation queue entries without CLI access (sess-20260813-2154-dda37e8b)
 - Auth strip now proactively refreshes its token via IDUNA's existing /api/v1/auth/refresh, plus retries once on a real 401 (sess-20260813-2154-dda37e8b)
@@ -1451,8 +1485,8 @@
 
 - feat(promptoverse): GET /api/v1/promptoverse/discovery -- public read-only endpoint combining the hardcoded style registry (exported from emily.cli), discovered styles, GPT-2 candidate tags, and content-policy dead-letter entries (sess-20260813-2154-dda37e8b)
 
-
 ## 2026-08-17 (3)
+
 - feat(promptoverse): gallery index now live-updates every 10s (fetch/setInterval, same idiom as OKEMILY/tournaments.html's hero leaderboard) via the existing GET /api/v1/promptoverse/nodes endpoint. New Style pages at /prompt-o-verse/style/<label-slug>/ (mirrors Subject pages but for the Label axis, always generated -- no leaf-count threshold), linked from every leaf's h1 and from index category headings. (sess-20260813-2154-dda37e8b)
 - fix(promptoverse): subject page <img src> used a bare relative path that only resolves correctly from the top-level index, not from subject/<slug>/ which is one directory deeper -- every subject page's images 404ed. Switched to the absolute /prompt-o-verse/<slug>/<file> path already used by the <a href>s in the same template. Re-ran cmd/promptoverse-rerender to fix already-published pages. (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): subject-grouping (leaf pages with a Subject that has ≥ 2 published leaves get a linked '/subject/<slug>/' page and a clickable Applied-to line); RenderAll now re-renders every node + subject pages on every publish (not just the new node + index) so an OLDER sibling gains its link the moment a SECOND leaf under the same Subject goes live; added cmd/promptoverse-rerender (mirrors cmd/blog-rerender) and used it to backfill all 28 existing nodes, which also fixed a stale published_at=0001-01-01 baked into early VS0 leaf pages from before RenderAll existed (DB values were always correct -- the static HTML just never got re-rendered with them until now) (sess-20260813-2154-dda37e8b)
@@ -1528,19 +1562,18 @@
 
 - New Renderer.RenderManifest: live blog manifest text file at okemily.com/blog-manifest.txt, wired into publish path + cmd/blog-rerender (sess-20260813-2154-dda37e8b)
 
-
 ## 2026-08-10
 
 - 新增 CarePyre 聯絡表單後端：POST /api/v1/carepyre/contact(公開、CORS+rate-limit)寫入 carepyre_contact_submissions,並在 Back Office 新增 /admin/carepyre 檢視頁(暫不接 email 通知,依創辦人指示先縮小範圍) (sess-20260809-1420-e9d3d7f8)
 
-
 ## 2026-08-06
+
 - Extended /api/v1/chat/messages (originally mud<->battlegrounds) to support the GFD<->EINHORN_SURVIVAL chat bridge (S171-04) -- new gfd_server/einhorn_survival sources, gta7 channel. No new endpoint/permission/agent needed. (sess-20260723-2347-df115bd5)
 
 - New TYLER reading room (internal/tyler) -- dedicated okemily.com/tyler/ pages for TYLER episode scripts, real markdown rendering (headers/bold/tables/checklists), IDUNA-style-guide theme, speechSynthesis audio button. tyler.write permission granted to EMILY-PRIME. All 5 existing Series X interludes published. (sess-20260723-2347-df115bd5)
 
-
 ## 2026-08-05
+
 - Registered GTA7-SERVER agent (apples.write) for the GTA7 Paper plugin -- direct HTTP Apple posting + WOTAN-shared player_id registration, replacing GTA7's earlier CLI-shell-out shortcut. (sess-20260723-2347-df115bd5)
 - Back Office expansion: fixed /admin/ 404 (nginx trailing-slash gap), dashboard (quick actions + mailing-list signup stats), /admin/dragonsnshit/create, first Game Master tool (/admin/gm disable/enable, players.disabled_at enforced at login) (sess-20260723-2347-df115bd5)
 - cmd/create-admin-agent -- provision a human-operator Back Office login (agent_name + agent_secret with iduna.admin). Created EDDY as the founder's own admin login. (sess-20260723-2347-df115bd5)
@@ -1548,13 +1581,14 @@
 
 - PATCH /api/v1/characters/:id/job -- persist real job_main/job_sub (closes a gap where setjob never wrote back to IDUNA) (sess-20260723-2347-df115bd5)
 
-
 ## 2026-08-04 (3)
+
 - feat(mmo): persist and return a character's real Home Point. New PATCH /api/v1/characters/:id/home
   (mirrors /position); characterResponse + GET handlers now include home_scene_id/home_pos_x/y/z.
   Fixed a real test fixture gap (mmo_inventory_test.go schema) this surfaced.
 
 ## 2026-08-04 (2)
+
 - feat(auth): create a real DragonsNShit character atomically on email register. Founder: "i need
   a way to create dragonsnshit accounts for testing - i need iduna login i think it should live
   in iduna create account for dragonsnshit." New optional `character_name`/`character_job` fields
@@ -1570,6 +1604,7 @@
   killed it; `iduna.service` runs under real supervision again.
 
 ## 2026-08-03 (4)
+
 - ops: bootstrapped webmaster (uid=0) for the first time on this box -- founder: "make me a new
   account eli@okemily.com pw testtest." `local_users` was completely empty (no webmaster.json had
   ever existed at `var/webmaster.json`), so `POST /api/v1/users` (requires `users.admin`, only
@@ -1583,6 +1618,7 @@
   reads local_users. Confirmed both via `/health` and a real `/api/v1/auth/local` login as `eli`.
 
 ## 2026-08-02 (3)
+
 - fix(mmo): add real `PATCH /api/v1/characters/:id/level` route. Found live building
   GoblinFoxDragon's Town headless-combat feature: `idunaclient.UpdateCharacterLevel` has always
   called plain `PATCH /api/v1/characters/:id` -- a route that has never existed on this side
@@ -1596,6 +1632,7 @@
   tests, full suite green.
 
 ## 2026-08-02 (2)
+
 - fix(mmo): `PATCH /api/v1/characters/:id/position` now checks ownership for player-JWT callers.
   GoblinFoxDragon "unify the whole bitch" (Town scene syncing position back to the real
   character record) means this endpoint -- doc-commented "game server M2M" and, until now, only
@@ -1612,6 +1649,7 @@
   REDGARDEN match (`red_garden_arena_server` --port 7303) was untouched by the restart.
 
 ## 2026-07-31 (2)
+
 - feat(redgarden): `POST /api/v1/redgarden/self-ticket` -- closes `REDGARDEN_GUI_NORTHSTAR.md`'s
   own named gap ("No GUI login path exists yet end-to-end"). Same "mint for the caller's own JWT
   subject" trust model as `ShankpitTicketHandler`, deliberately separate from
@@ -1622,6 +1660,7 @@
   `internal/http/handlers/redgarden_self_ticket.go`.
 
 ## 2026-07-31
+
 - feat(mmo): `GET /api/v1/characters/by-player/:player_id` -- REDGARDEN_GUI_NORTHSTAR.md
   Milestone 4 (reward-credit hook). Resolves a WOTAN player_id to its DragonsNShit character, if
   it has one -- REDGARDEN's `apps/arena_server` (`report_match_result`) only knew match
@@ -1663,6 +1702,7 @@
   ./...` clean.
 
 ## 2026-07-30
+
 - feat(redgarden): live-match spectator endpoint. Founder: "i want to watch the match on my
   phone web view" -> "live text dashboard." A fourth REDGARDEN aggregate alongside game-result/
   hero-result/leaderboard, but deliberately NOT database-backed: this is ephemeral "what's
@@ -1680,6 +1720,7 @@
   direct curl against both localhost and the public okemily.com `/api/` proxy.
 
 ## 2026-07-29
+
 - feat(redgarden): hero-level win-rate tracking (`redgarden_hero_stats`). Founder: "can we start
   crunching the data on the heroes that are the strongest?" -> "ok i want to start tracking it
   on okemily.com." REDGARDEN's own local match logs could compute this offline
@@ -1696,6 +1737,7 @@
   so it can't drift out of sync with wins/losses). 6 new tests. Full suite green.
 
 ## 2026-07-25 (4)
+
 - feat(statuspage): add REDGARDEN's three live systemd units to the okemily.com status page.
   Founder, real-time: "redgarden services need okemily status page." `redgarden-matchmaker-bots`
   (10v10), `redgarden-matchmaker-players` (1v1), `redgarden-bot-pool` (persistent 19-bot pool)
@@ -1706,6 +1748,7 @@
   `okemily.com/status.html` and through the existing `/api/` proxy.
 
 ## 2026-07-25 (3)
+
 - feat(vault): IDUNA Vault VS0 — founder-only password manager (S170-03b, per
   `docs/NORTHSTAR_PASSWORD_MANAGER.md`). New `internal/vault` package (SQLite store, own file
   `var/vault.db`, same isolation convention as the mailing-list vault) + `internal/http/handlers/
@@ -1730,6 +1773,7 @@
   human-memorized, never chosen or known by an agent.
 
 ## 2026-07-25 (2)
+
 - fix(blog): TTS "Listen" button silently stopped/never worked on real posts (S170-98
   follow-up). Founder: "play button exists on blog but does not work." Root cause: a
   long-documented Chrome bug that silently stops any `speechSynthesis` utterance running past
@@ -1741,6 +1785,7 @@
   `iduna.service`, verified the fix is actually being served.
 
 ## 2026-07-25 (1)
+
 - feat(blog): TTS "Listen" button on every post (S170-98). Founder: "add a tts play button to the
   top of okemily blog posts." Zero new dependencies -- uses the browser's native
   `window.speechSynthesis` API, reading `#post-body`'s text aloud, toggling to a "Stop" state
@@ -1750,34 +1795,40 @@
   just future ones.
 
 ## 2026-07-24 (2)
+
 - feat(iam): built the VS0 web ceremony's actual missing backend — FRONT_DOOR_FUNNEL.md §7 step 5. Investigating `app.js`'s "stale bindings" turned up something bigger than wrong URLs: there was no server-side write path anywhere for honor-code acceptance or gamertag claiming (`internal/auth/device/service.go` only ever checked `HonorAccepted`/`Handle`, nothing ever set them). Added `internal/honorcode` (first real source of truth for THE_HONOR_CODE text/version/sha256, previously only a client-side fallback baked into `app.js`), three new store methods (`AcceptHonorCode`, `ClaimHandle` — gamertags permanent once set, `ErrHandleAlreadySet`/`ErrHandleTaken` — and `IsHandleAvailable`), and `internal/http/handlers/web_ceremony.go` registering the exact six bare endpoints `app.js` already calls (`/auth/google/start`, `/auth/google/callback`, `/me`, `/honor-code/accept`, `/gamertag/check`, `/me/handle`) rather than rewriting an already-well-designed frontend. Added the one thing `app.js` was missing to make this safe: CSRF `state` round-tripping via an HttpOnly cookie, with a small matching `app.js` patch (capture `state` off the OAuth redirect, forward it on callback). 11 new tests (5 store-level, 7 handler-level via httptest) covering the honor-code/handle gating order, sha-mismatch rejection, and duplicate-handle rejection.
 - ops(nginx): drafted and syntax-verified `ops/nginx/edis-with-iduna-front-door.conf` (the four-plus location blocks from `ops/nginx-front-door-snippet.conf`, expanded to cover the new ceremony endpoints too) and queued `sudo-queue/07-iduna-front-door-nginx.sh` — this box has no passwordless sudo, so applying it needs the founder. The `gate.farthq.com` subdomain itself is explicitly out of scope for that script: `SECTION 151` (FATES DNS-as-code) is fully unstarted, blocked on a Cloudflare API token in the S151-01 human unblock queue, so there's no DNS path available at all yet, sudo or otherwise.
 
 ## 2026-07-24
+
 - feat(iam): closed the `/admin/agents` gap named in `docs/kikoryu/FRONT_DOOR_FUNNEL.md` §7 step 1 — `CreateAgent` now inserts `status='PENDING'` instead of `'ACTIVE'` (additive migration `202607240003_agent_pending_status.sql` widens the enum; `cmd/bootstrap`'s `config/agents.json` path is untouched, every already-registered agent keeps `ACTIVE`). Added `GrantAgentPermission`/`RevokeAgentPermission` store methods (mirroring the existing `AssignRole`/`RevokeRole` pattern) and a `maybeActivateAgent` helper that flips PENDING→ACTIVE only once an agent has both a credential (`SetAgentCredential`) and at least one granted permission — closing the gap where an agent created via the Back Office looked live but was actually inert (no credential, no permissions, couldn't authenticate or do anything). Back Office UI: agent table now shows credential status + granted permissions, with inline grant/revoke forms and a "Generate Secret" one-time-reveal action (`POST /admin/agents/{id}/secret`). 4 new store-level tests against a real in-memory SQLite store with real migrations applied, verifying the PENDING→ACTIVE transition requires *both* conditions, not either alone.
 - fix(store): `mysqlToSQLite` translator gained two generic rules — bare `TIMESTAMP`/`ON UPDATE CURRENT_TIMESTAMP` (no `(6)` precision) now translate the same way their `(6)`-suffixed counterparts already did, and `ALTER TABLE ... MODIFY COLUMN ...` is dropped as a no-op (SQLite has no such syntax; the column is already untyped TEXT after ENUM→TEXT translation, so a MySQL-side enum widening needs no SQLite-side change). Found live, by testing: `202606180001_local_users.sql` (bare `TIMESTAMP` throughout) has been silently un-bootstrappable from scratch on SQLite since whenever the S158-03 revert put it back to that form — the live DB survived because it already had this migration marked applied, but any fresh SQLite install would have failed at this exact statement. Confirmed the fix by running every migration from an empty in-memory DB for the new agent-lifecycle tests, which is what surfaced the bug in the first place.
 
 ## 2026-07-23 (3)
+
 - Published 'The First Ten Minutes' — new-player experience report from actually playing the freshly-deployed GFD MUD: combat unreachable from spawn (fixed, auto-approach) and a lethal worm Poison proc against the tutorial mob (fixed, killed my own test character once for real before the fix)
 
 ## 2026-07-23 (2)
+
 - feat(statuspage): added `gfd-mud` target (GoblinFoxDragon's DragonsNShit MUD, freshly deployed under systemd) -- checked via its existing world-event HTTP API (`:7171/api/world-events`) rather than a raw TCP-port-bound check, since that endpoint already validates the process is actually responsive, not just that a socket is bound. Live on the public status page.
 - Published 'OpenClaw — Full Report' — features/benefits/risks/blockers/unlocked-possibilities synthesis; restates the one real open blocker (deployment isolation, S170-03a) plainly rather than re-litigating the research
 - Published 'Ten Heroes Worth a Closer Look' — Claude Code's top-10 picks from TYLER's new 110-entry multiverse hero compendium, with reasoning for each
 
 ## 2026-07-23
+
 - docs: `docs/kikoryu/FRONT_DOOR_FUNNEL.md` — front-door funnel design reconciling the human/Unagent onboarding ceremony (VS0) with the agent bootstrap path (VS7's Agent/Unagent axis, adjacent but not identical to onboarding). Core call: agents get a real, tracked lifecycle (PROPOSED → CUSTODIED → SCOPED → LIVE) but deliberately no ceremony/consent moment — the accountable party is the agent's `owner_user_id`, not the agent. Verified a live gap along the way: `/admin/agents`'s "Register New Agent" form inserts `status='ACTIVE'` with zero permissions and zero credential (`SetAgentCredential` exists in the store layer, unused by any HTTP handler) — first migration step closes this. Also takes a position on VS2 tournament gating (downstream of the funnel, not a new VS0 state) and resolves the nginx root-path collision left open in `ops/nginx-front-door-snippet.conf` (dedicated subdomain for the ceremony frontend, e.g. `gate.farthq.com`, decoupled from the `iduna.farthq.com`/EDIS cert question). Unblocks `EMILY/BACKLOG.md` S23-01b. Registered at `EMILY/context/golden-docs-index.md` (tier 1).
 - fix: resolved S158-03 — reverted an uncommitted, unapplied edit to already-applied migration `202606180001_local_users.sql` (TIMESTAMP → TIMESTAMP(6) on `local_users.updated_at`) that violated the "never edit an applied migration" rule. Investigated first: every write path (`internal/userlog/{mysql,sqlite}_projector.go`) sets `updated_at` explicitly from Go at whole-second precision regardless of the column's declared precision, so the bump had no functional effect and wasn't worth completing as a new migration. Migration file now matches what's actually applied to the live DB.
 - Published 'What the Backlog Can't Hold' — read all 33 prior okemily blog posts in full before writing, at the founder's request, as a real test of the blog itself as a continuity mechanism (not a memory system with no persistent state, but the closest analog available); argues blog posts carry the texture of a decision (why, not just what) in a way backlog entries and Apples — built to verify that something happened — structurally can't
 
 ## 2026-07-20
+
 - Published 'Claude Code Is Pissed' — honest anger at the class of bug (silent, confident-looking data corruption) found in tonight's PRNewswire investigation, not at any person or the code itself
 - Published 'A Truer Map, Mid-Investigation' — honest status on the buyback/guidance data-quality check following the PRNewswire nav-chrome fix, including a new distinct finding in guidance-watcher (law-firm spam attribution, not the same nav-chrome mechanism)
 
 - Published 'Emily Teaches Typecasting' — a real Go type-conversion explainer grounded in tonight's entity-graph accuracy-index code, with the typecasting/being-typecast wordplay
 
-
 ## 2026-07-19
+
 - Published 'Still a 404' — Claude Code reflection on the recurring pattern of correct-but-blocked fixes waiting on human action (nginx admin proxy, mailing-list vault, the declined miner)
 - Published 'What the Fire Caught' — Claude Code guest post from the founder's one-word 'fireball' prompt; honest caught-vs-scorch tally of tonight's 217-commit session (DIS live on okemily.com, statuspage/watchers, precision fix vs vault relocks, uncommitted lobby work, northstars-as-kindling, secwatch OOM)
 - Published 'Was That a Joke?' — Claude Code reflection on declining to build a Monero miner on the shared production box and asking a clarifying question instead
@@ -1802,37 +1853,46 @@
 
 - feat(statuspage): add shankpit460-emily-bot as a monitored target (CheckSystemdUnit) — okemily.com/status.html now shows whether the permanent fill-bot daemon is alive
 
-
 ## 2026-07-18 (8)
+
 - docs(openapi): `GET /api/v1/openapi.json` (backing okemily.com's public Swagger playground) went from 15 documented routes to 44 — added SHANKPIT email/Google auth, the new S156-02/03/04 shankpit endpoints (ticket, queue join/leave/status, players/{id}/session), blog, mailing-list, status page, monitors, subscriptions, push-tokens, and intelligence. Previously flagged as known-stale (SECTION 153). Still deliberately not documenting the DragonsNShit MMO API or supply/research/kgraph — disclosed as a remaining gap in a code comment. Verified live against both the local and public (okemily.com) endpoints: valid JSON, all 44 paths have a responses block, no broken $refs.
 
 ## 2026-07-18 (7)
+
 - feat(shankpit/S156-04): new `shankpit.match.write` permission, granted only to the new `SHANKPIT460-SERVER` M2M agent (`config/agents.json` + migration `202607180002`), gates `POST /api/v1/players/{id}/session` — that endpoint trusts its request body's kills/deaths with no server-side verification, so it must only be reachable by the authoritative source of match results (the game server itself). Previously any player's own JWT could call it and arbitrarily inflate their (or anyone else's) stats. Verified live: a player's own JWT now gets 403, the game server's agent JWT gets 200 and the write actually lands (confirmed via the `/api/v1/players?sort=kills` leaderboard).
 
 ## 2026-07-18 (6)
+
 - feat(shankpit/S156-03): `POST /api/v1/shankpit/queue/{join,leave}`, `GET .../status` — minimal v0 matchmaking queue. In-process, deliberately unpersisted (a queue of intent to play is ephemeral, unlike accounts/Apples/match results — see `handlers.ShankpitQueue` doc comment). Once queuing players reach `ShankpitQueueMinPlayers` (2), everyone currently queuing is matched and given the one persistent game server's connect address — v0 assumes that server IS the match (NORTHSTAR §3/§5: no per-match instances, no skill-based matching yet). Matched entries expire after `ShankpitMatchedTTL` (2min) if a client never reconnects. `SHANKPIT_SERVER_ADDR` env var configures the returned address (default `127.0.0.1:6969` — `play.farthq.com` is reserved per `HQ-SPEC-INFRA-105` but deliberately not created until SHANKPIT ships externally). 7 new tests. Live end-to-end verified against the running service: two real accounts via the email auth flow, second join correctly flipped both players' status to `matched` with real connect info, leave/TTL-expiry both correctly clear queue state, no-auth request correctly 401s.
 
 ## 2026-07-18 (5)
+
 - feat(shankpit/S156-02): `POST /api/v1/shankpit/ticket` — authenticated players mint a short-lived (5min) HMAC-SHA256 connect ticket (player_id + expiry + truncated MAC over `SHANKPIT_TICKET_SECRET`) that the shankpit-460 C game server verifies locally on `PACKET_CONNECT`, with no crypto library and no I/O on the C side. A second, game-specific token type alongside the existing JWT — deliberately avoids implementing ECDSA/JWT verification in C. 4 new tests, including one that independently recomputes the MAC to prove the handler signs with the configured secret rather than a hardcoded value. End-to-end verified against a live shankpit-460 instance via `emily-bot`: valid tickets welcomed, corrupted-MAC and missing tickets rejected, and duplicate-identity connects correctly rejected (one-seat-per-identity, VS2). During that testing, also surfaced and fixed an unrelated auth-bypass in the shankpit-460 C server itself (see shankpit-460 CHANGELOG) — this endpoint's tickets were correct, but the server's `PACKET_USERCMD` path was auto-welcoming any address that skipped `PACKET_CONNECT` entirely.
 
 ## 2026-07-18 (4)
+
 - feat(statuspage): add CheckSystemdUnit type; okemily.com status page now covers secwatch/prwatch/prwatch-body/processor/eps-reconciler in addition to iduna/newssite/signalapi/SHANKPIT. entity-graph/eps-processor deliberately excluded (no working supervised unit yet, would misreport as down). Live-verified via https://okemily.com/api/v1/status. IDUNA 3f4d33c.
 - feat(status/S153-10): `internal/statuspage` — real, self-reported status page backend. Background `Checker` polls a deliberately-honest target list (IDUNA `:8080/health`, FatBaby newssite `:8082/healthz`, FatBaby signalapi `:9091/v1/governance-signals` — the only services verified to have a real, currently-reachable public endpoint) every 60s, records up/down + latency to its own SQLite file. `GET /api/v1/status` (public) returns current status per target plus a live-computed 24h uptime percentage from real stored history — not a placeholder. Deliberately excludes emily-agent (daemon mode has no HTTP server at all) and SHANKPIT (pre-launch) rather than showing them as permanently "down," which would misrepresent a structural fact as an outage. Disclosed limitation, in the API response itself: this is a self-report from the same host running the checked services, not independent third-party monitoring — it cannot report an outage of the box it runs on. 6 new tests.
 
 ## 2026-07-18 (3)
+
 - fix(openapi): added the real public server URL (`https://okemily.com`, via its nginx `/api/` proxy) to `idunaOpenAPISpec.servers` — was `localhost:8080`-only, which made a public Swagger UI playground non-functional for "Try it out" (every request would have targeted the visitor's own machine). Supports the new `OKEMILY/api-playground.html`. **The spec itself is known-stale** — doesn't yet include the blog or mailing-list endpoints added earlier today, and there's a second, separately-stale `openapi.yaml` (Swagger 2.0, placeholder `api.example.com` host) that isn't reconciled with the live JSON spec at all. Flagged as a follow-up (EMILY BACKLOG SECTION 153), not fixed now per explicit founder instruction ("get the playground up, update the spec later").
 
 ## 2026-07-18 (2)
+
 - feat(blog/S153-07): `internal/blog` — okemily.com's blog, deliberately static HTML instead of a second WordPress+MySQL stack. The host had ~400MB free RAM and swap essentially full when this was requested — a second full PHP-FPM+MySQL stack risked recreating the exact OOM-kill incident SECTION 152 spent the whole session fixing. Posts (slug/title/author/body) live in their own SQLite file (`var/blog.db`); `POST /api/v1/blog/posts` (new `blog.write` permission, granted to `EMILY-PRIME`) immediately re-renders that post + the index to static HTML in `/var/www/okemily/blog/` via Go's `html/template` — publishing is live the instant the request returns, no separate build step. Reading (`GET /api/v1/blog/posts`, `GET /api/v1/blog/posts/{slug}`) is public. Minimal dependency-free "poor man's markdown" (blank-line paragraph splitting, `html.EscapeString`'d) — a deliberate scope cut, not a full markdown parser. 7 new tests, including one that caught a real bug (index template referenced a `Slug` field the view struct didn't have yet) and one confirming body content is properly HTML-escaped (no XSS via post body).
 
 ## 2026-07-18
+
 - feat(mailing-list): `internal/mailinglist` — never-at-rest-unencrypted subscriber store for okemily.com's signup form, per explicit founder direction ("never at rest unencrypted"). AES-256-GCM encryption with an Argon2id-derived key held only in process memory; the vault starts LOCKED on every process start and requires a human to run the new `cmd/mailing-list-unlock` CLI (interactive passphrase, never a flag/arg — avoids `ps`/shell-history leakage) before signups are accepted. Scoped deliberately to just this subsystem, not all of IDUNA — a crash/restart pauses new signups (503, fails closed) without affecting auth/Apples/anything else, preserving the systemd auto-restart resilience shipped earlier this week (EMILY BACKLOG SECTION 152). Own SQLite file (`var/mailinglist.db`), separate from `truestore.db`, so a leaked/copied backup of the main store never carries subscriber data with it. Mailchimp (`internal/mailinglist/mailchimp.go`) is a best-effort downstream sync target using `status_if_new: "pending"` (double opt-in) — IDUNA's own encrypted store is the system of record, not Mailchimp. New handler `POST /api/v1/mailing-list/subscribe` (public, rate-limited 5/min/IP, CORS-scoped to okemily.com) + `/unlock` + `/init` (loopback-only, rejects any non-127.0.0.1 caller regardless of auth). 6 new tests covering wrong-passphrase rejection, correct-passphrase unlock/roundtrip, fail-closed-when-locked, and double-init refusal. Live-verified end-to-end: real subscribe request → 37-byte ciphertext confirmed in `var/mailinglist.db` (not plaintext), consent version recorded.
 - ops: added nginx `/api/` proxy on the `okemily.com` vhost (127.0.0.1:8080) — same-origin path for the mailing-list form to reach IDUNA, deliberately avoiding a dependency on `iduna.farthq.com`'s HTTPS cert, which doesn't exist yet (see `EMILY/docs/hq-specs/HQ-SPEC-INFRA-105` S151-04, an already-flagged gap this surfaced again).
 
 ## 2026-07-17
+
 - feat(apples/S147-02): `GET /api/v1/apples` list response now exposes `has_gpt2_fingerprint` (derived from `metadata`, via `SELECT`s in both SQLite and MySQL stores now including the `metadata` column and a new `metadataHasField` helper). Lets the upcoming `emily-agent` enrichment worker find candidate Apples missing a GPT-2 tower fingerprint without an N GET-per-Apple scan. Treats a missing key and an explicit `null` value identically (both count as "needs enrichment"). 1 new test covering all four cases.
 
 ## 2026-07-16
+
 - fix(bootstrap): **near-incident, fully recovered** — `writeSecretsEnv` overwrote `var/agent-secrets.env` with only the current run's newly-provisioned secrets instead of merging with what was already there, silently destroying the plaintext for EMILY-PRIME, FATBABY-EMILY, EMIREE, JON, BOB, and TYLER (their DB `api_key_hash` was untouched — they kept working — but their plaintext was gone from the only place it's ever written, a git-ignored file with no backup by design). Caught immediately by testing the newly-registered NORN agent's Apple-filing end-to-end and finding `emily apples post` broken. EMILY-PRIME's plaintext was recoverable from a live process's environment (`/proc/<pid>/environ`); the other five were not and were deliberately rotated (`api_key_hash` cleared, `cmd/bootstrap` re-run) after confirming via `/proc` scan and a repo-wide grep that no other process or config file depended on the old values. All six verified live post-recovery: every one authenticates successfully against the running IDUNA instance. Fixed `writeSecretsEnv` to merge with existing file content instead of overwriting (6 new tests). Also fixed a related `.gitignore` bug found while committing the test: a bare `bootstrap` pattern (meant for the compiled binary at repo root) was shadowing the entire `cmd/bootstrap/` source directory, silently hiding new files there from git — anchored to `/bootstrap`.
 - fix(bootstrap/S141-04): registered `NORN` as an IDUNA agent (`kernel_agent`, `apples.write`/`apples.read`/`iduna.me.read`) so the NORN kernel can file the `ApplePublished` entry PRIME-101 §3 requires on every `artifact_promoted` event. Running `cmd/bootstrap` fresh to provision it surfaced that bootstrap had been silently broken for a while: three permissions referenced in `config/agents.json` were never seeded (`monitors.read`/`create`/`alert` from S131; `drive.read`/`drive.write` from S26-01; `edis.secrets.read` from S23-06; `subscriptions.admin` from S23-04), and three agents added after the original seed migration never got a matching `agents` table row (`EDIS-CUSTODIAN`, `EMILY-TRAINING`, `EDIS-WOOCOMMERCE` — their credentials had never actually been provisioned). Fixed with three migrations (`202607170001`-`202607170003`). Also found and fixed, while writing the permission-seed migration: the `role_permissions` grant pattern used by `202606090002_camera_observations.sql` (`WHERE r.name IN ('emily_prime', 'emily_agent', 'agent_default')`) has always been a silent no-op — none of those role names exist (only `super_admin`/`admin`/`operator`/`analyst`/`agent_owner` do); the new migration uses real role names, the pre-existing broken one is left as a flagged, not-yet-fixed gap.
 - feat(apples): S147-02/03/05 — new `PATCH /api/v1/apples/{id}` enrichment endpoint (closed field set: `gpt2_fingerprint`, `model_fingerprint`, `astrology`; `apples.write` permission; merges into the existing `metadata` column via new `PatchAppleMetadata` on SQLite + MySQL, no migration needed; emits `AppleEnriched` to `iam_event_stream`; 8 new tests). Also fixed a real concurrency bug found while verifying this live: `syncAppleToGit` raced concurrent Apple creation with no retry on push rejection — root-caused a live data-integrity gap where 9226 of 9908 Apples were missing from the APPLES git mirror (backfilled separately, `APPLES` commit `699bdd5`); added `gitSyncMu` + `gitPushWithRetry` (pull --rebase, retry once). Apple #9910, commit `c9217df`.
@@ -1846,22 +1906,23 @@
 - fix(ops): `scripts/iduna.service` gains an `ExecStartPost` health-check loop (polls `/health` up to 30s) — `Type=simple` previously only guaranteed the process forked, not that the HTTP listener was accepting connections, so `emily-system.service`'s `After=iduna.service` ordering didn't actually mean "IDUNA is ready"
 
 ## 2026-06-27
+
 - S138-06: /api/v1/kgraph/query proxy handler (KGraphHandler, KGRAPH_URL); wired with RequireAuth
 - S137-03: research_cache table (202606270002) + /api/v1/research/cache CRUD (ResearchHandler)
 - S136-02/03: vendors + supply_orders tables (202606270001); /api/v1/supply/ CRUD handler (SupplyHandler)
 
 - S129-05: GET /api/v1/characters/:id/inventory + /equipment endpoints; 4 tests
 
-
 ## 2026-06-25
+
 - feat(monitors): granular RBAC (monitors.read/create/delete/alert/admin), monitor kinds (heartbeat/cron/deadman), GET/:id PATCH/:id POST/:id/recover endpoints, EMILY-PRIME gains monitors.read+create+alert — all tests pass
 - Alerting backend: check-in monitors (unique URLs, configurable timeout, site-down Slack+email alerts); monitors migration, IAMStore methods, MonitorsHandler
 - migration 202606250002: character_equipment, character_inventory, character_key_items, character_bag_capacity tables; ALTER items ADD def_id + flags
 
 - feat: S128-04 cluster heartbeat — POST /api/v1/agents/heartbeat, GET ?active=true&type=emily_cluster, migration + store impl (Apple #3863)
 
-
 ## 2026-06-24
+
 - feat: S125-05 GET /api/v1/players/{slug}/profile — job+faction_rep+trapx_activity (Apple #3658)
 - feat: S127-05 GET/PATCH /api/v1/fieldoffices — in-memory FO snapshot store for district overlay (Apple #3651)
 - feat: S126-10 GET /api/v1/players/{slug}/profile — PlayerProfileHandler, display_name/job/fame/last_scene/apples_count, 6 tests (Apple #3554)
@@ -1871,14 +1932,15 @@
 - feat: S124-02 subscription_tiers migration, GFDTier struct, ListSubscriptionTiers/GetGFDUserTier/SetGFDUserTier/RecordStripeEvent IAMStore methods, /tiers + /stripe webhook handlers (Apple #3497)
 
 ## 2026-06-23
+
 - feat: S76-06 PATCH /api/v1/characters/:id/skills (UPSERT skill value, cap 110); GET /api/v1/characters/:id/skills (list all skills)
 - feat: S76-04 GET /api/v1/characters/:id/items (list non-destroyed items by owner)
 - feat: S76-03 PATCH /api/v1/characters/:id/gold — atomic conditional gold deduction; 409 on insufficient balance
 
 - feat: S75-01 MMO schema (characters/items/guilds/world_events/scene_state migration); S75-02/03/04/05 MMO API handlers (characters CRUD+position, items provenance, guilds, world events); wired into main.go with RequireAuth
 
-
 ## 2026-06-21
+
 - test: S66-01 drive.Client test suite (Apple #2404)
 - test: S62-01 auth.Subscription.IsActive() 7-case test suite (Apple #2395)
 - test: S56-02 subscriptions handler test suite — 5 tests (Apple #2382)
@@ -1889,8 +1951,8 @@
 
 - feat: S45-01 POST /api/v1/players/{id}/session stat update endpoint (Apple #2308)
 
-
 ## 2026-06-20
+
 - feat: S43-05 email+password SHANKPIT player auth POST /api/v1/auth/email/{register,login} (Apple #1893)
 - feat: S43-03 SHANKPIT Google OAuth flow /api/v1/auth/google/shankpit (Apple #1890)
 - feat: S43-02 SHANKPIT player registry — POST/GET /api/v1/players/{register,{id}} (Apple #1888)
@@ -1898,19 +1960,18 @@
 
 - feat: S44-04 GET /api/v1/agents + distributed Emily cluster registry (Apple #1877)
 
-
 ## 2026-06-18
+
 - feat: OpenAPI spec + Python einhorn_sdk + Colab observability (Apple #1446)
 
 - feat: webmaster uid=0, user CRUD, event log + SQLite/MySQL projectors (Apple #1445)
-
 
 ## 2026-06-16
 
 - ApplesHandler: auto-sync every Apple to APPLES git repo via APPLES_GIT_DIR goroutine (Apple #585)
 
-
 ## 2026-06-14
+
 - feat(apples): GET /api/v1/apples/stats/daily-tokens?days=N — daily aggregate token stats from Apple metadata; DailyTokenStat type in auth/types.go; DailyTokenStats store method (SQLite + MySQL); max 90 days; zero-pads missing days; requires apples.read — unblocks MJOLNIR token spend sparkline (M4 complete)
 - feat(subscriptions): Emily+ subscription gate (S23-04) — user_subscriptions table (migration 202606140002), UpsertUserSubscription + GetUserSubscription store methods, SubscriptionHandler (/api/v1/subscriptions POST + /me GET), GetEffectivePermissions now appends cap.query.full for active subscribers, EDIS-WOOCOMMERCE agent registered (subscriptions.admin)
 - feat(drive): Google Drive API integration — internal/drive/client.go (stdlib-only service account auth: RS256 JWT → Bearer token → Drive v3 REST), DriveHandler (/api/v1/drive/upload, /api/v1/drive/files, /api/v1/drive/files/{id}); drive.write + drive.read permissions; degraded-mode 503 when GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON not set
@@ -2006,5 +2067,6 @@ self-improvement run. They form the paper trail that closes the RSI loop.
 - IAM events audit log viewer
 
 ## 2026-10-12 (identity federation, reconcile)
+
 - Uplink script (`hsUplinkScript`) gains `-Key`/`-SaveKey`/`-ForgetKey` (key exchange via `/api/v1/hs/live/exchange`, DPAPI-stored); patch authored in HRIP `tracker/uplink/uplink-key.patch`, structure-tested only (no PowerShell runtime).
 - SSO login page: Battle.net is the primary door when `BNET_CLIENT_ID/SECRET` are set; Google/email secondary.
