@@ -88,8 +88,16 @@ cp "$here/Dockerfile" "$work/Dockerfile"
 cp "$here/README.md" "$work/README.md"
 
 # Verify the bundle is buildable *in isolation*, the way the Space will see it: no go.work above it.
-if ! ( cd "$work" && GOWORK=off GOFLAGS=-mod=mod go list ./... >/dev/null 2>&1 ); then
-    echo "push.sh: the bundle does not resolve as a standalone Go module" >&2
+# A missing toolchain is NOT a bundle problem, and blaming one for the other sends you hunting a phantom
+# go.work -- the first version of this did exactly that when `go` was simply off PATH.
+if ! command -v go >/dev/null 2>&1; then
+    echo "push.sh: no 'go' on PATH -- cannot check the bundle resolves (install Go, or fix PATH)." >&2
+    echo "        Nothing has been pushed." >&2
+    exit 1
+fi
+if ! out="$( cd "$work" && GOWORK=off GOFLAGS=-mod=mod go list ./... 2>&1 )"; then
+    echo "push.sh: the bundle does not resolve as a standalone Go module:" >&2
+    printf '%s\n' "$out" | tail -5 >&2
     echo "        (go.work or a local replace is leaking in; a Space builds without either)" >&2
     exit 1
 fi
