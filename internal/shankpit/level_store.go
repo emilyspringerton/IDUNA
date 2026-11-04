@@ -566,6 +566,11 @@ type ExportDoc struct {
 	// tile wall stays in Walls as a real, visible pad; this list tells the native loader where a buggy
 	// spawns on it. y is the tile's top surface.
 	BuggySpawns []BuggySpawnExport `json:"buggy_spawns,omitempty"`
+	// HorseSpawns -- one per wall named horse_spawn* (see horseSpawnYaw): the farm / paddock pads. The
+	// same name-convention-on-an-ordinary-wall trick as BuggySpawns, so a horse farm is authored in
+	// NOCK (or Blender) and the native loader (SHANKPIT packages/world/level_boxes.h horse_spawns)
+	// spawns a real HorseState actor on each pad. The tile wall stays in Walls as a visible pad.
+	HorseSpawns []HorseSpawnExport `json:"horse_spawns,omitempty"`
 	// VehicleSpawns -- every author-placed vehicle, one list (buggy, rocket, heli, recon, fly,
 	// plane), because the roster outgrew the single-purpose buggy tile. A legacy buggy_spawn tile
 	// is exported here as kind "buggy" as well, so both authoring routes reach the one native path
@@ -674,7 +679,7 @@ type MaterialExport struct {
 	Shininess  float64 `json:"shininess"`
 	// Friction (S478b) -- the real, native-consumed ground-friction value for any box resolving
 	// to this material. See Material.Friction's own doc comment for the full rationale.
-	Friction   float64 `json:"friction"`
+	Friction float64 `json:"friction"`
 	// Density (kg/m^3, 2026-10-16) -- the material's mass density for SHANKPIT's destructible-brick
 	// rigid bodies (packages/simulation/brick_bodies.h). Omitted when 0 = unset: the native engine
 	// then uses its own per-kind default.
@@ -1380,7 +1385,7 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 					ID: 0, X: worldX + rx, Y: worldY + w.Y, Z: worldZ + rz,
 					SX: rsx, SY: w.SY, SZ: rsz,
 					R: w.R, G: w.G, B: w.B, Friction: w.Friction, Material: w.Material,
-					Name: rotatedVehicleSpawnName(w.Name, worldRotY),
+					Name: rotatedSpawnName(w.Name, worldRotY),
 				})
 				carryOrientation(w, &outWalls[len(outWalls)-1], worldRotY)
 			}
@@ -1432,7 +1437,7 @@ func (s *LevelStore) flattenObjects(ctx context.Context, objects []LevelObject, 
 				// as R/G/B/Friction right above -- just a field that got missed when this literal
 				// was first written (S459-15), not a design choice.
 				Material: w.Material,
-				Name:     rotatedBuggySpawnName(w.Name, worldRotY),
+				Name:     rotatedSpawnName(w.Name, worldRotY),
 			})
 			carryOrientation(w, &outWalls[len(outWalls)-1], worldRotY)
 		}
@@ -1507,6 +1512,10 @@ func (s *LevelStore) ExportLevel(ctx context.Context, lvl *Level) (*ExportDoc, e
 	if len(buggySpawns) > MaxBuggySpawns {
 		return nil, fmt.Errorf("shankpit: composed level %d has %d buggy_spawn tiles (max %d)", id, len(buggySpawns), MaxBuggySpawns)
 	}
+	horseSpawns := horseSpawnsForExport(walls)
+	if len(horseSpawns) > MaxHorseSpawns {
+		return nil, fmt.Errorf("shankpit: composed level %d has %d horse_spawn tiles (max %d)", id, len(horseSpawns), MaxHorseSpawns)
+	}
 	vehicleSpawns := vehicleSpawnsForExport(walls)
 	if len(vehicleSpawns) > MaxVehicleSpawns {
 		return nil, fmt.Errorf("shankpit: composed level %d has %d vehicle spawn tiles (max %d)", id, len(vehicleSpawns), MaxVehicleSpawns)
@@ -1525,7 +1534,7 @@ func (s *LevelStore) ExportLevel(ctx context.Context, lvl *Level) (*ExportDoc, e
 	return &ExportDoc{
 		Version: 1, Name: lvl.Name, Width: lvl.Width, Height: lvl.Height, Depth: lvl.Depth,
 		GroundPlaneEnabled: lvl.GroundPlaneEnabled, GroundPlaneSquares: lvl.GroundPlaneSquares, Enclosed: lvl.Enclosed, FloorTint: lvl.FloorTint,
-		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, VehicleSpawns: vehicleSpawns, LabStations: labStationsForExport(walls), Doors: doorExports,
+		BrickDamage: lvl.BrickDamage, Walls: walls, Spawners: lvl.Spawners, BuggySpawns: buggySpawns, HorseSpawns: horseSpawns, VehicleSpawns: vehicleSpawns, LabStations: labStationsForExport(walls), Doors: doorExports,
 		NavNodes: navNodesForExport(lvl.NavNodes), Characters: charactersForExport(lvl.Characters), Materials: materials,
 		LevelExits: levelExitsForExport(lvl.LevelExits), NextLevelID: lvl.NextLevelID,
 	}, nil
@@ -1754,6 +1763,76 @@ func buggySpawnsForExport(walls []Wall) []BuggySpawnExport {
 	return out
 }
 
+// ---- Horse spawns -------------------------------------------------------------------------------
+// The buggy tile's exact convention, on its own prefix: a thin wall named horse_spawn (facing yaw 0)
+// or horse_spawn_<deg> (horse_spawn_90), placed in the level or inside a placed widget (flattening
+// carries the name through and adds the placement's rotation to the yaw). A horse farm is therefore
+// ordinary geometry plus a few of these pads -- no new editor concept, no schema change. SHANKPIT
+// parses the exported list in packages/world/level_boxes.h and spawns a real HorseState per pad.
+
+// MaxHorseSpawns matches SHANKPIT's LEVEL_BOXES_MAX_HORSE_SPAWNS.
+const MaxHorseSpawns = 16
+
+const horseSpawnPrefix = "horse_spawn"
+
+// HorseSpawnExport is the native-loader-facing shape of one horse spawn.
+type HorseSpawnExport struct {
+	X   float64 `json:"x"`
+	Y   float64 `json:"y"`
+	Z   float64 `json:"z"`
+	Yaw float64 `json:"yaw"`
+}
+
+// IsHorseSpawnName reports whether a wall name marks a horse spawn pad.
+func IsHorseSpawnName(name string) bool {
+	_, ok := horseSpawnYaw(name)
+	return ok
+}
+
+// horseSpawnYaw parses horse_spawn / horse_spawn_<deg> (case-insensitive prefix). ok is false for any
+// other name, including "horse_spawner_x" (the char after the prefix must be end, '_', '.', ' ' or '-').
+func horseSpawnYaw(name string) (float64, bool) {
+	if len(name) < len(horseSpawnPrefix) || !strings.EqualFold(name[:len(horseSpawnPrefix)], horseSpawnPrefix) {
+		return 0, false
+	}
+	rest := name[len(horseSpawnPrefix):]
+	if rest == "" {
+		return 0, true
+	}
+	switch rest[0] {
+	case '_', '.', ' ', '-':
+	default:
+		return 0, false
+	}
+	rest = strings.TrimLeft(rest[1:], "_. ")
+	end := 0
+	for end < len(rest) && (rest[end] >= '0' && rest[end] <= '9' || (end == 0 && rest[end] == '-')) {
+		end++
+	}
+	if end == 0 {
+		return 0, true
+	}
+	deg, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0, true
+	}
+	return float64(((deg % 360) + 360) % 360), true
+}
+
+// horseSpawnsForExport lists a spawn per pad wall (final flattened, renumbered walls), in wall order.
+// y is the pad's top surface, where the horse stands.
+func horseSpawnsForExport(walls []Wall) []HorseSpawnExport {
+	var out []HorseSpawnExport
+	for _, w := range walls {
+		yaw, ok := horseSpawnYaw(w.Name)
+		if !ok {
+			continue
+		}
+		out = append(out, HorseSpawnExport{X: w.X, Y: w.Y + w.SY/2, Z: w.Z, Yaw: yaw})
+	}
+	return out
+}
+
 // ---- Vehicle spawns -----------------------------------------------------------------------------
 // The buggy tile's name convention, generalised to the whole roster: vehicle_spawn_<kind> (facing
 // yaw 0) or vehicle_spawn_<kind>_<deg> (vehicle_spawn_heli_90). Kinds match SHANKPIT's own
@@ -1832,6 +1911,19 @@ func vehicleSpawnKindYaw(name string) (string, float64, bool) {
 
 // rotatedVehicleSpawnName leaves ordinary names alone and carries a placed widget's rotation into a
 // vehicle spawn's yaw. A legacy buggy spawn stays a legacy buggy spawn.
+// rotatedSpawnName is the one place a placed object's rotation reaches every spawn-tile convention:
+// the vehicle list, the legacy buggy tile and the horse pads. Ordinary wall names are left alone.
+func rotatedSpawnName(name string, worldRotY int) string {
+	if worldRotY%360 == 0 {
+		return name
+	}
+	if yaw, ok := horseSpawnYaw(name); ok {
+		deg := ((int(yaw)+worldRotY)%360 + 360) % 360
+		return fmt.Sprintf("%s_%d", horseSpawnPrefix, deg)
+	}
+	return rotatedVehicleSpawnName(name, worldRotY)
+}
+
 func rotatedVehicleSpawnName(name string, worldRotY int) string {
 	kind, yaw, ok := vehicleSpawnKindYaw(name)
 	if !ok || worldRotY%360 == 0 {

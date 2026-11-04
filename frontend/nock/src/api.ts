@@ -600,6 +600,16 @@ export function vehicleSpawnTile(
   return { id, x: at.x, y: 0.1, z: at.z, sx: 4, sy: 0.2, sz: 8, r, g, b, friction, name: `vehicle_spawn_${kind}` }
 }
 
+// horseSpawnTile -- a horse spawn is the buggy tile's own convention on its own prefix: an ordinary
+// thin wall NAMED horse_spawn (facing yaw 0) or horse_spawn_<degrees>. Level export turns every such
+// wall into a horse spawn pad at its top surface (IDUNA/internal/shankpit horseSpawnsForExport), and
+// SHANKPIT's scene_load spawns a real, rideable unicorn-skinned horse on it
+// (packages/world/level_boxes.h horse_spawns). The tile stays a visible pale-green pad, normally laid
+// inside a fenced paddock. To change the facing, rename the wall (horse_spawn_90 ...).
+export function horseSpawnTile(id: number, at: { x: number; y: number; z: number }, friction: number): ShankpitWall {
+  return { id, x: at.x, y: 0.1, z: at.z, sx: 4, sy: 0.2, sz: 6, r: 0.55, g: 0.9, b: 0.55, friction, name: 'horse_spawn' }
+}
+
 // ShankpitMaterial mirrors IDUNA/internal/shankpit.Material exactly (S459-16, founder real-time:
 // "we will need the ability to add new materials and set their textures" / "registries for
 // everything"). shader_name is a real, named reference into SHANKPIT's own compiled-in shader

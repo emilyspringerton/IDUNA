@@ -15,6 +15,7 @@ import {
   SPAWNER_TEAM_RED,
   doorScripts,
   buggySpawnTile,
+  horseSpawnTile,
   vehicleSpawnTile,
   VEHICLE_SPAWN_KINDS,
   type VehicleSpawnKind,
@@ -2691,6 +2692,16 @@ export default function ShankpitLevelEditor() {
     setSelected(id)
   }
 
+  // The horse pad: buggy_spawn's convention on its own prefix, so a paddock is authored geometry
+  // plus pads (IDUNA horseSpawnsForExport -> SHANKPIT level_boxes.h horse_spawns -> a real
+  // unicorn-skinned HorseState actor in scene_load).
+  const addHorseSpawn = () => {
+    pushHistory()
+    const id = nextWallId(draft.walls)
+    setWalls([...draft.walls, horseSpawnTile(id, spawner, 0.8)])
+    setSelected(id)
+  }
+
   const addCube = () => {
     pushHistory()
     const id = nextWallId(draft.walls)
@@ -3339,6 +3350,14 @@ export default function ShankpitLevelEditor() {
                 title="A thin amber tile named buggy_spawn: a buggy spawns on it. Rename the wall to buggy_spawn_90 etc. to turn it. Widgets can carry one too."
               >
                 <Ic n="car" /> Add buggy spawn
+              </button>
+              <button
+                type="button"
+                className="btn btn--add"
+                onClick={addHorseSpawn}
+                title="A thin pale-green tile named horse_spawn: a rideable unicorn-skinned horse spawns on it. Rename the wall to horse_spawn_90 etc. to turn it. Widgets can carry one too."
+              >
+                <Ic n="pin" /> Add horse spawn
               </button>
               <select
                 value={vehKind}

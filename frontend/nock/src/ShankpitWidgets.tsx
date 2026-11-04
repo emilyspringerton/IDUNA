@@ -4,6 +4,7 @@ import {
   doorScripts,
   shankpitMaterials,
   buggySpawnTile,
+  horseSpawnTile,
   vehicleSpawnTile,
   VEHICLE_SPAWN_KINDS,
   type VehicleSpawnKind,
@@ -381,6 +382,12 @@ export default function ShankpitWidgets() {
     setSelected(id)
   }
 
+  const addHorseSpawn = () => {
+    const id = nextWallId(walls)
+    setWalls([...walls, horseSpawnTile(id, { x: 0, y: 0, z: 0 }, 0.3)])
+    setSelected(id)
+  }
+
   const addCube = () => {
     const id = nextWallId(walls)
     setWalls([...walls, aDefaultWall(id)])
@@ -485,6 +492,9 @@ export default function ShankpitWidgets() {
               </button>
               <button type="button" onClick={addBuggySpawn} title="A thin tile named buggy_spawn: a buggy spawns on it wherever this widget is placed. Rename to buggy_spawn_90 etc. to turn it.">
                 + Add buggy spawn
+              </button>
+              <button type="button" onClick={addHorseSpawn} title="A thin tile named horse_spawn: a rideable unicorn-skinned horse spawns there wherever this widget is placed. Rename to horse_spawn_90 etc. to turn it.">
+                + Add horse spawn
               </button>
               <select value={vehKind} onChange={(e) => setVehKind(e.target.value as VehicleSpawnKind)} title="Which vehicle this spawn tile places when the widget is used in a level.">
                 {VEHICLE_SPAWN_KINDS.map((k) => (

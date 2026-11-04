@@ -1211,6 +1211,109 @@ func TestBuggySpawnYawFromName(t *testing.T) {
 	}
 }
 
+// ---- Horse spawns: a wall named horse_spawn* is a farm pad a real horse spawns on ----
+
+func horseTile(name string, x, y, z float64) shankpit.Wall {
+	return shankpit.Wall{X: x, Y: y, Z: z, SX: 4, SY: 0.2, SZ: 6, R: 0.55, G: 0.9, B: 0.55, Friction: 0.8, Name: name}
+}
+
+func TestHorseSpawnYawFromName(t *testing.T) {
+	cases := []struct {
+		name string
+		ok   bool
+		yaw  float64
+	}{
+		{"horse_spawn", true, 0},
+		{"horse_spawn_90", true, 90},
+		{"horse_spawn_90.001", true, 90}, // Blender duplicate suffix
+		{"horse_spawn_-90", true, 270},
+		{"horse_spawn_450", true, 90},
+		{"horse_spawn.001", true, 0},
+		{"horse_spawner_tower", false, 0},
+		{"buggy_spawn_90", false, 0},
+		{"", false, 0},
+	}
+	for _, c := range cases {
+		if got := shankpit.IsHorseSpawnName(c.name); got != c.ok {
+			t.Errorf("IsHorseSpawnName(%q) = %v, want %v", c.name, got, c.ok)
+		}
+	}
+	s := newTestStore(t)
+	lvl, err := s.CreateLevel(context.Background(), "Paddock", 100, 50, 100, true, 2,
+		[]shankpit.Wall{horseTile("horse_spawn_450", 0, 0, 0), horseTile("horse_spawn_-90", 10, 0, 0)}, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), lvl.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.HorseSpawns) != 2 || doc.HorseSpawns[0].Yaw != 90 || doc.HorseSpawns[1].Yaw != 270 {
+		t.Fatalf("yaw wrong: %+v", doc.HorseSpawns)
+	}
+}
+
+func TestExport_HorseSpawnTileInLevel(t *testing.T) {
+	s := newTestStore(t)
+	lvl, err := s.CreateLevel(context.Background(), "Farm", 100, 50, 100, true, 2,
+		[]shankpit.Wall{aCube(), horseTile("horse_spawn_180", 12, 0.1, -30)}, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := s.Export(context.Background(), lvl.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.HorseSpawns) != 1 {
+		t.Fatalf("expected 1 horse spawn, got %+v", doc.HorseSpawns)
+	}
+	h := doc.HorseSpawns[0]
+	if h.X != 12 || h.Z != -30 || h.Yaw != 180 {
+		t.Fatalf("horse spawn wrong: %+v", h)
+	}
+	if h.Y < 0.1999 || h.Y > 0.2001 { // tile top surface: 0.1 + 0.2/2
+		t.Fatalf("pad y should be the tile's top surface, got %v", h.Y)
+	}
+	// The pad is still a real wall: the horse stands on authored geometry, not a floating point.
+	found := false
+	for _, w := range doc.Walls {
+		if w.Name == "horse_spawn_180" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the horse_spawn wall was dropped from the export")
+	}
+	// And it must not be mistaken for a buggy or a vehicle pad.
+	if len(doc.BuggySpawns) != 0 || len(doc.VehicleSpawns) != 0 {
+		t.Fatalf("horse pad leaked into buggy/vehicle lists: %+v %+v", doc.BuggySpawns, doc.VehicleSpawns)
+	}
+}
+
+func TestExport_HorseSpawnTileInWidgetRotates(t *testing.T) {
+	s := newTestStore(t)
+	widget, err := s.Widgets.CreateWidget(context.Background(), "Stable",
+		[]shankpit.Wall{horseTile("horse_spawn_0", 5, 0, 0)}, nil)
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	parent, err := s.CreateLevel(context.Background(), "Farm", 200, 50, 200, true, 2,
+		nil, []shankpit.LevelObject{{RefWidgetID: widget.ID, X: 20, Y: 0, Z: 40, RotY: 90}}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	doc, err := s.Export(context.Background(), parent.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(doc.HorseSpawns) != 1 {
+		t.Fatalf("expected the widget's horse pad to export, got %+v", doc.HorseSpawns)
+	}
+	if doc.HorseSpawns[0].Yaw != 90 {
+		t.Errorf("a widget-carried pad must inherit the placement rotation, got %v", doc.HorseSpawns[0].Yaw)
+	}
+}
+
 func TestExport_BuggySpawnTileInLevel(t *testing.T) {
 	s := newTestStore(t)
 	lvl, err := s.CreateLevel(context.Background(), "Garage", 100, 50, 100, true, 2,
