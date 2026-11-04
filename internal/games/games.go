@@ -148,6 +148,15 @@ var Registry = map[string]Config{
 		Slug:     "bedrockracers",
 		PlayPerm: "bedrockracers.play",
 	},
+	// TRAPX VS0 web (WOTAN /trapx/, 2026-11-04): PlayPerm only, same narrow cut as big_o/brawlpit/shankpit460. The
+	// sandbox's city (Watchers, Field Offices, receipts) runs in the page on rules emitted from PARENA -- there is no
+	// authoritative city server yet, so there is no match-write, checkpoint or bot permission for this row to hold.
+	// The row exists for the identity half: a real IDUNA citizen, and therefore a stable citizen id in the city,
+	// without Google OAuth. House the city authoritatively in IDUNA and those permissions get added then, not now.
+	"trapx": {
+		Slug:     "trapx",
+		PlayPerm: "trapx.play",
+	},
 	"mixforge": {
 		Slug:              "mixforge",
 		PlayPerm:          "mixforge.play",
