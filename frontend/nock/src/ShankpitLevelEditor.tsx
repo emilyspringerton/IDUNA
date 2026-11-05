@@ -3374,7 +3374,7 @@ export default function ShankpitLevelEditor() {
                 type="button"
                 className="btn btn--add"
                 onClick={addVehicleSpawn}
-                title="A thin tile named vehicle_spawn_<kind>: that vehicle spawns on it (rocket car, police cruiser, helicopter, recon/fly drone, C-110). Rename the wall to vehicle_spawn_<kind>_90 etc. to turn it. Widgets can carry one too."
+                title="A thin tile named vehicle_spawn_<kind>: that vehicle spawns on it (rocket car, police cruiser, ice cream truck, helicopter, recon/fly drone, C-110). Rename the wall to vehicle_spawn_<kind>_90 etc. to turn it. Widgets can carry one too."
               >
                 <Ic n="car" /> Add vehicle spawn
               </button>

@@ -1848,9 +1848,10 @@ func horseSpawnsForExport(walls []Wall) []HorseSpawnExport {
 const MaxVehicleSpawns = 24
 
 // VehicleSpawnKinds are the kinds a wall name may carry, in SHANKPIT's numbering order.
-// "police" is a rocket car in livery with a siren (SHANKPIT LEVEL_VEHICLE_POLICE), appended last so
+// "police" is a rocket car in livery with a siren (SHANKPIT LEVEL_VEHICLE_POLICE) and "ice_cream" is the
+// same airframe as a vendor truck with a jingle (LEVEL_VEHICLE_ICE_CREAM), each appended last in turn so
 // every kind number this list mirrors keeps its meaning.
-var VehicleSpawnKinds = []string{"buggy", "rocket", "heli", "recon", "fly", "plane", "police"}
+var VehicleSpawnKinds = []string{"buggy", "rocket", "heli", "recon", "fly", "plane", "police", "ice_cream"}
 
 const vehicleSpawnPrefix = "vehicle_spawn"
 
