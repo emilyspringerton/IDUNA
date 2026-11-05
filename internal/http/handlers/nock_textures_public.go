@@ -20,7 +20,13 @@ import (
 )
 
 // publicTexturePrefixes -- texture names a native game client may fetch without a login.
-var publicTexturePrefixes = []string{"bullet-hole-"}
+//
+//   - bullet-hole-        SHANKPIT's per-gun bullet-hole decals (2026-10-01).
+//   - shankpit-material-  the base material surfaces (2026-11-05): tile, plaster, marble and the three
+//     wood species, loaded by cmd/nock_gen_textures. These are addressed by MATERIAL NAME, the only
+//     handle a level file carries -- a database id would have to be baked into an export and would go
+//     stale the first time the library was rebuilt. Base surfaces, no story content: safe to be public.
+var publicTexturePrefixes = []string{"bullet-hole-", "shankpit-material-"}
 
 // NockTexturesPublicHandler serves GET /api/v1/nock-textures/by-name/{name}/image.
 type NockTexturesPublicHandler struct {

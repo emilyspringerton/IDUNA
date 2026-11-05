@@ -18,6 +18,9 @@ func TestNockTexturesPublicHandler_ByNameImage(t *testing.T) {
 	if _, err := th.Store.CreateTexture(ctx, "private-brick", 8, 8, []byte("png-private"), "", ""); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := th.Store.CreateTexture(ctx, "shankpit-material-marble", 8, 8, []byte("png-marble"), "", ""); err != nil {
+		t.Fatal(err)
+	}
 	h := &handlers.NockTexturesPublicHandler{Store: th.Store}
 	get := func(method, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -31,6 +34,14 @@ func TestNockTexturesPublicHandler_ByNameImage(t *testing.T) {
 	}
 	if rec := get(http.MethodGet, "/api/v1/nock-textures/by-name/private-brick/image"); rec.Code != 404 {
 		t.Errorf("non-allowlisted texture must 404, got %d", rec.Code)
+	}
+	// the municipal district's material surfaces are public by NAME: a level carries the material name
+	// ("marble"), never a library id, so this is the only handle a host can fetch by.
+	if rec := get(http.MethodGet, "/api/v1/nock-textures/by-name/shankpit-material-marble/image"); rec.Code != 200 || rec.Body.String() != "png-marble" {
+		t.Errorf("allowlisted material fetch: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if rec := get(http.MethodGet, "/api/v1/nock-textures/by-name/shankpit-material-nope/image"); rec.Code != 404 {
+		t.Errorf("missing material texture must 404, got %d", rec.Code)
 	}
 	if rec := get(http.MethodGet, "/api/v1/nock-textures/by-name/bullet-hole-nope/image"); rec.Code != 404 {
 		t.Errorf("missing texture must 404, got %d", rec.Code)

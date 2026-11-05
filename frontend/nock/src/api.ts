@@ -836,6 +836,11 @@ export const AI_ROLE_OPTIONS: { value: number; label: string }[] = [
   // enters combat -- but was never actually exposed in this dropdown, so no NOCK designer could
   // ever select it. Purely additive; the native value (10) was always real, just unreachable.
   { value: 10, label: 'Wandering Bot (ambient, non-hostile)' },
+  // AI_ROLE_MAGISTRATE (11) -- SHANKPIT's civic boss, added in the same pass as the native enum value
+  // (packages/simulation/story_ai.h) and the Go mirror above: holds the bench instead of charging,
+  // carries the magnum and holds the player in contempt (a real stun) with them in sight. Offered here
+  // so a designer can actually author one -- a role missing from this list is a role nobody can place.
+  { value: 11, label: 'Magistrate (civic boss)' },
 ]
 
 // KIT_OPTIONS -- real AIKit values (S492), hand-kept in sync with SHANKPIT's own AIKit enum

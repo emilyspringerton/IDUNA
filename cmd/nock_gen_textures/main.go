@@ -10,10 +10,22 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"iduna/internal/nock"
 	"iduna/internal/store"
 )
+
+// parenaPath resolves one of PARENA's hand-authored texture sources. The default is the real checkout
+// on this box; PARENA_DIR overrides it so the loader (and the render test beside it) can run against a
+// second checkout without editing this file.
+func parenaPath(rel string) string {
+	dir := os.Getenv("PARENA_DIR")
+	if dir == "" {
+		dir = "/home/fatbaby/PARENA"
+	}
+	return filepath.Join(dir, rel)
+}
 
 func main() {
 	dbPath := os.Getenv("NOCK_DB_PATH")
@@ -53,6 +65,24 @@ func main() {
 			"sniper bullet hole: large core with wide spalled halo and long radiating cracks", 64},
 		{"tyler-ecs-screen-glow", "/home/fatbaby/PARENA/stdlib/shankpit/textures/ecs_screen_glow.prn",
 			"phosphor-green CRT terminal glow with scanlines and vignette, for an ECS-brand 1986 monitor prop", 256},
+		// SHANKPIT's municipal district materials (2026-11-05): the six level materials the civic
+		// buildings are made of. Named `shankpit-material-<level material name>` so a HOST can address
+		// a material's art by the NAME that is in the level file instead of by a database id it would
+		// have to be told about -- the level files carry `tile`/`plaster`/`marble`/`wood_oak`/..., and
+		// nothing else. This is the id the NOCK library assigns to each one; the game/editor resolves
+		// the name through the public by-name route (nock_textures_public.go's allowlist).
+		{"shankpit-material-tile", parenaPath("stdlib/shankpit/textures/institutional_tile.prn"),
+			"cold institutional wall/floor tile grid, the civic district's own floor surface", 256},
+		{"shankpit-material-plaster", parenaPath("stdlib/shankpit/textures/courthouse_plaster.prn"),
+			"troweled lime plaster over brick, warm bone paint, hand-mottled", 256},
+		{"shankpit-material-marble", parenaPath("stdlib/shankpit/textures/courthouse_marble.prn"),
+			"pale courthouse marble slab with a few dark wandering veins", 256},
+		{"shankpit-material-wood-oak", parenaPath("stdlib/shankpit/textures/wood_oak.prn"),
+			"quarter-sawn oak boards, tight rings, warm honey -- the city's heaviest wood (720 kg/m^3)", 256},
+		{"shankpit-material-wood-pine", parenaPath("stdlib/shankpit/textures/wood_pine.prn"),
+			"wide pale pine boards, soft rings, cheap partition timber (460 kg/m^3)", 256},
+		{"shankpit-material-wood-mahogany", parenaPath("stdlib/shankpit/textures/wood_mahogany.prn"),
+			"close-grained dark mahogany, red-brown going near-black in the seams (580 kg/m^3)", 256},
 	}
 
 	for _, t := range textures {

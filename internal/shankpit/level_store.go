@@ -320,6 +320,11 @@ const (
 	// own range check below, so a designer could never actually save a character with this role
 	// at all -- the save would be rejected outright, not just hidden from the picker.
 	AIRoleWanderingBot = 10
+	// AIRoleMagistrate (11) -- SHANKPIT's civic boss (story_ai.h/story_ai.c's ai_combat_magistrate):
+	// holds the bench instead of charging, carries the magnum and can hold the player in contempt
+	// (a real stun) while the player is in sight. Added in the same pass as the native enum value:
+	// a role the editor cannot save is a role that does not exist to a level author.
+	AIRoleMagistrate = 11
 )
 
 // Real AIKit values (S492), hand-kept in sync with SHANKPIT's own AIKit enum
@@ -345,7 +350,7 @@ func validateCharacters(characters []Character) error {
 		return fmt.Errorf("shankpit: too many characters (%d, max %d -- SHANKPIT's own native STORY_AI_MAX can't hold more)", len(characters), MaxCharacters)
 	}
 	for i, c := range characters {
-		if c.Role < AIRoleRiftHound || c.Role > AIRoleWanderingBot {
+		if c.Role < AIRoleRiftHound || c.Role > AIRoleMagistrate {
 			return fmt.Errorf("shankpit: character %d has unknown role %d", i, c.Role)
 		}
 		if c.Kit < AIKitAuto || c.Kit > AIKitGeorge {
