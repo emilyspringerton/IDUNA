@@ -578,7 +578,7 @@ export function buggySpawnTile(id: number, at: { x: number; y: number; z: number
 // convention, so widget flattening, rotation and the legacy buggy tiles all keep working:
 // vehicle_spawn_<kind> (yaw 0) or vehicle_spawn_<kind>_<deg>. Only the pad's colour differs, so a
 // garage bay reads at a glance.
-export const VEHICLE_SPAWN_KINDS = ['buggy', 'rocket', 'heli', 'recon', 'fly', 'plane'] as const
+export const VEHICLE_SPAWN_KINDS = ['buggy', 'rocket', 'heli', 'recon', 'fly', 'plane', 'police'] as const
 export type VehicleSpawnKind = (typeof VEHICLE_SPAWN_KINDS)[number]
 
 const VEHICLE_SPAWN_TINT: Record<VehicleSpawnKind, [number, number, number]> = {
@@ -588,6 +588,7 @@ const VEHICLE_SPAWN_TINT: Record<VehicleSpawnKind, [number, number, number]> = {
   recon: [0.35, 0.85, 0.55],
   fly: [0.75, 0.6, 0.95],
   plane: [0.9, 0.9, 0.95],
+  police: [0.15, 0.25, 0.85],
 }
 
 export function vehicleSpawnTile(
