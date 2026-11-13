@@ -357,10 +357,13 @@ func main() {
 	mux.Handle("/honor-code/accept", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleHonorAccept)))
 	mux.Handle("/me/handle", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleMeHandle)))
 	// The same honor code under /api/v1, so sites that reach IDUNA only through an /api/ proxy (WOTAN's
-	// Valhöll oath page) can show it, check it and seal it same-origin. Same handlers, same rules.
+	// Valhöll oath page) can show it, check it and seal it same-origin. Same text, same sha256 rule. Accept and
+	// me/honor-code resolve the caller first: a signed-in WOTAN visitor's SSO JWT names a players row, which the
+	// ceremony's users-row UPDATE never matched (see handlers/honor_code_api.go).
+	honorCodeAPIH := &handlers.HonorCodeAPIHandler{IAM: iamStore, DB: db}
 	mux.HandleFunc("/api/v1/honor-code", webCeremonyH.HandleHonorCode)
-	mux.Handle("/api/v1/honor-code/accept", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleHonorAccept)))
-	mux.Handle("/api/v1/me/honor-code", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleMe)))
+	mux.Handle("/api/v1/honor-code/accept", middleware.RequireAuth(keys)(http.HandlerFunc(honorCodeAPIH.HandleAccept)))
+	mux.Handle("/api/v1/me/honor-code", middleware.RequireAuth(keys)(http.HandlerFunc(honorCodeAPIH.HandleMe)))
 
 	// New IAM routes.
 	mux.Handle("/api/v1/auth/google", googleAuthH)

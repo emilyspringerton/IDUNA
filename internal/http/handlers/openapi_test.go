@@ -30,6 +30,9 @@ func TestOpenAPISpec_CoversRecentEndpoints(t *testing.T) {
 		"/admin/kanban",
 		"/api/v1/kanban/cards",
 		"/api/v1/kanban/cards/{id}",
+		"/api/v1/honor-code",
+		"/api/v1/honor-code/accept",
+		"/api/v1/me/honor-code",
 		"/portal",
 		"/portal/login",
 	} {
