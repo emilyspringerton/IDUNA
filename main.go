@@ -356,6 +356,11 @@ func main() {
 	mux.Handle("/me", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleMe)))
 	mux.Handle("/honor-code/accept", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleHonorAccept)))
 	mux.Handle("/me/handle", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleMeHandle)))
+	// The same honor code under /api/v1, so sites that reach IDUNA only through an /api/ proxy (WOTAN's
+	// Valhöll oath page) can show it, check it and seal it same-origin. Same handlers, same rules.
+	mux.HandleFunc("/api/v1/honor-code", webCeremonyH.HandleHonorCode)
+	mux.Handle("/api/v1/honor-code/accept", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleHonorAccept)))
+	mux.Handle("/api/v1/me/honor-code", middleware.RequireAuth(keys)(http.HandlerFunc(webCeremonyH.HandleMe)))
 
 	// New IAM routes.
 	mux.Handle("/api/v1/auth/google", googleAuthH)

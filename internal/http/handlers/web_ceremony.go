@@ -230,6 +230,17 @@ func (h *WebCeremonyHandler) HandleHonorAccept(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// HandleHonorCode handles GET /api/v1/honor-code: the current honor code, public, so a page can show the
+// oath before anyone signs in (WOTAN's Valhöll oath page). "required" is false here because there is no
+// user to require it of; /me (and /api/v1/me/honor-code) says whether the caller still owes it.
+func (h *WebCeremonyHandler) HandleHonorCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"honor_code": currentHonorCodePayload(false)})
+}
+
 // HandleGamertagCheck handles GET /gamertag/check?handle=....
 func (h *WebCeremonyHandler) HandleGamertagCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

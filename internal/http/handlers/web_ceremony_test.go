@@ -256,3 +256,30 @@ func TestHandleGamertagCheck_RejectsReservedWord(t *testing.T) {
 		t.Errorf("expected 'admin' to be rejected as reserved, got %v", out)
 	}
 }
+
+// TestHandleHonorCode_PublicCurrentText verifies GET /api/v1/honor-code serves the current text, version
+// and sha256 with no token (WOTAN's oath page shows it before sign-in), and refuses other methods.
+func TestHandleHonorCode_PublicCurrentText(t *testing.T) {
+	h := &handlers.WebCeremonyHandler{Store: newStubCeremonyStore()}
+	rr := httptest.NewRecorder()
+	h.HandleHonorCode(rr, httptest.NewRequest(http.MethodGet, "/api/v1/honor-code", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	honor := out["honor_code"].(map[string]any)
+	if honor["sha256"] != honorcode.CurrentSHA256 || honor["body_markdown"] != honorcode.CurrentText {
+		t.Errorf("served honor code is not the current one")
+	}
+	if honor["version"] != float64(honorcode.CurrentVersion) || honor["required"] != false {
+		t.Errorf("want version %d and required=false, got %v / %v", honorcode.CurrentVersion, honor["version"], honor["required"])
+	}
+	rr = httptest.NewRecorder()
+	h.HandleHonorCode(rr, httptest.NewRequest(http.MethodPost, "/api/v1/honor-code", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("POST must 404, got %d", rr.Code)
+	}
+}
