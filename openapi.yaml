@@ -164,6 +164,94 @@ paths:
           schema:
             $ref: "#/definitions/ApiError"
 
+  # THE_HONOR_CODE under /api/v1 (2026-11-13; internal/http/handlers/honor_code_api.go + web_ceremony.go).
+  # The served spec is internal/http/handlers/openapi.go; these entries mirror it. Errors are {code, message}.
+  /api/v1/honor-code:
+    get:
+      tags: [Identity]
+      summary: "The current honor code (public)"
+      description: "THE_HONOR_CODE v1 (internal/honorcode): text, version and SHA-256 of the UTF-8 text. required is always false here: there is no caller to owe it. WOTAN's oath page shows it before sign-in."
+      security: []
+      responses:
+        200:
+          description: "{honor_code: HonorCode}"
+          schema:
+            type: object
+            properties:
+              honor_code:
+                $ref: "#/definitions/HonorCode"
+
+  /api/v1/honor-code/accept:
+    post:
+      tags: [Identity]
+      summary: "Seal the current honor code"
+      description: "The bearer is a person's IDUNA identity: the generic SSO JWT (sub = a players row; the seal lands in player_honor_code, one row per version, the first seal stands) or a web-ceremony JWT (sub = a users row). Agent and game-scoped tokens are refused. Sealing again is idempotent."
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [sha256]
+            properties:
+              sha256:
+                type: string
+                description: "The SHA-256 of the text the client showed; must equal the current one"
+      responses:
+        200:
+          description: "{ok: true, sealed: HonorSeal}"
+          schema:
+            type: object
+            properties:
+              ok:
+                type: boolean
+              sealed:
+                $ref: "#/definitions/HonorSeal"
+        400:
+          description: "BAD_REQUEST: unreadable body"
+          schema:
+            $ref: "#/definitions/ApiError"
+        401:
+          description: "Missing or invalid bearer token"
+        403:
+          description: "HONOR_CODE_STALE (the body also carries honor_code, the current code to show), AGENT_TOKEN, GAME_TOKEN or IDENTITY_SUSPENDED"
+          schema:
+            $ref: "#/definitions/ApiError"
+        404:
+          description: "NOT_FOUND: the token names no players or users row"
+          schema:
+            $ref: "#/definitions/ApiError"
+
+  /api/v1/me/honor-code:
+    get:
+      tags: [Identity]
+      summary: "The caller's honor code status"
+      description: "required is true until the caller has sealed honorcode.CurrentVersion; sealed is the most recent seal or null. Same identity rules and errors as /api/v1/honor-code/accept."
+      security:
+        - BearerAuth: []
+      responses:
+        200:
+          description: "{honor_code: HonorCode, sealed: HonorSeal or null}"
+          schema:
+            type: object
+            properties:
+              honor_code:
+                $ref: "#/definitions/HonorCode"
+              sealed:
+                $ref: "#/definitions/HonorSeal"
+        401:
+          description: "Missing or invalid bearer token"
+        403:
+          description: "AGENT_TOKEN, GAME_TOKEN or IDENTITY_SUSPENDED"
+          schema:
+            $ref: "#/definitions/ApiError"
+        404:
+          description: "NOT_FOUND: the token names no players or users row"
+          schema:
+            $ref: "#/definitions/ApiError"
+
   /api/v1/apples:
     post:
       tags: [Apples]
@@ -587,6 +675,35 @@ definitions:
         type: string
         example: "id_token is required"
     required: [code, message]
+
+  HonorCode:
+    type: object
+    properties:
+      version:
+        type: integer
+        example: 1
+      sha256:
+        type: string
+        description: "Hex SHA-256 of body_markdown's UTF-8 bytes (LF line ends)"
+      body_markdown:
+        type: string
+        description: "THE_HONOR_CODE, verbatim"
+      required:
+        type: boolean
+        description: "Whether the caller still owes a seal (always false on the public route)"
+    required: [version, sha256, body_markdown, required]
+
+  HonorSeal:
+    type: object
+    properties:
+      version:
+        type: integer
+      sha256:
+        type: string
+      accepted_at:
+        type: string
+        description: "RFC 3339 UTC of the first seal of this version (players rows); omitted when the store keeps no time"
+    required: [version, sha256]
 
   GoogleTokenRequest:
     type: object

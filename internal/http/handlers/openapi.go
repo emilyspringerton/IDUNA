@@ -1323,6 +1323,11 @@ var idunaOpenAPISpec = map[string]any{
 		"/settings":             simpleGET("User settings page (cookie session)", "identity", false),
 		"/api/v1/settings/me":   simpleGET("Caller's own settings (cookie session)", "identity", false),
 
+		// THE_HONOR_CODE under /api/v1 (honor_code_api.go): WOTAN's Valhöll oath page, same-origin through /api/.
+		"/api/v1/honor-code":        simpleGET("Current honor code {honor_code:{version, sha256, body_markdown, required:false}}", "identity", true),
+		"/api/v1/honor-code/accept": simplePOST("Seal the current honor code {sha256}: SSO players row or ceremony users row; 403 HONOR_CODE_STALE carries the current code", "identity", false),
+		"/api/v1/me/honor-code":     simpleGET("Caller's honor code status {honor_code, sealed|null}", "identity", false),
+
 		// MMO backend (DragonsNShit / GoblinFoxDragon) — internal/http/handlers/mmo*.go.
 		"/api/v1/characters":    simpleGET("List/manage GFD characters", "mmo", false),
 		"/api/v1/items":         simpleGET("MMO items", "mmo", false),
