@@ -1,0 +1,147 @@
+name: Release (run-anywhere bundles)
+
+# IDUNA with no cloud account (founder real-time 2026-11-15: "ship new iduna" / "esports and stats up asap" / "matchmaking
+# and bot queues up for our wotan arcade"). The Cloud Build path (deploy.yml) has failed on every push since 2026-11-04:
+# the GCP project's billing account is closed. This workflow builds what anyone can run instead:
+#   IDUNA_linux_x86_64.zip, IDUNA_windows_x86_64.zip, IDUNA_linux_arm64.zip (static musl: Alpine / EmilyOS on a Pi 3)
+# each carrying the WOTAN arcade, which IDUNA serves itself (wotan_site.go): unzip, RUN, play. Plus a container image on
+# GHCR (ghcr.io/emilyspringerton/iduna), built from the same context as the Cloud Build image (scripts/stage-image.sh).
+# Every push builds, smoke-tests and uploads the zips as a workflow artifact; a push to main also cuts a GitHub Release
+# tagged iduna-vMAJOR.MINOR.0 (MINOR auto-bumps, the extension-release.yml convention; its own tag namespace).
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+# Serialize per ref: two pushes must not compute the same next tag (queued, not cancelled).
+concurrency:
+  group: iduna-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bundles:
+    name: Build, smoke-test, release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: WOTAN (the arcade the bundles carry)
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/WOTAN
+          path: _wotan
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cross toolchains (mingw for Windows, zig for static arm64)
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 zip
+          python -m pip install ziglang==0.13.0
+          python -m ziglang version
+
+      - name: Compute version
+        id: v
+        run: |
+          set -euo pipefail
+          prefix="iduna-v"
+          latest="$(git tag -l "${prefix}[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n1)"
+          if [ -z "$latest" ]; then version="1.0.0"; else
+            ver="${latest#${prefix}}"; major="$(echo "$ver" | cut -d. -f1)"; minor="$(echo "$ver" | cut -d. -f2)"
+            version="${major}.$((minor + 1)).0"; fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${prefix}${version}" >> "$GITHUB_OUTPUT"
+          echo "build=${version}+$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Tests for the run-anywhere path
+        run: GOWORK=off go test -count=1 -run 'TestWotanSite' .
+
+      - name: Bundles
+        env:
+          WOTAN_SITE_SRC: ${{ github.workspace }}/_wotan
+          ZIG: python -m ziglang
+        run: |
+          set -euo pipefail
+          for t in linux windows linux-arm64; do scripts/package-release.sh "$t" out "${{ steps.v.outputs.build }}"; done
+          (cd out && sha256sum IDUNA_*.zip > SHA256SUMS.txt)
+          ls -la out
+
+      - name: Smoke-test the Linux bundle (arcade, API, guest account, matchmaking WebSocket)
+        run: scripts/release-smoke.sh out/IDUNA_linux_x86_64.zip
+
+      - name: Real matchmaking (two shankpit-460 wasm engines against the bundle's own IDUNA)
+        env:
+          SHANKPIT460_KILL_LIMIT: "2"
+          SHANKPIT460_MATCH_SECONDS: "20"
+          SHANKPIT460_COUNTDOWN_SECONDS: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smk" && (cd "$RUNNER_TEMP/smk" && unzip -q "$GITHUB_WORKSPACE/out/IDUNA_linux_x86_64.zip")
+          # WOTAN's harness reads migrations from a sibling ../IDUNA checkout; here IDUNA is the workspace itself.
+          ln -sfn "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/IDUNA"
+          cd _wotan && IDUNA_BIN="$RUNNER_TEMP/smk/IDUNA/iduna" node scripts/shankpit460-net-test.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IDUNA-${{ steps.v.outputs.version }}-${{ github.sha }}
+          path: out/*
+
+      - name: Release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" out/* --target "$GITHUB_SHA" --title "IDUNA ${{ steps.v.outputs.version }}" \
+            --notes "IDUNA, run anywhere: unzip, then RUN.bat (Windows) or ./RUN.sh (Linux). It serves the WOTAN arcade on http://127.0.0.1:8090/ with sign-in, stats and matchmaking on the same IDUNA. linux_arm64 is static (Alpine / EmilyOS on a Raspberry Pi 3). Image: ghcr.io/emilyspringerton/iduna:${GITHUB_SHA::7}. README.txt in each zip says what needs a setting."
+
+  image:
+    name: Container image (GHCR)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/PARENA
+          path: PARENA
+
+      - name: PARENA compiler (NOCK shells out to it; same staging as the Cloud Build image)
+        run: |
+          sudo apt-get update && sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev
+          make -C PARENA parena
+
+      - name: Build and push
+        env:
+          PARENA_DIR: ${{ github.workspace }}/PARENA
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          img="ghcr.io/emilyspringerton/iduna"
+          sha="$(git rev-parse --short HEAD)"
+          ctx="$RUNNER_TEMP/ctx"
+          scripts/stage-image.sh "$ctx"
+          docker build -t "$img:$sha" "$ctx"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$img:$sha"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then docker tag "$img:$sha" "$img:latest"; docker push "$img:latest"; fi

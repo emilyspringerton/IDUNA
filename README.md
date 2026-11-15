@@ -1,5 +1,34 @@
 # IDUNA — Platform IAM & Governance Service
 
+## Run anywhere, no cloud (2026-11-15)
+
+**The GKE path is down: the GCP project's billing account is closed.** Every `deploy.yml` run since 2026-11-04 fails at
+the Cloud Build upload with `403 ... The billing account for the owning project is disabled in state closed`, so no new
+image has shipped there. Re-enabling billing is a human step in the Google Cloud console (Billing). Until then, and
+independent of it, `.github/workflows/release.yml` builds IDUNA for any machine:
+
+| Bundle | For |
+|---|---|
+| `IDUNA_windows_x86_64.zip` | Windows: double-click `RUN.bat` |
+| `IDUNA_linux_x86_64.zip` | Linux (glibc): `./RUN.sh` |
+| `IDUNA_linux_arm64.zip` | static musl arm64: Alpine, EmilyOS on a Raspberry Pi 3 |
+| `ghcr.io/emilyspringerton/iduna:<sha>` | the container image, same context as the Cloud Build one (`scripts/stage-image.sh`) |
+
+Each zip is the binary plus its working-directory assets and **the WOTAN site**: RUN serves the arcade on
+`http://127.0.0.1:8090/` and IDUNA itself answers `/api/` there (`wotan_site.go`, `WOTAN_SITE_DIR` / `WOTAN_ADDR`), the
+same split nginx does in production, so sign-in, leaderboards and the matchmaking WebSockets work from one program.
+Settings come from `iduna.env` next to the binary (none are required: SQLite in `var/iduna.db`, signing key generated on
+first run). Build one locally with `scripts/package-release.sh linux|windows|linux-arm64 OUT_DIR` (`WOTAN_SITE_SRC=` a
+WOTAN checkout to include the site); `scripts/release-smoke.sh` checks a Linux bundle. Every push builds and uploads the
+zips as a workflow artifact; a push to `main` also cuts a GitHub Release (`iduna-vMAJOR.MINOR.0`).
+
+Verified on a Linux box (2026-11-15): the smoke script's 7 checks (health, arcade page, wasm MIME, an API read, a guest
+account and the shankpit-460 matchmaking WebSocket, all through the WOTAN port) and WOTAN's
+`scripts/shankpit460-net-test.mjs` against the bundle's binary (26/26: a bot match while searching, two humans paired
+into one free-for-all lobby, kills, the kill limit, requeue). The Windows exe and the arm64 binary were built but **not
+run** here. In the zip, Red Garden, D2 and DEADWEIGHT pages show offline (their game servers and bot pools are separate
+programs), and NOCK's compile tools need gcc + ImageMagick + PARENA (the container image has them).
+
 ## Where it runs (2026-10-04)
 
 The pod also carries an nginx sidecar (`web`) serving `/app/var/www` — the okemily.com static site — off the same PVC IDUNA's blog/tyler/prompt-o-verse renderers write to (`BLOG_OUTPUT_DIR` etc.).

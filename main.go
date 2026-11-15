@@ -1700,6 +1700,14 @@ func main() {
 	// IDUNA_ADDR lets a throwaway instance (tests, live verification) bind a private port instead of
 	// colliding with the real :8080. Default is unchanged.
 	listenAddr := getenv("IDUNA_ADDR", ":8080")
+
+	// WOTAN_SITE_DIR: the WOTAN site on its own listener (WOTAN_ADDR, default 127.0.0.1:8090), with /api/ answered by
+	// this same mux -- what nginx does in production, so one program runs the arcade, sign-in, stats and matchmaking
+	// (run-anywhere bundles, EmilyOS). Off unless set. See wotan_site.go.
+	if dir := os.Getenv("WOTAN_SITE_DIR"); dir != "" {
+		go serveWotanSite(dir, getenv("WOTAN_ADDR", "127.0.0.1:8090"), mux)
+	}
+
 	log.Printf("iduna listening on %s", listenAddr)
 	log.Fatal(http.ListenAndServe(listenAddr, mux))
 }

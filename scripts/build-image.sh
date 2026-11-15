@@ -5,9 +5,7 @@ SRC="$(cd "$(dirname "$0")/.." && pwd)"
 TAG="${1:-$(git -C "$SRC" rev-parse --short HEAD)}"
 PROJECT="${PROJECT:-project-d24a71e9-2daf-4b2d-917}"
 CTX="$(mktemp -d)"; trap 'rm -rf "$CTX"' EXIT
-git -C "$SRC" ls-files -z -- . ':(exclude)var' ':(exclude)var-backups' ':(exclude)docs' ':(exclude)tests' ':(exclude)sdk' | (cd "$SRC" && xargs -0 -r tar cf - 2>/dev/null) | tar xf - -C "$CTX"
-mkdir -p "$CTX/.parena"; cp "${PARENA_DIR:-$HOME/PARENA}/parena" "$CTX/.parena/"; cp -r "${PARENA_DIR:-$HOME/PARENA}/stdlib" "$CTX/.parena/"
-cp "$SRC/ops/docker/iduna.Dockerfile" "$CTX/Dockerfile"
+"$SRC/scripts/stage-image.sh" "$CTX"   # same context the GHCR image (release.yml) is built from
 
 # Found live (2026-10-05, SHANKPIT): the CI SA (github-ci, see EMILY/gitops/CI_SETUP.md) is
 # deliberately scoped to cloudbuild.builds.editor/artifactregistry.writer, not a project
