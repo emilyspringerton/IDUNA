@@ -40,6 +40,12 @@ jobs:
           repository: emilyspringerton/WOTAN
           path: _wotan
 
+      - name: PARENA (WOTAN's matchmaking test reads the shankpit-460 sources from a sibling ../PARENA)
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/PARENA
+          path: PARENA
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
