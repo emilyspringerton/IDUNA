@@ -55,6 +55,7 @@ type Room struct {
 	finished bool
 	lastSnap time.Time
 	topKills int
+	left     []departed // people who left while the match was live, for the record
 }
 
 func newRoom(h *Hub, id uint32, now time.Time) *Room {
@@ -239,6 +240,10 @@ func (r *Room) broadcastRespawn(p *player) {
 func (r *Room) leave(c *Client) {
 	if c.slot < 0 || c.slot >= len(r.players) || r.players[c.slot] == nil || r.players[c.slot].c != c {
 		return
+	}
+	if p := r.players[c.slot]; r.phase == phaseLive {
+		r.left = append(r.left, departed{id: c.id, name: p.name, slot: p.slot, kills: p.kills, deaths: p.deaths,
+			at: r.hub.now().Sub(r.liveAt)})
 	}
 	r.players[c.slot] = nil
 	remaining := r.count()
@@ -577,6 +582,10 @@ func (r *Room) end(now time.Time, reason int) {
 		return
 	}
 	r.phase = phaseOver
+	var rec *Match
+	if r.hub.rec != nil {
+		rec = r.buildMatch(now, reason)
+	}
 	type row struct{ slot, k, d int }
 	var rows []row
 	for _, p := range r.players {
@@ -619,6 +628,10 @@ func (r *Room) end(now time.Time, reason int) {
 	}
 	r.players = [10]*player{}
 	r.finished = true
+	if rec != nil {
+		r.hub.recWG.Add(1)
+		go r.hub.record(rec)
+	}
 }
 
 func (r *Room) stats(now time.Time) RoomStats {

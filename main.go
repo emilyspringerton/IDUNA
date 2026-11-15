@@ -1355,8 +1355,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("shankpit-460 matchmaker: %v", err)
 	}
-	mux.Handle("/api/v1/shankpit460/play", shankpit460Play)
-	mux.Handle("/api/v1/shankpit460/status", shankpit460Play)
+	// play, status, and the results reads (matches, players, leaders: handlers/shankpit460_stats.go)
+	mux.Handle("/api/v1/shankpit460/", shankpit460Play)
 	// REDGARDEN web (WOTAN /redgarden/play.html, founder real-time 2026-10-17): the browser gateway to the live arena --
 	// matchmaker + persistent bot pool + authoritative arena server, with the result recorded against the player's
 	// account. See handlers/redgarden_play.go and internal/redgardenplay. Needs REDGARDEN_TICKET_SECRET (the arena's).

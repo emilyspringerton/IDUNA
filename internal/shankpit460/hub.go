@@ -84,6 +84,9 @@ type Hub struct {
 
 	stop chan struct{}
 	done sync.WaitGroup
+
+	rec   Recorder       // nil: results are not kept
+	recWG sync.WaitGroup // recordings in flight; Close waits for them
 }
 
 // Option configures a Hub.
@@ -135,6 +138,7 @@ func (h *Hub) Close() {
 	for _, c := range all {
 		c.Close()
 	}
+	h.recWG.Wait()
 }
 
 func (h *Hub) run() {

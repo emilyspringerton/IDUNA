@@ -25,8 +25,10 @@ zips as a workflow artifact; a push to `main` also cuts a GitHub Release (`iduna
 Verified on a Linux box (2026-11-15): the smoke script's 7 checks (health, arcade page, wasm MIME, an API read, a guest
 account and the shankpit-460 matchmaking WebSocket, all through the WOTAN port) and WOTAN's
 `scripts/shankpit460-net-test.mjs` against the bundle's binary (26/26: a bot match while searching, two humans paired
-into one free-for-all lobby, kills, the kill limit, requeue). The Windows exe and the arm64 binary were built but **not
-run** here. In the zip, Red Garden, D2 and DEADWEIGHT pages show offline (their game servers and bot pools are separate
+into one free-for-all lobby, kills, the kill limit, requeue). The arm64 binary runs in EmilyOS's QEMU `raspi3b` boot test
+(IDUNA answering `/health` on the emulated Pi); the Windows exe was built but **not run**. Every shankpit-460 match that
+goes live is recorded (2026-11-15): the ladder (`/api/v1/games/shankpit460/leaderboard`, a free-for-all Elo), the match
+feed with full rosters, player pages and stat leaders (`/api/v1/shankpit460/matches`, `/players/{id}`, `/leaders`). In the zip, Red Garden, D2 and DEADWEIGHT pages show offline (their game servers and bot pools are separate
 programs), and NOCK's compile tools need gcc + ImageMagick + PARENA (the container image has them).
 
 ## Where it runs (2026-10-04)

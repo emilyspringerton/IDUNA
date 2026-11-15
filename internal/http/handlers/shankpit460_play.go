@@ -9,6 +9,7 @@ package handlers
 //
 //	GET /api/v1/shankpit460/play     WebSocket (binary frames, see internal/shankpit460/proto.go)
 //	GET /api/v1/shankpit460/status   {online, searching, playing, rooms[], kill_limit, minutes}
+//	GET /api/v1/shankpit460/matches | matches/{id} | players/{id} | leaders   results (shankpit460_stats.go)
 //
 // Identity: the HELLO frame carries the visitor's IDUNA bearer token, if they have one -- either the generic SSO JWT
 // WOTAN holds (resolved with ssoGamePlayer, the same rule sso-exchange and Redeem-a-code use, so the lobby player IS
@@ -17,11 +18,13 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,13 +39,18 @@ import (
 type Shankpit460Play struct {
 	Hub  *shankpit460.Hub
 	game *GameOnlineHandler
+	db   *sql.DB // results; nil = matches are played but not kept
 	ws   websocket.Server
 }
 
-// NewShankpit460Play builds the matchmaker around the games handler's database and signing keys.
-func NewShankpit460Play(g *GameOnlineHandler) (*Shankpit460Play, error) {
-	p := &Shankpit460Play{game: g}
-	hub, err := shankpit460.NewHub(shankpit460ConfigFromEnv(), p.resolve)
+// NewShankpit460Play builds the matchmaker around the games handler's database and signing keys. Every match that goes
+// live is recorded in that database (shankpit460_stats.go).
+func NewShankpit460Play(g *GameOnlineHandler, opts ...shankpit460.Option) (*Shankpit460Play, error) {
+	p := &Shankpit460Play{game: g, db: g.DB}
+	if p.db != nil {
+		opts = append([]shankpit460.Option{shankpit460.WithRecorder(&sp460Recorder{db: p.db})}, opts...)
+	}
+	hub, err := shankpit460.NewHub(shankpit460ConfigFromEnv(), p.resolve, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +107,7 @@ func (p *Shankpit460Play) resolve(ctx context.Context, token string) (shankpit46
 	return shankpit460.Identity{ID: pid, Name: name}, nil
 }
 
-// ServeHTTP routes /api/v1/shankpit460/play and /status.
+// ServeHTTP routes /api/v1/shankpit460/play, /status and the results reads.
 func (p *Shankpit460Play) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/shankpit460/status":
@@ -109,7 +117,14 @@ func (p *Shankpit460Play) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/shankpit460/play":
 		p.ws.ServeHTTP(w, r)
 	default:
-		http.NotFound(w, r)
+		path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/shankpit460/"), "/")
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !p.serveStats(w, r, path) {
+			http.NotFound(w, r)
+		}
 	}
 }
 

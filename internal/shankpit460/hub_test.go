@@ -47,7 +47,7 @@ type rig struct {
 	clk *clock
 }
 
-func newRig(t *testing.T, mut func(*Config), res Resolver) *rig {
+func newRig(t *testing.T, mut func(*Config), res Resolver, opts ...Option) *rig {
 	cfg := DefaultConfig()
 	cfg.IdleTimeout = time.Hour // scripted clients are silent between messages
 	if mut != nil {
@@ -62,7 +62,7 @@ func newRig(t *testing.T, mut func(*Config), res Resolver) *rig {
 		}
 	}
 	clk := &clock{t: time.Unix(1_700_000_000, 0)}
-	h, err := NewHub(cfg, res, WithClock(clk.now), WithManualTicks(), WithSyncSend(), WithSeed(7))
+	h, err := NewHub(cfg, res, append([]Option{WithClock(clk.now), WithManualTicks(), WithSyncSend(), WithSeed(7)}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,8 +156,8 @@ func slotOf(t *testing.T, f []byte) int {
 }
 
 // two players in a live match, standing apart in the open
-func liveMatch(t *testing.T, mut func(*Config)) (*rig, *tc, *tc, int, int) {
-	r := newRig(t, mut, nil)
+func liveMatch(t *testing.T, mut func(*Config), opts ...Option) (*rig, *tc, *tc, int, int) {
+	r := newRig(t, mut, nil, opts...)
 	a := r.client("a", "")
 	b := r.client("b", "")
 	a.queue()
