@@ -2,11 +2,13 @@
 rem IDUNA, run anywhere. Settings come from iduna.env next to this file (copy iduna.env.example); none are required.
 rem With the WOTAN site in wotan\ (release bundles carry it) the arcade is served too, /api/ answered by this IDUNA.
 cd /d "%~dp0"
+if exist bundle.env for /f "usebackq eol=# tokens=1,* delims==" %%a in ("bundle.env") do set "%%a=%%b"
 if exist iduna.env for /f "usebackq eol=# tokens=1,* delims==" %%a in ("iduna.env") do set "%%a=%%b"
 if "%IDUNA_ADDR%"=="" set "IDUNA_ADDR=127.0.0.1:8080"
 if "%WOTAN_SITE_DIR%"=="" if exist wotan\index.html set "WOTAN_SITE_DIR=wotan"
 if "%WOTAN_ADDR%"=="" set "WOTAN_ADDR=127.0.0.1:8090"
 if not exist var mkdir var
+if not exist var\deadweight mkdir var\deadweight
 set /p IDUNA_VERSION=<VERSION
 echo IDUNA %IDUNA_VERSION% on http://%IDUNA_ADDR%   (log: iduna.log, data: var\iduna.db)
 if not "%WOTAN_SITE_DIR%"=="" (

@@ -47,6 +47,7 @@ if [ -n "${WOTAN_SITE_SRC:-}" ]; then
 fi
 cp "$SRC/packaging/README_RUN.txt" "$D/README.txt"
 cp "$SRC/packaging/iduna.env.example" "$D/iduna.env.example"
+cp "$SRC/packaging/bundle-defaults.conf" "$D/bundle.env"
 echo "$VERSION" > "$D/VERSION"
 touch "$D/var/.keep"
 case "$OS" in linux-arm64) NAME="IDUNA_linux_arm64.zip" ;; *) NAME="IDUNA_${OS}_x86_64.zip" ;; esac
