@@ -369,6 +369,9 @@ func main() {
 	mux.Handle("/.well-known/jwks.json", jwksH)
 	mux.Handle("/api/v1/jwks", jwksH) // also serve JWKS on the path idunaauth expects
 	mux.Handle("/health", healthH)
+	// The same health answer under /api/: nginx in front of WOTAN sends only /api/ to IDUNA (WOTAN ops/nginx-wotan.conf),
+	// so a page finds its own origin's IDUNA here (PARENA stdlib/iduna/discover_web.prn, local IDUNA first).
+	mux.Handle("/api/v1/health", healthH)
 
 	// OpenExecutive API — M2M credential provisioning (admin only), service health checks
 	mux.Handle("/api/v1/openexecutive/health", http.HandlerFunc(openexecutiveH.HealthCheck))
@@ -1701,15 +1704,19 @@ func main() {
 	// colliding with the real :8080. Default is unchanged.
 	listenAddr := getenv("IDUNA_ADDR", ":8080")
 
+	// IDUNA_CORS_ORIGINS: the page origins (besides IDUNA's own) allowed to read /api/, /health and /.well-known/ --
+	// a dev page on another port finding a local IDUNA. Unset: every response is unchanged. See middleware/cors.go.
+	handler := middleware.CORSAllowlist(middleware.ParseOrigins(os.Getenv("IDUNA_CORS_ORIGINS")))(mux)
+
 	// WOTAN_SITE_DIR: the WOTAN site on its own listener (WOTAN_ADDR, default 127.0.0.1:8090), with /api/ answered by
 	// this same mux -- what nginx does in production, so one program runs the arcade, sign-in, stats and matchmaking
 	// (run-anywhere bundles, EmilyOS). Off unless set. See wotan_site.go.
 	if dir := os.Getenv("WOTAN_SITE_DIR"); dir != "" {
-		go serveWotanSite(dir, getenv("WOTAN_ADDR", "127.0.0.1:8090"), mux)
+		go serveWotanSite(dir, getenv("WOTAN_ADDR", "127.0.0.1:8090"), handler)
 	}
 
 	log.Printf("iduna listening on %s", listenAddr)
-	log.Fatal(http.ListenAndServe(listenAddr, mux))
+	log.Fatal(http.ListenAndServe(listenAddr, handler))
 }
 
 func getenv(k, def string) string {
