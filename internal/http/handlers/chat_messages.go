@@ -57,7 +57,12 @@ var validChatChannels = map[string]bool{
 // parallel one" discipline the gfd_server/einhorn_survival addition above already applied. Posts
 // under the new "big_o" channel (BIG_O has no GFD-native channel taxonomy to reuse, same real
 // reason einhorn_survival got its own "gta7" channel rather than borrowing "yell").
-var validChatSources = map[string]bool{"mud": true, "battlegrounds": true, "gfd_server": true, "einhorn_survival": true, "bigo_server": true, "shankpit_client": true}
+//
+// shankpit_server added 2026-11-17 (founder: "WE NEED THE CHAT BRIDGE TO WORK GLOBALY"): a SHANKPIT world's
+// server bridges its General chat channel (SHANKPIT/packages/chat/chat_bridge.c) under its own IDUNA agent, on the
+// existing "shankpit" channel, and shows every other source's lines in General. Many SHANKPIT servers share this one
+// source, so each guards against loops by the ids of its own posts (PARENA/stdlib/shankpit/chat_bridge_rules.prn).
+var validChatSources = map[string]bool{"mud": true, "battlegrounds": true, "gfd_server": true, "einhorn_survival": true, "bigo_server": true, "shankpit_client": true, "shankpit_server": true}
 
 func (h *ChatMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.DB == nil {
@@ -95,7 +100,7 @@ func (h *ChatMessagesHandler) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validChatSources[body.SenderSource] {
-		http.Error(w, "sender_source must be one of: mud, battlegrounds, gfd_server, einhorn_survival, bigo_server, shankpit_client", http.StatusBadRequest)
+		http.Error(w, "sender_source must be one of: mud, battlegrounds, gfd_server, einhorn_survival, bigo_server, shankpit_client, shankpit_server", http.StatusBadRequest)
 		return
 	}
 	if body.SenderName == "" || len(body.SenderName) > 64 {

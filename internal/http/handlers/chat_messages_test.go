@@ -179,6 +179,33 @@ func TestChatMessages_ShankpitClientSourceAndChannel(t *testing.T) {
 	}
 }
 
+// A SHANKPIT world's server bridges its General channel under its own agent (the global chat bridge).
+func TestChatMessages_ShankpitServerSourceAndChannel(t *testing.T) {
+	keys, _ := jwt.GenerateKeys()
+	db := newTestChatDB(t)
+	token := makeAgentToken(t, keys, uuid.New().String(), nil)
+	h := chatHandlerWithAuth(keys, db)
+
+	body, _ := json.Marshal(map[string]string{
+		"channel": "shankpit", "sender_name": "Ingrid", "sender_source": "shankpit_server", "body": "hello every world",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/messages", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("post status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/chat/messages?since_id=0&limit=50", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"sender_source":"shankpit_server"`)) {
+		t.Fatalf("list status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestChatMessages_RejectsInvalidSource(t *testing.T) {
 	keys, _ := jwt.GenerateKeys()
 	db := newTestChatDB(t)
