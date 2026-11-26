@@ -29,7 +29,14 @@ into one free-for-all lobby, kills, the kill limit, requeue). The Windows exe an
 run** here. In the zip, Red Garden, D2 and DEADWEIGHT pages show offline (their game servers and bot pools are separate
 programs), and NOCK's compile tools need gcc + ImageMagick + PARENA (the container image has them).
 
-## Where it runs (2026-10-04)
+## Where it runs
+
+**2026-11-26: nowhere, for now.** GCP was shut down for billing, taking the GKE pod, the PVC and the database with
+it. IDUNA comes back as a fresh start on its own Vultr VM via `ops/vultr` (`iduna-vultr`; see its README). The tool is
+built and tested but not yet run. The 2026-10-04 notes below describe the GKE deployment that is gone; they're kept
+as history.
+
+### On GKE (2026-10-04, gone)
 
 The pod also carries an nginx sidecar (`web`) serving `/app/var/www` — the okemily.com static site — off the same PVC IDUNA's blog/tyler/prompt-o-verse renderers write to (`BLOG_OUTPUT_DIR` etc.).
 
