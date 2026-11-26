@@ -296,7 +296,12 @@ func checkCF(ch *checked) error {
 			return err
 		}
 		for _, r := range recs {
-			fmt.Printf("  existing   %s %s -> %s (proxied=%v): would be replaced, saved first\n", r.Type, r.Name, r.Content, r.Proxied)
+			// pointDNS only replaces address records; MX/TXT/etc. at the same name (the apex's email routing) stay.
+			if r.Type == "A" || r.Type == "AAAA" || r.Type == "CNAME" {
+				fmt.Printf("  existing   %s %s -> %s (proxied=%v): would be replaced, saved first\n", r.Type, r.Name, r.Content, r.Proxied)
+			} else {
+				fmt.Printf("  kept       %s %s -> %s (not an address record: untouched)\n", r.Type, r.Name, r.Content)
+			}
 		}
 	}
 	if ents, err := os.ReadDir(c.RollbackDir); err == nil && len(ents) > 0 {
