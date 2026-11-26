@@ -2,6 +2,7 @@
 
 ## 2026-11-26
 
+- ops(vultr): **IDUNA is live on Vultr.** `iduna-vultr apply --dns` bought `iduna` (vc2-1c-2gb, ord, $10/month, 137.220.58.252). `webmaster: uid=0 ready` (root admin seeded from webmaster.json, then shredded); `iam.okemily.com`, `okemily.com` and `www` are proxied to it, and `/health` answers 200 through Cloudflare. Founder: *"ensure we have a root admin user for IDUNA ... log into the back office as an agent ... HOUSE"*: HOUSE (human_operator, iduna.admin) was created on the box with `cmd/create-admin-agent` and verified through Cloudflare (`/admin/login` 303, `/admin/` 200 with the session and 401 without). Its secret lives only in a mode-600 file off-repo. New sc-tunnel pin in `ops/vultr/README.md`. (sess-20261126-1643-452c2f1a)
 - feat(ops): `ops/vultr` (`iduna-vultr`) -- provision IDUNA on one Vultr VM after the GCP shutdown (fresh start): compose of the GHCR image + okemily-web + sc-tunnel (built from EDGE.GAME) + logsync, host nginx for iam/apex/www behind Cloudflare with an Origin CA cert, first admin from webmaster.json (shredded once healthy), secrets pushed over SSH never user-data, price-confirmed buy, per-name DNS rollback. Sets NOCK_DATA_DIR/NOCK_VIDEO_DIR under /app/var (their /home/fatbaby defaults sit outside the volume -- found by booting IDUNA fresh). 7 tests vs fake APIs; rendered compose parses, rendered nginx passes `nginx -t` (1.24.0). Not run against real Vultr/Cloudflare. (sess-20261126-1643-452c2f1a)
 
 ## 2026-11-15

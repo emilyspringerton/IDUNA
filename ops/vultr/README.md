@@ -13,7 +13,10 @@ status --instance ID     state, IPs
 destroy --instance ID    deletes it (needs IDUNA_CONFIRM_DESTROY=ID); --restore-dns puts DNS back first
 ```
 
-**Status: built and tested against fake Vultr/Cloudflare APIs. Never run against the real ones.**
+**Status: live since 2026-11-26.** Box `iduna` in `ord` (vc2-1c-2gb, $10/month, `137.220.58.252`, instance
+`4d57441b-1ab0-4b71-9f9a-b651c2ca9252`), image `ghcr.io/emilyspringerton/iduna:5243d7b`. `iam.okemily.com`,
+`okemily.com` and `www` are proxied to it. The sc-tunnel pin is
+`a8d28b48827066e2068163b5660fb83d1e5b0a50e4876b9ff088dc643edd7b71`.
 
 ## What the box is
 
@@ -49,8 +52,15 @@ Only after that does it run `iduna-up`.
 - **`NOCK_DATA_DIR` and `NOCK_VIDEO_DIR` are set to paths under `/app/var`.** Their defaults
   (`/home/fatbaby/IDUNA/var/...`) sit outside the volume, so that data would have died with every new container.
   This was found by booting IDUNA fresh before writing the tool.
-- **No agents are seeded.** The image doesn't include `cmd/bootstrap`. Create M2M agents (EMILY-PRIME, …) from the
-  Back Office at `/admin/agents` after signing in as the webmaster.
+- **No agents are seeded by the tool.** The image doesn't include `cmd/bootstrap` or `cmd/create-admin-agent`.
+  The Back Office agent **HOUSE** (human_operator, `iduna.admin`) was created by hand on 2026-11-26:
+  ```bash
+  (cd IDUNA && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o create-admin-agent ./cmd/create-admin-agent)
+  scp create-admin-agent root@<ip>:/usr/local/bin/
+  ssh root@<ip> 'SQLITE_PATH=/srv/iduna/var/iduna.db create-admin-agent -name HOUSE' > ~/secrets/iduna-house-agent.env
+  ```
+  Its secret is shown once, so redirect it straight into a mode-600 file and never into a terminal or log. It signs in at
+  `https://iam.<zone>/admin/login`. M2M agents (EMILY-PRIME, …) still have to be created from `/admin/agents`.
 - **`console.okemily.com` isn't served** (not asked for), and **neither is anything that depended on in-cluster
   services:** gfd-core, deadweight, the REDGARDEN pools, dw2_server.
 
