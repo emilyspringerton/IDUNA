@@ -1,3 +1,7 @@
+## 2026-11-26
+
+- fix(ops/vultr): the iam root redirect to the SSO login page now keeps its query string (`$is_args$args`). It was dropping `redirect_uri`, so WOTAN sign-in links on okemily pages (for example GoblinFoxDragon -> login) failed with "redirect_uri is required". Fixed live on the IDUNA box (nginx backed up, `nginx -t`, reloaded; verified 302 keeps the query and the page loads 200) and in the userdata template plus its test. (sess-20261126-1643-452c2f1a)
+
 # IDUNA Changelog
 
 ## 2026-11-26

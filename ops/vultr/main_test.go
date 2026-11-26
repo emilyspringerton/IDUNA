@@ -117,7 +117,7 @@ func TestUserDataCarriesNoSecretsAndParses(t *testing.T) {
 		"image: ghcr.io/emilyspringerton/iduna:5243d7b", "BASE_URL: https://iam.example.com",
 		"NOCK_DATA_DIR: /app/var/nock-projects", "BLOG_OUTPUT_DIR: /app/var/www/blog",
 		"server_name iam.example.com;", "server_name example.com www.example.com;",
-		"location = / { return 302 /api/v1/auth/sso/login; }", `command: ["server", "8443", "iduna", "8080", "/app/var/sc-tunnel.key"]`,
+		"location = / { return 302 /api/v1/auth/sso/login$is_args$args; }", `command: ["server", "8443", "iduna", "8080", "/app/var/sc-tunnel.key"]`,
 		"SRC: http://10.0.0.5:8081", "--exclude='blog'", "--exclude='prompt-o-verse'", "shred -u /srv/iduna/var/webmaster.json",
 		"curl -sS -f -C - -o", // logsync.sh embedded
 	} {

@@ -202,7 +202,7 @@ server {
     ssl_certificate_key /etc/ssl/iduna/origin.key;
     ssl_protocols TLSv1.2 TLSv1.3;
     client_max_body_size 4096m;   # NOCK_VIDEO_MAX_MB default
-    location = / { return 302 /api/v1/auth/sso/login; }
+    location = / { return 302 /api/v1/auth/sso/login$is_args$args; }
     location / { proxy_pass http://127.0.0.1:8080; include snippets/iduna-proxy.conf; }
 }
 # <zone> + www: IDUNA's paths to IDUNA, everything else to the site (95-okemily-apex.yaml).
