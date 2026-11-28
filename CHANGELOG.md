@@ -1,3 +1,4 @@
+- feat(shankpit): level walls carry a mesh skin -- `mesh` / `normal_map` / `lod_bias` on Wall (asset ids validated as bare tokens, lod_bias in [-3,3], a normal map needs a mesh), kept through widget flattening, absent on plain boxes so every existing level is unchanged. This is the editor/store half of SHANKPIT's mesh override (packages/world/mesh_asset.h, mesh_bake). Not yet: the asset upload/registry endpoints and the NOCK UI. (session: sess-20261128-0210-7f8701d8)
 ## 2026-11-28
 
 - ci(deploy): **auto-deploy to the Vultr IDUNA box** (the Cloud Build deploy.yml was dead with GCP). When release.yml has pushed `ghcr.io/emilyspringerton/iduna:<sha>`, deploy.yml tells the box to switch to that tag over a forced-command SSH key; the receiver (WOTAN/ops/deploy/iduna-receive.sh) pulls, repoints the compose file, waits for the container healthcheck and rolls back on failure.

@@ -71,6 +71,14 @@ type Wall struct {
 	// as a wedge whose slope rises toward the cube's local +Z (aim it with rot_y). Walls with Ramp or a
 	// non-zero rotation take the native client's oriented-box path (packages/common/obb.h).
 	Ramp bool `json:"ramp,omitempty"`
+	// Mesh / NormalMap / LodBias (founder real-time, 2026-11-28: "override the mesh of a cube with the normal map baking and
+	// LOD ... add meshes and normal maps via NOCK tools"): a SKIN for this cube. The cube stays the collision authority; the native
+	// client draws the baked glTF (SHANKPIT packages/world/mesh_asset.h) scaled to the cube's extents instead of the plain box.
+	// Mesh / NormalMap are asset ids (a bare [A-Za-z0-9_.-] token, validated below: they end up in a URL and a filename); LodBias
+	// shifts the distance-picked LOD (+1 one level coarser, -1 finer). All empty/zero = the plain box, so every existing level is unchanged.
+	Mesh      string `json:"mesh,omitempty"`
+	NormalMap string `json:"normal_map,omitempty"`
+	LodBias   int    `json:"lod_bias,omitempty"`
 	// StyleID -- the cube style (style_store.go) this cube follows; 0 = none. GetLevel overlays the
 	// style's current material/colour/friction, so editing a style restyles every cube using it.
 	StyleID int64 `json:"style_id,omitempty"`
@@ -109,6 +117,7 @@ func matEuler(m [3][3]float64) (rx, ry, rz float64) {
 // wall keeps its own sx/sz (the swap is only valid for AABBs) and gets the parent's Y rotation
 // composed onto its Euler angles.
 func carryOrientation(src Wall, dst *Wall, worldRotY int) {
+	dst.Mesh, dst.NormalMap, dst.LodBias = src.Mesh, src.NormalMap, src.LodBias // a widget's skinned cube stays skinned once flattened into a level
 	if src.RotX == 0 && src.RotY == 0 && src.RotZ == 0 && !src.Ramp {
 		return
 	}
@@ -722,6 +731,23 @@ func validateGroundPlane(squares int) error {
 	return nil
 }
 
+// validateAssetID accepts "" (no skin) or a bare token of [A-Za-z0-9_.-], at most 40 bytes, not starting with a dot and containing no "..":
+// mirrors SHANKPIT's level_boxes_parse_asset_id so the editor can never save an id the native loader would silently drop.
+func validateAssetID(id string) error {
+	if id == "" {
+		return nil
+	}
+	if len(id) > 40 || id[0] == '.' || strings.Contains(id, "..") {
+		return fmt.Errorf("bad asset id %q", id)
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
+			return fmt.Errorf("bad asset id %q (allowed: letters, digits, _ - .)", id)
+		}
+	}
+	return nil
+}
+
 func validateWalls(walls []Wall) error {
 	if len(walls) > MaxWalls {
 		return fmt.Errorf("shankpit: too many walls (%d, max %d -- SHANKPIT's own native GameMap can't hold more)", len(walls), MaxWalls)
@@ -729,6 +755,18 @@ func validateWalls(walls []Wall) error {
 	for i, w := range walls {
 		if w.SX <= 0 || w.SY <= 0 || w.SZ <= 0 {
 			return fmt.Errorf("shankpit: wall %d has non-positive size (%g x %g x %g)", i, w.SX, w.SY, w.SZ)
+		}
+		if err := validateAssetID(w.Mesh); err != nil {
+			return fmt.Errorf("shankpit: wall %d mesh: %w", i, err)
+		}
+		if err := validateAssetID(w.NormalMap); err != nil {
+			return fmt.Errorf("shankpit: wall %d normal_map: %w", i, err)
+		}
+		if w.LodBias < -3 || w.LodBias > 3 {
+			return fmt.Errorf("shankpit: wall %d lod_bias %d out of range [-3, 3]", i, w.LodBias)
+		}
+		if w.NormalMap != "" && w.Mesh == "" {
+			return fmt.Errorf("shankpit: wall %d has a normal_map but no mesh to wear it", i)
 		}
 		for _, c := range []struct {
 			name string
