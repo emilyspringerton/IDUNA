@@ -1,56 +1,56 @@
-name: Build and push image
+name: Deploy IDUNA to the IDUNA box
 
-# K8S-CD-01: builds the PARENA compiler from committed source (needed by scripts/build-image.sh,
-# which bakes it into the image for ops/docker/iduna.Dockerfile) and pushes via Cloud Build, auth
-# via Workload Identity (no stored key) -- see EMILY/gitops/CI_SETUP.md for the one-time GCP
-# setup this depends on (already done, 2026-10-05) and the two repo/org Variables this workflow
-# needs. The in-cluster gitops-autodeploy CronJob (EMILY/gitops/) notices the new tag on its own
-# next poll and redeploys -- this workflow does not need to talk to EMILY at all.
+# IDUNA auto-deploy on the Vultr infra (GCP gone 2026-11-26). release.yml already builds and pushes
+# ghcr.io/emilyspringerton/iduna:<short sha> on every push to main; this workflow runs when that one finishes green and
+# tells the IDUNA box to switch to that tag. The deploy key (secret DEPLOY_SSH_KEY) is bound to a forced command and the
+# only thing a client can pass it is an image tag (hex, nothing else); the receiver pulls the image, repoints the
+# iduna service in /opt/iduna/compose.yml, waits for the container healthcheck, and puts the previous tag back on failure
+# (WOTAN/ops/deploy/iduna-receive.sh; one-time wiring: WOTAN/ops/deploy/setup.sh and README.md).
 on:
-  push:
+  workflow_run:
+    workflows: ["Release (run-anywhere bundles)"]
+    types: [completed]
     branches: [main]
-    paths-ignore: ['**.md', 'docs/**']
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy (default: the short sha of main's head)"
+        required: false
 
-# Scoped per-workflow-file, same convention as SHANKPIT's own deploy.yml and this repo's
-# extension-release.yml/iduna-construct.yml -- see SHANKPIT's deploy.yml comment for the real,
-# found-live bug (2026-08-25) a shared group key across sibling workflows causes. This file had
-# no concurrency block at all until now, so two pushes in quick succession could run two Cloud
-# Build submits for the same image concurrently with nothing to cancel the stale one.
 concurrency:
-  group: iduna-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  group: iduna-box-deploy
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write
+
+env:
+  DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '137.220.58.252' }}
+  # Pinned host key; if the box is rebuilt update it here or set the DEPLOY_KNOWN_HOSTS repo variable.
+  DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS || '137.220.58.252 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIARM3eZ8ajNcpZ7NvzsZ5dRebidahMoClpUnjVI4L/0D' }}
 
 jobs:
-  build:
+  deploy:
+    # a manual run, or a Release run that succeeded (that is what pushed the image)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/checkout@v4
         with:
-          repository: emilyspringerton/PARENA
-          path: PARENA
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: PARENA's own build deps (parena compiler links SDL2 unconditionally)
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev
-
-      - name: Build the PARENA compiler
-        run: make -C PARENA parena
-
-      - name: Auth to GCP (Workload Identity, no stored key)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Build + push
+      - name: Ship to the IDUNA box
         env:
-          PARENA_DIR: ${{ github.workspace }}/PARENA
-        run: scripts/build-image.sh "$(git rev-parse --short HEAD)"
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$(git rev-parse --short HEAD)}"
+          echo "deploying ghcr.io/emilyspringerton/iduna:$tag"
+          if [ -z "$DEPLOY_KEY" ]; then echo "::error::DEPLOY_SSH_KEY secret is not set -- see WOTAN/ops/deploy/README.md"; exit 1; fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -T -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=15 \
+              "root@$DEPLOY_HOST" "$tag"
